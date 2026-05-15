@@ -114,6 +114,7 @@ interface DeviceDetailProps {
   track: DeviceTrack;
   device: DeviceInfo;
   displayName: string;
+  displayImei: string;
   relayLoading: boolean;
   onClose: () => void;
   onRename: () => void;
@@ -123,7 +124,7 @@ interface DeviceDetailProps {
 }
 
 function DeviceDetail({
-  track, device, displayName, relayLoading,
+  track, device, displayName, displayImei, relayLoading,
   onClose, onRename, onBlock, onUnblock, onUpdateKm,
 }: DeviceDetailProps) {
   const { color } = statusLabel(track);
