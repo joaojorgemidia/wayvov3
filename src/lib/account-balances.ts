@@ -43,8 +43,9 @@ export function calculateAccountBalances(
   horizon.setDate(horizon.getDate() + forecastDays);
 
   entries.forEach((entry) => {
-    // Transferências entre contas afetam saldo mesmo sendo ignoradas no P&L
-    if (entry.ignorada && entry.categoria !== "transferencia") return;
+    // Lançamentos ignorados são excluídos do P&L (relatórios/categorias),
+    // mas continuam impactando o saldo da conta — afinal, o dinheiro
+    // entrou ou saiu do banco de fato.
     const accountName = entry.conta || "";
     const balance = balances[accountName];
     if (!balance) return;
