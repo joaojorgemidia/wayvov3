@@ -611,8 +611,11 @@ export default function RastreamentoPage() {
     const offline = sc.includes("offline") || (!track?.acc && !track?.speed);
     if (deviceFilter === "online" && offline) return false;
     if (deviceFilter === "offline" && !offline) return false;
-    const q = deviceSearch.toLowerCase();
-    return !q || getDisplayName(dev.imei, track?.deviceName).toLowerCase().includes(q);
+    const q = deviceSearch.toLowerCase().trim();
+    if (!q) return true;
+    const name = getDisplayName(dev.imei, track?.deviceName).toLowerCase();
+    const renter = getRenterName(dev.imei, track?.deviceName).toLowerCase();
+    return name.includes(q) || renter.includes(q);
   });
 
   const selectedTrack  = tracks.find(t => t.imei === selectedImei) ?? null;
