@@ -68,9 +68,9 @@ export function CompanySwitcher() {
                 <Building2 className="h-4 w-4 text-primary" />
               </div>
               <div className="text-left">
-                <p className="text-sm font-semibold leading-none">{activeCompany.nome}</p>
+                <p className="text-sm font-semibold leading-none">{dispNome(activeCompany)}</p>
                 {activeCompany.cnpj && (
-                  <p className="text-[10px] text-muted-foreground leading-tight mt-0.5">{activeCompany.cnpj}</p>
+                  <p className="text-[10px] text-muted-foreground leading-tight mt-0.5">{dispCnpj(activeCompany)}</p>
                 )}
               </div>
             </div>
