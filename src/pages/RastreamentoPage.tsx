@@ -9,6 +9,8 @@ import {
   type DeviceTrack, type PlaybackPoint, type AlarmRecord,
 } from "@/lib/brasilsat";
 import { loadMotos, loadRentals, loadClients } from "@/lib/store";
+import { isPrivacyEnabled, getRealDataCache, useDataCacheSnapshot } from "@/lib/data-cache";
+import { maskPlaca, maskName, maskImei } from "@/lib/privacy-mask";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
