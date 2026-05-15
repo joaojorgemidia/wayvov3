@@ -82,13 +82,52 @@ export function isDataCacheInitialized(): boolean {
   return cache.initialized;
 }
 
+// ─── Privacy/Demo mask ──────────────────────────────────────────
+let privacyEnabled = false;
+const maskedCache: DataCache = {
+  motos: [], clients: [], rentals: [], fines: [], maintenance: [], financial: [], bankAccounts: [], initialized: false,
+};
+let maskedVersion = -1;
+
+function rebuildMaskedCache() {
+  maskedCache.motos = cache.motos.map(maskMoto);
+  maskedCache.clients = cache.clients.map(maskClient);
+  maskedCache.rentals = cache.rentals.map(maskRental);
+  maskedCache.fines = cache.fines.map(maskFine);
+  maskedCache.maintenance = cache.maintenance.map(maskMaintenance);
+  maskedCache.financial = cache.financial.map(maskFinancial);
+  maskedCache.bankAccounts = cache.bankAccounts;
+  maskedCache.initialized = cache.initialized;
+  maskedVersion = version;
+}
+
+function activeCache(): DataCache {
+  if (!privacyEnabled) return cache;
+  if (maskedVersion !== version) rebuildMaskedCache();
+  return maskedCache;
+}
+
+export function setPrivacyEnabled(v: boolean) {
+  if (privacyEnabled === v) return;
+  privacyEnabled = v;
+  notifyCacheChange();
+}
+
+export function isPrivacyEnabled(): boolean {
+  return privacyEnabled;
+}
+
 export function getDataCache(): DataCache {
+  return activeCache();
+}
+
+export function getRealDataCache(): DataCache {
   return cache;
 }
 
 export function useDataCacheSnapshot(): DataCache {
   useSyncExternalStore(subscribe, () => version, () => version);
-  return cache;
+  return activeCache();
 }
 
 export function setSaveCallback(cb: SaveCallback) {
