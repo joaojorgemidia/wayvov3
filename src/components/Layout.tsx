@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/AppSidebar";
 import { CompanySwitcher } from "@/components/CompanySwitcher";
@@ -6,12 +6,39 @@ import { Outlet } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { LogOut, User as UserIcon, KeyRound } from "lucide-react";
+import { LogOut, User as UserIcon, KeyRound, Eye, EyeOff } from "lucide-react";
 import { ChangePasswordDialog } from "@/components/ChangePasswordDialog";
+import { setPrivacyEnabled, isPrivacyEnabled } from "@/lib/data-cache";
+import { toast } from "sonner";
+
+const SUPER_ADMIN_EMAIL = "contatojoaojorge@gmail.com";
+const PRIVACY_LS_KEY = "demo-privacy-enabled";
 
 export function Layout() {
   const { signOut, user } = useAuth();
   const [pwdOpen, setPwdOpen] = useState(false);
+  const isSuperAdmin = (user?.email || "").toLowerCase() === SUPER_ADMIN_EMAIL;
+  const [privacyOn, setPrivacyOn] = useState(false);
+
+  // Restaura preferência do super admin
+  useEffect(() => {
+    if (!isSuperAdmin) {
+      setPrivacyEnabled(false);
+      setPrivacyOn(false);
+      return;
+    }
+    const saved = localStorage.getItem(PRIVACY_LS_KEY) === "1";
+    setPrivacyEnabled(saved);
+    setPrivacyOn(saved);
+  }, [isSuperAdmin]);
+
+  const togglePrivacy = () => {
+    const next = !privacyOn;
+    setPrivacyOn(next);
+    setPrivacyEnabled(next);
+    localStorage.setItem(PRIVACY_LS_KEY, next ? "1" : "0");
+    toast.success(next ? "Modo demo ativado — dados mascarados" : "Modo demo desativado");
+  };
 
   return (
     <SidebarProvider>
@@ -22,8 +49,25 @@ export function Layout() {
             <div className="flex items-center gap-3">
               <SidebarTrigger />
               <CompanySwitcher />
+              {isSuperAdmin && privacyOn && (
+                <span className="text-xs px-2 py-0.5 rounded bg-amber-100 text-amber-900 border border-amber-300 font-medium">
+                  MODO DEMO
+                </span>
+              )}
             </div>
             <div className="flex items-center gap-2">
+              {isSuperAdmin && (
+                <Button
+                  variant={privacyOn ? "default" : "ghost"}
+                  size="sm"
+                  className="gap-2"
+                  onClick={togglePrivacy}
+                  title="Mascarar dados sensíveis para gravação de demos"
+                >
+                  {privacyOn ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  <span className="text-sm hidden sm:inline">{privacyOn ? "Demo ON" : "Demo"}</span>
+                </Button>
+              )}
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button variant="ghost" size="sm" className="gap-2">
@@ -56,3 +100,5 @@ export function Layout() {
     </SidebarProvider>
   );
 }
+// suppress unused import warning
+void isPrivacyEnabled;
