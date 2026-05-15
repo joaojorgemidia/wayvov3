@@ -368,19 +368,24 @@ export async function getAlarms(
 
 // ─── Comandos de dispositivo ──────────────────────────────────────────────────
 
-export async function setMileage(token: string, imei: string, mileage: number): Promise<void> {
-  await callProxy({
-    endpoint: "device/mileage",
-    method: "POST",
-    body: { access_token: token, imei, mileage },
+// Envia comando via API command/send (BrasilSat OPEN API §2.5)
+async function sendCommand(token: string, imei: string, command: string): Promise<string> {
+  const data = await callProxy({
+    endpoint: "command/send",
+    params: { access_token: token, imei, command },
   });
+  return data?.record?.commandid ?? "";
 }
 
+export async function setMileage(token: string, imei: string, mileage: number): Promise<void> {
+  await sendCommand(token, imei, `SET_MILEAGE,${mileage}`);
+}
+
+// value: 0 = bloqueado (cortar combustível), 1 = liberado (restaurar)
+// Comando BrasilSat: RELAY,1 = Stop Engine ; RELAY,0 = Restore Engine
 export async function setRelay(token: string, imei: string, value: 0 | 1): Promise<void> {
-  await callProxy({
-    endpoint: "relay",
-    params: { access_token: token, imei, value },
-  });
+  const cmd = value === 0 ? "RELAY,1" : "RELAY,0";
+  await sendCommand(token, imei, cmd);
 }
 
 // ─── Nomes customizados (localStorage) ───────────────────────────────────────
