@@ -8,7 +8,7 @@ import {
   type BrasilSatConfig, type BrasilSatToken, type DeviceInfo,
   type DeviceTrack, type PlaybackPoint, type AlarmRecord,
 } from "@/lib/brasilsat";
-import { loadMotos } from "@/lib/store";
+import { loadMotos, loadRentals, loadClients } from "@/lib/store";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -320,6 +320,19 @@ export default function RastreamentoPage() {
     return customNames[imei] || imei;
   }, [customNames, auth]);
 
+  // ── Locatário atual do dispositivo (via placa → moto → locação ativa) ────
+  const getRenterName = useCallback((imei: string, trackDeviceName?: string): string => {
+    const name = getDisplayName(imei, trackDeviceName).toUpperCase();
+    if (!name) return "";
+    const motos = loadMotos();
+    const moto = motos.find(m => m.placa && name.includes(m.placa.toUpperCase()));
+    if (!moto) return "";
+    const rental = loadRentals().find(r => r.motoId === moto.id && r.status === "ativa");
+    if (!rental) return "";
+    const client = loadClients().find(c => c.id === rental.clienteId);
+    return client?.nome ?? "";
+  }, [getDisplayName]);
+
   // ── Token ─────────────────────────────────────────────────────────────────
   const getValidToken = useCallback(async (): Promise<string> => {
     if (auth && Date.now() < auth.token.expires_at) return auth.token.access_token;
@@ -598,8 +611,11 @@ export default function RastreamentoPage() {
     const offline = sc.includes("offline") || (!track?.acc && !track?.speed);
     if (deviceFilter === "online" && offline) return false;
     if (deviceFilter === "offline" && !offline) return false;
-    const q = deviceSearch.toLowerCase();
-    return !q || getDisplayName(dev.imei, track?.deviceName).toLowerCase().includes(q);
+    const q = deviceSearch.toLowerCase().trim();
+    if (!q) return true;
+    const name = getDisplayName(dev.imei, track?.deviceName).toLowerCase();
+    const renter = getRenterName(dev.imei, track?.deviceName).toLowerCase();
+    return name.includes(q) || renter.includes(q);
   });
 
   const selectedTrack  = tracks.find(t => t.imei === selectedImei) ?? null;
@@ -667,7 +683,7 @@ export default function RastreamentoPage() {
                     <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
                     <Input
                       className="pl-8 h-8 text-sm"
-                      placeholder="Buscar dispositivo..."
+                      placeholder="Buscar por placa ou locatário..."
                       value={deviceSearch}
                       onChange={e => setDeviceSearch(e.target.value)}
                     />
@@ -714,6 +730,7 @@ export default function RastreamentoPage() {
                     const since = track ? timeSince(track.gpstime) : "—";
                     const isSelected = dev.imei === selectedImei;
                     const name = getDisplayName(dev.imei, track?.deviceName);
+                    const renter = getRenterName(dev.imei, track?.deviceName);
                     return (
                       <button
                         key={dev.imei}
@@ -736,6 +753,11 @@ export default function RastreamentoPage() {
                             {track ? statusLabel(track).label : "Sem dados"}
                           </span>
                         </div>
+                        {renter && (
+                          <div className="text-[11px] text-muted-foreground truncate mt-0.5">
+                            👤 {renter}
+                          </div>
+                        )}
                       </button>
                     );
                   })}
