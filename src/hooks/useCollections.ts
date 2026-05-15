@@ -24,6 +24,7 @@ import {
   loadBrandConfig,
   loadGlobalConfig,
 } from "@/lib/oil-kpis";
+import { isSnoozed as isOleoSnoozed, onSnoozeChange as onOleoSnoozeChange } from "@/lib/oil-snooze";
 
 const db = supabase as any;
 
@@ -52,6 +53,8 @@ export function useCollections(): UseCollectionsReturn {
   });
   const [followups, setFollowups] = useState<CollectionFollowup[]>([]);
   const [loading, setLoading] = useState(true);
+  const [snoozeTick, setSnoozeTick] = useState(0);
+  useEffect(() => onOleoSnoozeChange(() => setSnoozeTick((t) => t + 1)), []);
 
   const fetchAll = useCallback(async () => {
     if (!cid) return;
@@ -242,6 +245,9 @@ export function useCollections(): UseCollectionsReturn {
       if (!activeRentalOleo) continue;
       const status = getOilStatus(m, brandCfg, globalCfg, cache.rentals);
       if (status.situation !== "vencida") continue;
+      // Lembrete adiado pelo usuário: não aparecer na fila de cobranças
+      // até a data definida (não altera o vencimento real).
+      if (isOleoSnoozed(m.id)) continue;
       // due date = momento em que ficou vencida (última troca + overdueDays)
       const overdueDays = globalCfg.overdueDays ?? 10;
       const diasDesde = status.diasDesdeUltima ?? overdueDays + 1;
@@ -282,7 +288,7 @@ export function useCollections(): UseCollectionsReturn {
     }
 
     return result;
-  }, [rulesById, followups]);
+  }, [rulesById, followups, snoozeTick]);
 
   // Última data de envio por entidade (para desempate por antiguidade do último follow-up)
   const lastSentAtByEntity = useMemo(() => {
