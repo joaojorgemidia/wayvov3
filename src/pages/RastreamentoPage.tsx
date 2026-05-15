@@ -739,7 +739,7 @@ export default function RastreamentoPage() {
                     ))}
                   </div>
                   <button
-                    onClick={() => { fetchTracks(); setCountdown(REFRESH_SECS); }}
+                    onClick={() => { fetchTracks(); setCountdown(refreshSecs); }}
                     disabled={loadingTrack}
                     className="flex items-center justify-between w-full text-[11px] px-2 py-1.5 rounded-md bg-muted/60 hover:bg-muted border border-border transition-colors disabled:opacity-50"
                   >
