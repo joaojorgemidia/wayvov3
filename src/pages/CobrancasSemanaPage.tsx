@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -9,15 +10,19 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription,
 } from "@/components/ui/dialog";
 import {
-  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator, DropdownMenuLabel,
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
+  DropdownMenuSeparator, DropdownMenuLabel, DropdownMenuSub, DropdownMenuSubTrigger,
+  DropdownMenuSubContent, DropdownMenuPortal,
 } from "@/components/ui/dropdown-menu";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import {
   CalendarDays, AlertTriangle, CheckCircle2, User, Bike,
   Wallet, ShieldCheck, Receipt, Coins, Tag, MessageCircle,
-  Bell, Wrench, Clock, ChevronRight,
+  Bell, Wrench, ChevronDown, MoreHorizontal, Phone, Copy,
+  CalendarClock, ExternalLink, BarChart3, Search,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useDataCacheSnapshot } from "@/lib/data-cache";
@@ -25,10 +30,12 @@ import { saveFinancial } from "@/lib/store";
 import { FinancialEntry } from "@/lib/types";
 import { MessagePopup } from "@/components/MessagePopup";
 import { applyTokens } from "@/lib/message-tokens";
+import { buildWhatsAppUrl } from "@/lib/whatsapp";
 
 const WEEK_LONG = ["Domingo", "Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado"];
 const WEEK_SHORT = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
 const MONTH_SHORT = ["jan","fev","mar","abr","mai","jun","jul","ago","set","out","nov","dez"];
+const WEEK_ORDER = [1, 2, 3, 4, 5, 6, 0];
 
 const CAT_META: Record<string, { label: string; icon: any; tone: { bg: string; text: string; border: string; stripe: string } }> = {
   aluguel: { label: "Aluguel", icon: Wallet,
@@ -67,6 +74,9 @@ function parseISO(s: string | null | undefined) {
 function diffDays(a: Date, b: Date) {
   return Math.round((startOfDay(a).getTime() - startOfDay(b).getTime()) / 86400000);
 }
+function toISODate(d: Date) {
+  return d.toISOString().slice(0, 10);
+}
 
 interface MsgType {
   key: string;
@@ -87,6 +97,7 @@ interface RowItem {
   telefoneCliente: string | null;
   placa: string | null;
   modelo: string | null;
+  motoId: string | null;
 }
 
 const MSG_TYPES: MsgType[] = [
@@ -138,11 +149,26 @@ const MSG_TYPES: MsgType[] = [
   },
 ];
 
+function tokensFor(item: RowItem): Record<string, string> {
+  return {
+    "{NOME}": item.clienteNome,
+    "{PLACA}": item.placa || "—",
+    "{VALOR}": fmtBRL(item.entry.valor || 0),
+    "{DATA_VENCIMENTO}": item.due?.toLocaleDateString("pt-BR") || "—",
+    "{DIAS_ATRASO}": String(item.daysLate),
+  };
+}
+
 export default function CobrancasSemanaPage() {
   const cache = useDataCacheSnapshot();
   const [confirmItem, setConfirmItem] = useState<RowItem | null>(null);
   const [form, setForm] = useState({ data: "", valor: "", conta: "", observacao: "" });
   const [msgState, setMsgState] = useState<{ item: RowItem; type: MsgType } | null>(null);
+  const [showResumo, setShowResumo] = useState(false);
+  const [search, setSearch] = useState("");
+  const [dayFilter, setDayFilter] = useState<number | "all">("all"); // 0..6 ou "all"
+  const [reschedItem, setReschedItem] = useState<RowItem | null>(null);
+  const [reschedDate, setReschedDate] = useState("");
 
   const handleMessage = (item: RowItem, type: MsgType) => setMsgState({ item, type });
 
@@ -202,6 +228,7 @@ export default function CobrancasSemanaPage() {
         telefoneCliente: cliente?.telefone || null,
         placa: m?.placa || e.placa || null,
         modelo: m?.modelo || null,
+        motoId: m?.id || null,
       });
     }
     return out.sort((a, b) => {
@@ -217,17 +244,53 @@ export default function CobrancasSemanaPage() {
   );
   const overdueItems = pending.filter((i) => i.daysLate > 0);
 
-  const weekByDay = useMemo(() => {
-    const map = new Map<number, RowItem[]>();
-    for (const it of weekItems) {
-      const k = it.due!.getDay();
-      const arr = map.get(k) || [];
-      arr.push(it);
-      map.set(k, arr);
-    }
-    return map;
-  }, [weekItems]);
+  // Faixa de dias: Seg–Dom com contagem e total por dia
+  const weekStrip = useMemo(() => {
+    return WEEK_ORDER.map((dow, idx) => {
+      const date = new Date(monday);
+      date.setDate(date.getDate() + idx);
+      const items = weekItems.filter((i) => i.due!.getDay() === dow);
+      const total = items.reduce((s, i) => s + (i.entry.valor || 0), 0);
+      return {
+        dow,
+        date,
+        count: items.length,
+        total,
+        isToday: diffDays(today, date) === 0,
+        isPast: date < today,
+      };
+    });
+  }, [monday, weekItems, today]);
 
+  // Aplica filtros (busca + dia)
+  const filterFn = (i: RowItem) => {
+    if (search.trim()) {
+      const q = search.toLowerCase().trim();
+      const hay = `${i.clienteNome} ${i.placa || ""} ${i.modelo || ""}`.toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    return true;
+  };
+
+  const filteredOverdue = overdueItems.filter(filterFn);
+  const filteredWeek = weekItems.filter((i) => {
+    if (!filterFn(i)) return false;
+    if (dayFilter === "all") return true;
+    return i.due!.getDay() === dayFilter;
+  });
+
+  // Agrupar semana filtrada por dia (ordem Seg–Dom)
+  const groupedWeek = useMemo(() => {
+    const groups: { dow: number; date: Date; items: RowItem[] }[] = [];
+    for (const dow of WEEK_ORDER) {
+      const items = filteredWeek.filter((i) => i.due!.getDay() === dow);
+      if (items.length === 0) continue;
+      groups.push({ dow, date: items[0].due!, items });
+    }
+    return groups;
+  }, [filteredWeek]);
+
+  // ── KPIs (resumo) ──────────────────────────────────────────────────
   const totalsByCat = useMemo(() => {
     const m = new Map<string, { count: number; valor: number; paidCount: number; paidValor: number }>();
     const bump = (key: string, valor: number, paid: boolean) => {
@@ -241,12 +304,11 @@ export default function CobrancasSemanaPage() {
       if (e.ignorada) continue;
       const due = parseISO(e.dataPrevista || e.data);
       if (!due) continue;
-      // Apenas vencimentos dentro da semana atual (Seg–Dom)
       if (due < monday || due > sunday) continue;
       bump((e.categoria || "outro").toLowerCase(), e.valor || 0, !!e.pago);
     }
     return m;
-  }, [cache.financial, monday, sunday, today]);
+  }, [cache.financial, monday, sunday]);
 
   const aluguelStats = useMemo(() => {
     const active = cache.rentals.filter((r) => r.status === "ativa");
@@ -269,6 +331,10 @@ export default function CobrancasSemanaPage() {
     };
   }, [cache.rentals, totalsByCat, monday, sunday]);
 
+  const totalSemanaPendente = weekItems.reduce((s, i) => s + (i.entry.valor || 0), 0);
+  const totalAtrasado = overdueItems.reduce((s, i) => s + (i.entry.valor || 0), 0);
+
+  // ── Ações ──────────────────────────────────────────────────────────
   const openConfirm = (item: RowItem) => {
     setConfirmItem(item);
     setForm({
@@ -306,6 +372,57 @@ export default function CobrancasSemanaPage() {
     }
   };
 
+  const openReschedule = (item: RowItem) => {
+    setReschedItem(item);
+    setReschedDate(toISODate(item.due || new Date()));
+  };
+
+  const applyReschedule = async (newDate: string) => {
+    const target = reschedItem;
+    if (!target || !newDate) return;
+    try {
+      const next = cache.financial.map((e) =>
+        e.id === target.entry.id ? { ...e, dataPrevista: newDate } : e,
+      );
+      await saveFinancial(next);
+      toast.success(`Vencimento adiado para ${new Date(newDate + "T00:00:00").toLocaleDateString("pt-BR")}`);
+      setReschedItem(null);
+    } catch {
+      toast.error("Erro ao adiar vencimento");
+    }
+  };
+
+  const quickReschedule = async (item: RowItem, deltaDays: number) => {
+    const base = item.due || new Date();
+    const nd = new Date(base);
+    nd.setDate(nd.getDate() + deltaDays);
+    try {
+      const iso = toISODate(nd);
+      const next = cache.financial.map((e) =>
+        e.id === item.entry.id ? { ...e, dataPrevista: iso } : e,
+      );
+      await saveFinancial(next);
+      toast.success(`Adiado para ${nd.toLocaleDateString("pt-BR")}`);
+    } catch {
+      toast.error("Erro ao adiar");
+    }
+  };
+
+  const copyText = async (text: string, label: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      toast.success(`${label} copiado`);
+    } catch {
+      toast.error("Não foi possível copiar");
+    }
+  };
+
+  const openWhatsApp = (item: RowItem, type: MsgType) => {
+    const msg = applyTokens(type.template, tokensFor(item));
+    const url = buildWhatsAppUrl(item.telefoneCliente, msg);
+    window.open(url, "_blank", "noopener,noreferrer");
+  };
+
   const contas = useMemo(() => {
     const set = new Set<string>();
     cache.bankAccounts.forEach((b) => b.nome && set.add(b.nome));
@@ -313,127 +430,224 @@ export default function CobrancasSemanaPage() {
     return Array.from(set).sort();
   }, [cache.bankAccounts, cache.financial]);
 
+  // ─── Render ──────────────────────────────────────────────────────
   return (
-    <div className="p-6 space-y-6">
-      <div className="flex flex-wrap items-end justify-between gap-3">
+    <div className="p-4 md:p-6 space-y-4 max-w-[1400px] mx-auto">
+      {/* Header */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-semibold flex items-center gap-2">
-            <CalendarDays className="h-6 w-6 text-primary" />
+          <h1 className="text-xl md:text-2xl font-semibold flex items-center gap-2">
+            <CalendarDays className="h-5 w-5 md:h-6 md:w-6 text-primary" />
             Cobranças da semana
           </h1>
-          <p className="text-sm text-muted-foreground">
-            Receitas pendentes de locatários para{" "}
-            <strong>{monday.getDate()} {MONTH_SHORT[monday.getMonth()]}</strong>{" "}
-            a{" "}
+          <p className="text-xs md:text-sm text-muted-foreground">
+            <strong>{monday.getDate()} {MONTH_SHORT[monday.getMonth()]}</strong> a{" "}
             <strong>{sunday.getDate()} {MONTH_SHORT[sunday.getMonth()]}</strong>
-            , com atrasos de semanas anteriores.
+            {" • "}
+            <span>{weekItems.length} agendadas</span>
+            {overdueItems.length > 0 && (
+              <span className="text-destructive font-medium"> • {overdueItems.length} em atraso</span>
+            )}
           </p>
         </div>
+        <Button
+          variant={showResumo ? "default" : "outline"}
+          size="sm"
+          onClick={() => setShowResumo((v) => !v)}
+          className="gap-2"
+        >
+          <BarChart3 className="h-4 w-4" />
+          Resumo
+          <ChevronDown className={`h-3.5 w-3.5 transition-transform ${showResumo ? "rotate-180" : ""}`} />
+        </Button>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <KpiCard
-          icon={Wallet}
-          label="Aluguéis da semana"
-          value={String(aluguelStats.totalCobr)}
-          sub={`a receber ou pagos • ${fmtBRL(aluguelStats.valorPendente + aluguelStats.valorPago)}`}
-          tone="primary"
-          extra={
-            <div className="text-[11px] text-muted-foreground space-y-0.5">
-              <div>
-                Pagas <strong className="text-success">{aluguelStats.pagas}</strong> ({fmtBRL(aluguelStats.valorPago)})
+      {/* Resumo (KPIs) — colapsável */}
+      {showResumo && (
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 animate-in fade-in slide-in-from-top-2 duration-200">
+          <KpiCard
+            icon={Wallet}
+            label="Aluguéis da semana"
+            value={String(aluguelStats.totalCobr)}
+            sub={`${fmtBRL(aluguelStats.valorPendente + aluguelStats.valorPago)} total`}
+            tone="primary"
+            extra={
+              <div className="text-[11px] text-muted-foreground space-y-0.5">
+                <div>Pagos <strong className="text-success">{aluguelStats.pagas}</strong> ({fmtBRL(aluguelStats.valorPago)})</div>
+                <div>Pendentes <strong className="text-destructive">{aluguelStats.pendentes}</strong> ({fmtBRL(aluguelStats.valorPendente)})</div>
               </div>
-              <div>
-                Pendentes <strong className="text-destructive">{aluguelStats.pendentes}</strong> ({fmtBRL(aluguelStats.valorPendente)})
-              </div>
-            </div>
-          }
-        />
-        <KpiCard
-          icon={Bike}
-          label="Locações ativas"
-          value={String(aluguelStats.totalActive)}
-          sub={
-            aluguelStats.desbalanco === 0
-              ? "✓ Todas com cobrança na semana"
-              : aluguelStats.desbalanco > 0
-                ? `Faltam ${aluguelStats.desbalanco} cobrança(s) cadastrada(s)`
-                : `${Math.abs(aluguelStats.desbalanco)} cobrança(s) a mais que locações`
-          }
-          tone={aluguelStats.desbalanco === 0 ? "success" : "destructive"}
-          warn={aluguelStats.desbalanco !== 0}
-          extra={
-            <div className="text-[11px] text-muted-foreground">
-              Cadastradas: <strong>{aluguelStats.totalCobr}</strong> de <strong>{aluguelStats.totalActive}</strong>
-              {" • "}Novas na semana: <strong className="text-primary">{aluguelStats.novasNaSemana}</strong>
-            </div>
-          }
-        />
-        <CategoryKpi catKey="caucao" totals={totalsByCat.get("caucao")} />
-        <KpiCard
-          icon={AlertTriangle}
-          label="Em atraso"
-          value={String(overdueItems.length)}
-          sub={fmtBRL(overdueItems.reduce((s, i) => s + (i.entry.valor || 0), 0))}
-          tone="destructive"
-        />
-      </div>
-
-      {overdueItems.length > 0 && (
-        <SectionBlock
-          title="Em atraso"
-          icon={AlertTriangle}
-          tone={{ bg: "bg-destructive/10", border: "border-destructive/30", text: "text-destructive" }}
-          subtitle={`${overdueItems.length} cobrança(s) — ${fmtBRL(overdueItems.reduce((s, i) => s + (i.entry.valor || 0), 0))}`}
-          items={overdueItems}
-          onConfirm={openConfirm}
-          onMessage={handleMessage}
-        />
+            }
+          />
+          <KpiCard
+            icon={Bike}
+            label="Locações ativas"
+            value={String(aluguelStats.totalActive)}
+            sub={
+              aluguelStats.desbalanco === 0
+                ? "✓ Todas com cobrança"
+                : aluguelStats.desbalanco > 0
+                  ? `Faltam ${aluguelStats.desbalanco} cobrança(s)`
+                  : `${Math.abs(aluguelStats.desbalanco)} a mais que locações`
+            }
+            tone={aluguelStats.desbalanco === 0 ? "success" : "destructive"}
+            warn={aluguelStats.desbalanco !== 0}
+          />
+          <CategoryKpi catKey="caucao" totals={totalsByCat.get("caucao")} />
+          <KpiCard
+            icon={AlertTriangle}
+            label="Em atraso"
+            value={String(overdueItems.length)}
+            sub={fmtBRL(totalAtrasado)}
+            tone="destructive"
+          />
+        </div>
       )}
 
-      <div className="space-y-3">
-        <div className="flex items-center gap-2">
-          <CalendarDays className="h-4 w-4 text-primary" />
-          <h2 className="text-lg font-semibold">Semana atual (Seg–Dom)</h2>
-          <Badge variant="secondary">{weekItems.length}</Badge>
+      {/* Faixa de dias da semana */}
+      <div className="flex items-stretch gap-1.5 overflow-x-auto pb-1">
+        <button
+          onClick={() => setDayFilter("all")}
+          className={`shrink-0 rounded-lg border px-3 py-2 text-left transition-colors ${
+            dayFilter === "all" ? "border-primary bg-primary/10 text-primary" : "hover:bg-muted/60"
+          }`}
+        >
+          <div className="text-[10px] uppercase font-semibold tracking-wide opacity-70">Semana</div>
+          <div className="text-sm font-bold">{weekItems.length} cobr.</div>
+          <div className="text-[10px] opacity-70">{fmtBRL(totalSemanaPendente)}</div>
+        </button>
+        {weekStrip.map((d) => {
+          const active = dayFilter === d.dow;
+          const empty = d.count === 0;
+          return (
+            <button
+              key={d.dow}
+              onClick={() => setDayFilter(active ? "all" : d.dow)}
+              disabled={empty && !active}
+              className={`shrink-0 rounded-lg border px-3 py-2 text-center transition-colors min-w-[68px] ${
+                active
+                  ? "border-primary bg-primary text-primary-foreground"
+                  : d.isToday
+                    ? "border-primary/40 ring-1 ring-primary/20 bg-primary/5 hover:bg-primary/10"
+                    : empty
+                      ? "opacity-40 cursor-not-allowed"
+                      : "hover:bg-muted/60"
+              }`}
+            >
+              <div className="text-[10px] uppercase font-semibold tracking-wide">{WEEK_SHORT[d.dow]}</div>
+              <div className="text-base font-bold tabular-nums">{d.date.getDate()}</div>
+              <div className="text-[10px] opacity-80">
+                {d.count > 0 ? `${d.count} • ${fmtBRL(d.total).replace("R$", "").trim()}` : "—"}
+              </div>
+              {d.isToday && !active && (
+                <div className="text-[9px] uppercase font-bold text-primary mt-0.5">hoje</div>
+              )}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Busca */}
+      <div className="relative">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+        <Input
+          placeholder="Buscar por cliente, placa ou modelo…"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          className="pl-9 h-9"
+        />
+      </div>
+
+      {/* Em atraso — destaque */}
+      {filteredOverdue.length > 0 && (
+        <section className="rounded-xl border border-destructive/40 bg-destructive/5 overflow-hidden">
+          <div className="flex items-center justify-between gap-2 px-3 py-2 border-b border-destructive/20 bg-destructive/10">
+            <div className="flex items-center gap-2">
+              <AlertTriangle className="h-4 w-4 text-destructive" />
+              <span className="text-sm font-semibold text-destructive">Em atraso</span>
+              <Badge variant="destructive" className="h-5 px-1.5 text-[10px]">{filteredOverdue.length}</Badge>
+            </div>
+            <span className="text-xs font-semibold text-destructive">{fmtBRL(filteredOverdue.reduce((s, i) => s + (i.entry.valor || 0), 0))}</span>
+          </div>
+          <div className="divide-y">
+            {filteredOverdue.map((it) => (
+              <RowItemView
+                key={it.entry.id}
+                item={it}
+                onConfirm={openConfirm}
+                onMessage={handleMessage}
+                onWhatsApp={openWhatsApp}
+                onCopy={copyText}
+                onRescheduleQuick={quickReschedule}
+                onRescheduleCustom={openReschedule}
+              />
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* Semana */}
+      <section className="rounded-xl border bg-card overflow-hidden">
+        <div className="flex items-center justify-between gap-2 px-3 py-2 border-b bg-muted/30">
+          <div className="flex items-center gap-2">
+            <CalendarDays className="h-4 w-4 text-primary" />
+            <span className="text-sm font-semibold">
+              {dayFilter === "all"
+                ? "Semana atual"
+                : `${WEEK_LONG[dayFilter as number]}`}
+            </span>
+            <Badge variant="secondary" className="h-5 px-1.5 text-[10px]">{filteredWeek.length}</Badge>
+          </div>
+          {dayFilter !== "all" && (
+            <Button variant="ghost" size="sm" onClick={() => setDayFilter("all")} className="h-7 text-xs">
+              Mostrar semana toda
+            </Button>
+          )}
         </div>
-        {weekItems.length === 0 ? (
-          <Card>
-            <CardContent className="p-6 text-sm text-muted-foreground text-center">
-              Nenhuma cobrança agendada para esta semana. 🎉
-            </CardContent>
-          </Card>
+
+        {filteredWeek.length === 0 ? (
+          <div className="p-8 text-sm text-muted-foreground text-center">
+            {weekItems.length === 0
+              ? "Nenhuma cobrança agendada para esta semana. 🎉"
+              : "Nenhuma cobrança para o filtro selecionado."}
+          </div>
         ) : (
-          <div className="space-y-3">
-            {[1,2,3,4,5,6,0].map((dow) => {
-              const items = weekByDay.get(dow);
-              if (!items || items.length === 0) return null;
-              const sample = items[0].due!;
-              const isToday = diffDays(today, sample) === 0;
+          <div>
+            {groupedWeek.map((g) => {
+              const isToday = diffDays(today, g.date) === 0;
               return (
-                <DayBlock
-                  key={dow}
-                  date={sample}
-                  isToday={isToday}
-                  items={items}
-                  onConfirm={openConfirm}
-                  onMessage={handleMessage}
-                />
+                <div key={g.dow}>
+                  <div className={`px-3 py-1.5 text-xs font-semibold flex items-center gap-2 border-b ${
+                    isToday ? "bg-primary/10 text-primary" : "bg-muted/20 text-muted-foreground"
+                  }`}>
+                    <span>{WEEK_LONG[g.dow]} • {g.date.getDate()} {MONTH_SHORT[g.date.getMonth()]}</span>
+                    {isToday && <Badge className="h-4 px-1.5 text-[9px] bg-primary text-primary-foreground border-0">HOJE</Badge>}
+                    <span className="ml-auto opacity-70">{g.items.length} • {fmtBRL(g.items.reduce((s, i) => s + (i.entry.valor || 0), 0))}</span>
+                  </div>
+                  <div className="divide-y">
+                    {g.items.map((it) => (
+                      <RowItemView
+                        key={it.entry.id}
+                        item={it}
+                        onConfirm={openConfirm}
+                        onMessage={handleMessage}
+                        onWhatsApp={openWhatsApp}
+                        onCopy={copyText}
+                        onRescheduleQuick={quickReschedule}
+                        onRescheduleCustom={openReschedule}
+                      />
+                    ))}
+                  </div>
+                </div>
               );
             })}
           </div>
         )}
-      </div>
+      </section>
 
+      {/* MessagePopup */}
       {msgState && (() => {
         const { item, type } = msgState;
-        const tokens: Record<string, string> = {
-          "{NOME}": item.clienteNome,
-          "{PLACA}": item.placa || "—",
-          "{VALOR}": fmtBRL(item.entry.valor || 0),
-          "{DATA_VENCIMENTO}": item.due?.toLocaleDateString("pt-BR") || "—",
-          "{DIAS_ATRASO}": String(item.daysLate),
-        };
+        const tokens = tokensFor(item);
         const mensagem = applyTokens(type.template, tokens);
         return (
           <MessagePopup
@@ -452,14 +666,13 @@ export default function CobrancasSemanaPage() {
         );
       })()}
 
+      {/* Dialog: Confirmar pagamento */}
       <Dialog open={!!confirmItem} onOpenChange={(o) => !o && setConfirmItem(null)}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Confirmar pagamento</DialogTitle>
             <DialogDescription>
-              {confirmItem
-                ? `${confirmItem.clienteNome} • ${metaFor(confirmItem.catKey).label}`
-                : ""}
+              {confirmItem ? `${confirmItem.clienteNome} • ${metaFor(confirmItem.catKey).label}` : ""}
             </DialogDescription>
           </DialogHeader>
           {confirmItem && (
@@ -500,10 +713,7 @@ export default function CobrancasSemanaPage() {
               <div className="space-y-1">
                 <Label>Conta</Label>
                 {contas.length > 0 ? (
-                  <Select
-                    value={form.conta || undefined}
-                    onValueChange={(v) => setForm((p) => ({ ...p, conta: v }))}
-                  >
+                  <Select value={form.conta || undefined} onValueChange={(v) => setForm((p) => ({ ...p, conta: v }))}>
                     <SelectTrigger>
                       <SelectValue placeholder="Selecione a conta" />
                     </SelectTrigger>
@@ -540,10 +750,214 @@ export default function CobrancasSemanaPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Dialog: Adiar (data customizada) */}
+      <Dialog open={!!reschedItem} onOpenChange={(o) => !o && setReschedItem(null)}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Adiar vencimento</DialogTitle>
+            <DialogDescription>
+              {reschedItem?.clienteNome} • atual: {reschedItem?.due?.toLocaleDateString("pt-BR") || "—"}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label>Nova data de vencimento</Label>
+            <Input type="date" value={reschedDate} onChange={(e) => setReschedDate(e.target.value)} />
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setReschedItem(null)}>Cancelar</Button>
+            <Button onClick={() => applyReschedule(reschedDate)}>
+              <CalendarClock className="h-4 w-4 mr-1.5" />
+              Adiar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
 
+// ─── Linha de cobrança ─────────────────────────────────────────────
+function RowItemView({
+  item, onConfirm, onMessage, onWhatsApp, onCopy, onRescheduleQuick, onRescheduleCustom,
+}: {
+  item: RowItem;
+  onConfirm: (i: RowItem) => void;
+  onMessage: (i: RowItem, t: MsgType) => void;
+  onWhatsApp: (i: RowItem, t: MsgType) => void;
+  onCopy: (text: string, label: string) => void;
+  onRescheduleQuick: (i: RowItem, deltaDays: number) => void;
+  onRescheduleCustom: (i: RowItem) => void;
+}) {
+  const meta = metaFor(item.catKey);
+  const Icon = meta.icon;
+  const isOverdue = item.daysLate > 0;
+  const tokens = tokensFor(item);
+
+  return (
+    <div className="flex items-center gap-3 px-3 py-2.5 hover:bg-muted/40 transition-colors">
+      <div className={`w-1 self-stretch rounded-full ${isOverdue ? "bg-destructive" : meta.tone.stripe}`} />
+      <div className={`h-8 w-8 rounded-md grid place-items-center shrink-0 ${meta.tone.bg} ${meta.tone.text}`}>
+        <Icon className="h-4 w-4" />
+      </div>
+
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-sm font-semibold truncate">{item.clienteNome}</span>
+          {item.placa && (
+            <span className="inline-flex items-center gap-1 text-xs font-mono font-semibold text-muted-foreground tracking-wider">
+              <Bike className="h-3 w-3" />
+              {item.placa}
+            </span>
+          )}
+          {isOverdue && (
+            <Badge className="bg-destructive text-destructive-foreground border-0 h-4 px-1.5 text-[10px]">
+              {item.daysLate}d atraso
+            </Badge>
+          )}
+        </div>
+        <div className="text-[11px] text-muted-foreground truncate">
+          {meta.label}
+          {item.due && ` • Venc. ${item.due.toLocaleDateString("pt-BR")}`}
+          {item.entry.descricao && ` • ${item.entry.descricao}`}
+        </div>
+      </div>
+
+      <div className={`text-right shrink-0 ${isOverdue ? "text-destructive" : ""}`}>
+        <div className="text-sm md:text-base font-extrabold tabular-nums leading-tight">
+          {fmtBRL(item.entry.valor || 0)}
+        </div>
+      </div>
+
+      {/* Confirmar pagamento */}
+      <Button
+        size="sm"
+        className="shrink-0 h-8 bg-success text-success-foreground hover:bg-success/90 px-2.5"
+        onClick={() => onConfirm(item)}
+        title="Confirmar pagamento"
+      >
+        <CheckCircle2 className="h-4 w-4" />
+        <span className="hidden md:inline ml-1.5 text-xs">Pago</span>
+      </Button>
+
+      {/* WhatsApp (default = atraso se atrasado, dia se hoje, lembrete se futuro) */}
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button variant="outline" size="sm" className="shrink-0 h-8 px-2 gap-1" title="WhatsApp / Mensagem">
+            <MessageCircle className="h-4 w-4" />
+            <ChevronDown className="h-3 w-3 opacity-60" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-60">
+          <DropdownMenuLabel className="text-[10px] uppercase tracking-wide text-muted-foreground">
+            Enviar WhatsApp
+          </DropdownMenuLabel>
+          {MSG_TYPES.map((mt) => (
+            <DropdownMenuItem key={`wa-${mt.key}`} onClick={() => onWhatsApp(item, mt)} className="gap-2 cursor-pointer">
+              <mt.icon className="h-4 w-4 text-muted-foreground" />
+              <span className="text-xs">{mt.label}</span>
+            </DropdownMenuItem>
+          ))}
+          <DropdownMenuSeparator />
+          <DropdownMenuLabel className="text-[10px] uppercase tracking-wide text-muted-foreground">
+            Abrir editor
+          </DropdownMenuLabel>
+          {MSG_TYPES.map((mt) => (
+            <DropdownMenuItem key={`ed-${mt.key}`} onClick={() => onMessage(item, mt)} className="gap-2 cursor-pointer">
+              <ExternalLink className="h-3.5 w-3.5 text-muted-foreground" />
+              <span className="text-xs">{mt.label}</span>
+            </DropdownMenuItem>
+          ))}
+        </DropdownMenuContent>
+      </DropdownMenu>
+
+      {/* Mais ações */}
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button variant="ghost" size="sm" className="shrink-0 h-8 w-8 p-0" title="Mais ações">
+            <MoreHorizontal className="h-4 w-4" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-56">
+          {/* Copiar */}
+          <DropdownMenuLabel className="text-[10px] uppercase tracking-wide text-muted-foreground">
+            Copiar
+          </DropdownMenuLabel>
+          {item.telefoneCliente && (
+            <DropdownMenuItem
+              onClick={() => onCopy(item.telefoneCliente!, "Telefone")}
+              className="gap-2 cursor-pointer"
+            >
+              <Phone className="h-4 w-4 text-muted-foreground" />
+              <span className="text-xs">Telefone</span>
+              <span className="ml-auto text-[10px] text-muted-foreground font-mono">{item.telefoneCliente}</span>
+            </DropdownMenuItem>
+          )}
+          <DropdownMenuSub>
+            <DropdownMenuSubTrigger className="gap-2 text-xs">
+              <Copy className="h-4 w-4 text-muted-foreground" />
+              Copiar mensagem
+            </DropdownMenuSubTrigger>
+            <DropdownMenuPortal>
+              <DropdownMenuSubContent className="w-60">
+                {MSG_TYPES.map((mt) => (
+                  <DropdownMenuItem
+                    key={`cp-${mt.key}`}
+                    onClick={() => onCopy(applyTokens(mt.template, tokens), mt.label)}
+                    className="gap-2 cursor-pointer"
+                  >
+                    <mt.icon className="h-4 w-4 text-muted-foreground" />
+                    <span className="text-xs">{mt.label}</span>
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuSubContent>
+            </DropdownMenuPortal>
+          </DropdownMenuSub>
+
+          <DropdownMenuSeparator />
+          <DropdownMenuLabel className="text-[10px] uppercase tracking-wide text-muted-foreground">
+            Adiar vencimento
+          </DropdownMenuLabel>
+          <DropdownMenuItem onClick={() => onRescheduleQuick(item, 1)} className="gap-2 cursor-pointer">
+            <CalendarClock className="h-4 w-4 text-muted-foreground" />
+            <span className="text-xs">+ 1 dia</span>
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={() => onRescheduleQuick(item, 3)} className="gap-2 cursor-pointer">
+            <CalendarClock className="h-4 w-4 text-muted-foreground" />
+            <span className="text-xs">+ 3 dias</span>
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={() => onRescheduleQuick(item, 7)} className="gap-2 cursor-pointer">
+            <CalendarClock className="h-4 w-4 text-muted-foreground" />
+            <span className="text-xs">+ 7 dias</span>
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={() => onRescheduleCustom(item)} className="gap-2 cursor-pointer">
+            <CalendarDays className="h-4 w-4 text-muted-foreground" />
+            <span className="text-xs">Outra data…</span>
+          </DropdownMenuItem>
+
+          <DropdownMenuSeparator />
+          <DropdownMenuLabel className="text-[10px] uppercase tracking-wide text-muted-foreground">
+            Abrir cadastro
+          </DropdownMenuLabel>
+          <DropdownMenuItem asChild className="cursor-pointer">
+            <Link to="/clientes" className="gap-2 flex items-center">
+              <User className="h-4 w-4 text-muted-foreground" />
+              <span className="text-xs">Ver cliente</span>
+            </Link>
+          </DropdownMenuItem>
+          <DropdownMenuItem asChild className="cursor-pointer">
+            <Link to="/motos" className="gap-2 flex items-center">
+              <Bike className="h-4 w-4 text-muted-foreground" />
+              <span className="text-xs">Ver moto</span>
+            </Link>
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </div>
+  );
+}
+
+// ─── KPI auxiliares ───────────────────────────────────────────────
 function KpiCard({
   icon: Icon, label, value, sub, tone, warn, extra,
 }: {
@@ -559,12 +973,12 @@ function KpiCard({
     muted: { border: "border-border", bg: "bg-muted/40", text: "text-foreground" },
   }[tone];
   return (
-    <div className={`rounded-xl border ${map.border} ${map.bg} p-4 space-y-1`}>
+    <div className={`rounded-xl border ${map.border} ${map.bg} p-3 space-y-1`}>
       <div className={`flex items-center gap-2 ${map.text}`}>
         <Icon className="h-4 w-4" />
-        <span className="text-xs font-semibold uppercase tracking-wide">{label}</span>
+        <span className="text-[11px] font-semibold uppercase tracking-wide">{label}</span>
       </div>
-      <div className={`text-2xl font-extrabold tabular-nums ${map.text}`}>{value}</div>
+      <div className={`text-xl font-extrabold tabular-nums ${map.text}`}>{value}</div>
       {sub && (
         <div className={`text-[11px] ${warn ? "text-destructive font-semibold" : "text-muted-foreground"}`}>
           {sub}
@@ -585,206 +999,16 @@ function CategoryKpi({
   const Icon = meta.icon;
   const t = totals || { count: 0, valor: 0, paidCount: 0, paidValor: 0 };
   return (
-    <div className={`rounded-xl border ${meta.tone.border} ${meta.tone.bg} p-4 space-y-1`}>
+    <div className={`rounded-xl border ${meta.tone.border} ${meta.tone.bg} p-3 space-y-1`}>
       <div className={`flex items-center gap-2 ${meta.tone.text}`}>
         <Icon className="h-4 w-4" />
-        <span className="text-xs font-semibold uppercase tracking-wide">{meta.label}</span>
+        <span className="text-[11px] font-semibold uppercase tracking-wide">{meta.label}</span>
       </div>
-      <div className={`text-2xl font-extrabold tabular-nums ${meta.tone.text}`}>
-        {t.count + t.paidCount}
-      </div>
+      <div className={`text-xl font-extrabold tabular-nums ${meta.tone.text}`}>{t.count + t.paidCount}</div>
       <div className="text-[11px] text-muted-foreground">
         Pagas <strong className="text-success">{t.paidCount}</strong>
-        {" • "}
-        Pendentes <strong className="text-destructive">{t.count}</strong>
+        {" • "}Pendentes <strong className="text-destructive">{t.count}</strong>
       </div>
     </div>
-  );
-}
-
-function SectionBlock({
-  title, icon: Icon, tone, subtitle, items, onConfirm, onMessage, dim,
-}: {
-  title: string; icon: any;
-  tone: { bg: string; border: string; text: string };
-  subtitle?: string;
-  items: RowItem[];
-  onConfirm: (i: RowItem) => void;
-  onMessage: (i: RowItem, t: MsgType) => void;
-  dim?: boolean;
-}) {
-  return (
-    <section className="space-y-2">
-      <div className={`flex items-center justify-between gap-2 rounded-lg border ${tone.border} ${tone.bg} px-3 py-2`}>
-        <div className="flex items-center gap-2">
-          <Icon className={`h-4 w-4 ${tone.text}`} />
-          <span className={`text-sm font-semibold ${tone.text}`}>{title}</span>
-          <Badge variant="secondary" className="h-5 px-1.5 text-[10px]">{items.length}</Badge>
-        </div>
-        {subtitle && <span className={`text-xs ${tone.text}`}>{subtitle}</span>}
-      </div>
-      <div className={`space-y-2 ${dim ? "opacity-90" : ""}`}>
-        {items.map((it) => (
-          <RowCard key={it.entry.id} item={it} onConfirm={onConfirm} onMessage={onMessage} />
-        ))}
-      </div>
-    </section>
-  );
-}
-
-function DayBlock({
-  date, isToday, items, onConfirm, onMessage,
-}: {
-  date: Date; isToday: boolean;
-  items: RowItem[];
-  onConfirm: (i: RowItem) => void;
-  onMessage: (i: RowItem, t: MsgType) => void;
-}) {
-  const dow = date.getDay();
-  const total = items.reduce((s, i) => s + (i.entry.valor || 0), 0);
-  return (
-    <div className={`rounded-xl border overflow-hidden ${
-      isToday ? "border-primary/40 ring-1 ring-primary/30" : ""
-    }`}>
-      <div className={`flex items-center justify-between gap-3 px-4 py-2.5 ${
-        isToday ? "bg-primary/10" : "bg-muted/40"
-      }`}>
-        <div className="flex items-center gap-3">
-          <div className={`shrink-0 w-12 text-center rounded-md border overflow-hidden ${
-            isToday ? "bg-primary text-primary-foreground border-primary" : "bg-background"
-          }`}>
-            <div className="text-[10px] uppercase font-bold py-0.5">{WEEK_SHORT[dow]}</div>
-            <div className="text-lg font-extrabold leading-none pb-1">{date.getDate()}</div>
-          </div>
-          <div>
-            <div className={`text-sm font-semibold ${isToday ? "text-primary" : ""}`}>
-              {WEEK_LONG[dow]} {isToday && "• Hoje"}
-            </div>
-            <div className="text-[11px] text-muted-foreground">
-              {items.length} cobrança(s){total > 0 ? ` • ${fmtBRL(total)}` : ""}
-            </div>
-          </div>
-        </div>
-      </div>
-      <div className="p-3 space-y-2 bg-card">
-        {items.map((it) => (
-          <RowCard key={it.entry.id} item={it} onConfirm={onConfirm} onMessage={onMessage} />
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function RowCard({
-  item, onConfirm, onMessage,
-}: {
-  item: RowItem;
-  onConfirm: (i: RowItem) => void;
-  onMessage: (i: RowItem, t: MsgType) => void;
-}) {
-  const meta = metaFor(item.catKey);
-  const Icon = meta.icon;
-  const isOverdue = item.daysLate > 0;
-
-  const toneIcon: Record<MsgType["tone"], string> = {
-    primary: "text-primary",
-    warning: "text-yellow-600",
-    danger: "text-destructive",
-  };
-
-  return (
-    <Card className={`overflow-hidden hover:shadow-sm transition-shadow ${
-      isOverdue ? "ring-1 ring-destructive/30" : ""
-    }`}>
-      <div className="flex">
-        <div className={`w-1.5 shrink-0 ${isOverdue ? "bg-destructive" : meta.tone.stripe}`} />
-        <CardContent className="flex-1 p-3 flex flex-wrap items-center gap-3">
-          <div className={`h-9 w-9 rounded-md grid place-items-center ${meta.tone.bg} ${meta.tone.text}`}>
-            <Icon className="h-4 w-4" />
-          </div>
-          <div className="min-w-0 flex-1 space-y-0.5">
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className={`text-sm font-semibold ${meta.tone.text}`}>{meta.label}</span>
-              {isOverdue && (
-                <Badge className="bg-destructive text-destructive-foreground border-0 text-[10px] gap-1">
-                  <AlertTriangle className="h-3 w-3" />
-                  {item.daysLate}d em atraso
-                </Badge>
-              )}
-            </div>
-            <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-sm">
-              <span className="inline-flex items-center gap-1.5">
-                <User className="h-3.5 w-3.5 text-muted-foreground" />
-                <span className="font-medium">{item.clienteNome}</span>
-              </span>
-              {item.placa && (
-                <span className="inline-flex items-center gap-1.5">
-                  <Bike className="h-3.5 w-3.5 text-muted-foreground" />
-                  <span className="font-mono tracking-wider font-semibold">{item.placa}</span>
-                </span>
-              )}
-              {item.due && (
-                <span className="text-xs text-muted-foreground">
-                  Venc. {item.due.toLocaleDateString("pt-BR")}
-                </span>
-              )}
-            </div>
-            {item.entry.descricao && (
-              <div className="text-xs text-muted-foreground truncate">{item.entry.descricao}</div>
-            )}
-          </div>
-          <div className="text-right shrink-0">
-            <div className={`text-lg font-extrabold tabular-nums leading-tight ${
-              isOverdue ? "text-destructive" : "text-foreground"
-            }`}>
-              {fmtBRL(item.entry.valor || 0)}
-            </div>
-          </div>
-
-          {/* Botão de mensagem */}
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button
-                variant="outline"
-                size="sm"
-                className="shrink-0 gap-1.5 text-muted-foreground hover:text-primary hover:border-primary/40"
-              >
-                <MessageCircle className="h-3.5 w-3.5" />
-                <span className="hidden sm:inline text-xs">Mensagem</span>
-                <ChevronRight className="h-3 w-3 opacity-50" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-56">
-              <DropdownMenuLabel className="text-[11px] uppercase tracking-wide text-muted-foreground font-semibold">
-                Tipo de mensagem
-              </DropdownMenuLabel>
-              <DropdownMenuSeparator />
-              {MSG_TYPES.map((mt) => {
-                const MtIcon = mt.icon;
-                return (
-                  <DropdownMenuItem
-                    key={mt.key}
-                    onClick={() => onMessage(item, mt)}
-                    className="gap-2.5 cursor-pointer"
-                  >
-                    <MtIcon className={`h-4 w-4 shrink-0 ${toneIcon[mt.tone]}`} />
-                    <span>{mt.label}</span>
-                  </DropdownMenuItem>
-                );
-              })}
-            </DropdownMenuContent>
-          </DropdownMenu>
-
-          <Button
-            size="sm"
-            className="shrink-0 bg-success text-success-foreground hover:bg-success/90"
-            onClick={() => onConfirm(item)}
-          >
-            <CheckCircle2 className="h-4 w-4 mr-1.5" />
-            Confirmar
-          </Button>
-        </CardContent>
-      </div>
-    </Card>
   );
 }
