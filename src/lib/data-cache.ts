@@ -9,6 +9,7 @@
 
 import { useSyncExternalStore } from "react";
 import type { Motorcycle, Client, Rental, Fine, Maintenance, FinancialEntry } from "@/lib/types";
+import { maskClient, maskMoto, maskRental, maskFine, maskMaintenance, maskFinancial } from "@/lib/privacy-mask";
 
 export interface BankAccountData {
   id: string;
