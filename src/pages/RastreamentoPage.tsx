@@ -320,18 +320,36 @@ export default function RastreamentoPage() {
     return customNames[imei] || imei;
   }, [customNames, auth]);
 
+  // ── Locações ativas (placa → nome do locatário) ─────────────────────────
+  const normalizePlate = (s: string) => s.toUpperCase().replace(/[^A-Z0-9]/g, "");
+
+  const activeRentalsByPlate = React.useMemo(() => {
+    const motos = loadMotos();
+    const rentals = loadRentals().filter(r => r.status === "ativa");
+    const clients = loadClients();
+    const map = new Map<string, { plate: string; renter: string; motoId: string }>();
+    for (const r of rentals) {
+      const moto = motos.find(m => m.id === r.motoId);
+      if (!moto?.placa) continue;
+      const client = clients.find(c => c.id === r.clienteId);
+      map.set(normalizePlate(moto.placa), {
+        plate: moto.placa,
+        renter: client?.nome ?? "—",
+        motoId: moto.id,
+      });
+    }
+    return map;
+  }, [tracks, auth]); // recompute when tracks/auth refresh (cheap)
+
   // ── Locatário atual do dispositivo (via placa → moto → locação ativa) ────
   const getRenterName = useCallback((imei: string, trackDeviceName?: string): string => {
-    const name = getDisplayName(imei, trackDeviceName).toUpperCase();
+    const name = normalizePlate(getDisplayName(imei, trackDeviceName));
     if (!name) return "";
-    const motos = loadMotos();
-    const moto = motos.find(m => m.placa && name.includes(m.placa.toUpperCase()));
-    if (!moto) return "";
-    const rental = loadRentals().find(r => r.motoId === moto.id && r.status === "ativa");
-    if (!rental) return "";
-    const client = loadClients().find(c => c.id === rental.clienteId);
-    return client?.nome ?? "";
-  }, [getDisplayName]);
+    for (const [plate, info] of activeRentalsByPlate) {
+      if (name.includes(plate)) return info.renter;
+    }
+    return "";
+  }, [getDisplayName, activeRentalsByPlate]);
 
   // ── Token ─────────────────────────────────────────────────────────────────
   const getValidToken = useCallback(async (): Promise<string> => {
@@ -719,6 +737,26 @@ export default function RastreamentoPage() {
                     <span className="text-muted-foreground tabular-nums">{countdown}s</span>
                   </button>
                 </div>
+
+                {activeRentalsByPlate.size > 0 && (
+                  <details className="border-b bg-muted/20">
+                    <summary className="cursor-pointer text-[11px] font-medium px-3 py-2 hover:bg-muted/40">
+                      Locações ativas ({activeRentalsByPlate.size})
+                    </summary>
+                    <div className="max-h-40 overflow-auto px-3 pb-2 space-y-1">
+                      {Array.from(activeRentalsByPlate.values()).map(r => (
+                        <button
+                          key={r.motoId}
+                          onClick={() => setDeviceSearch(r.plate)}
+                          className="block w-full text-left text-[11px] hover:bg-muted/60 rounded px-1.5 py-1"
+                        >
+                          <span className="font-mono font-semibold">{r.plate}</span>
+                          <span className="text-muted-foreground"> · {r.renter}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </details>
+                )}
 
                 <div className="flex-1 overflow-auto">
                   {filteredDevices.length === 0 && (
