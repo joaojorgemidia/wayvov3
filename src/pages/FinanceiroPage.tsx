@@ -2200,7 +2200,7 @@ export default function FinanceiroPage() {
     return bank;
   };
 
-  const hasActiveFilters =categoriaFilter !== "all" || contaFilter !== "all" || dateFrom || dateTo || placaFilter || locatarioFilter || tipoFilter !== "all" || onlyPagas || onlyPendentes || onlyRecorrentes || dueFilter !== "all" || search;
+  const hasActiveFilters =categoriaFilter !== "all" || contaFilter !== "all" || dateFrom || dateTo || placaFilter || locatarioFilter || tipoFilter !== "all" || onlyPagas || onlyPendentes || onlyRecorrentes || dueFilter !== "all" || ignoradasFilter !== "incluir" || search;
 
   return (
     <div className="p-4 md:p-6 space-y-5 max-w-7xl mx-auto">
