@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { LogOut, User as UserIcon, KeyRound, Eye, EyeOff } from "lucide-react";
 import { ChangePasswordDialog } from "@/components/ChangePasswordDialog";
-import { setPrivacyEnabled, isPrivacyEnabled } from "@/lib/data-cache";
+import { setPrivacyEnabled } from "@/lib/data-cache";
 import { toast } from "sonner";
 
 const SUPER_ADMIN_EMAIL = "contatojoaojorge@gmail.com";
