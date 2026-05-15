@@ -383,15 +383,16 @@ export default function RastreamentoPage() {
 
   // ── Sincronização km moto → rastreador ────────────────────────────────────
   const syncKm = useCallback(async (freshTracks: DeviceTrack[]) => {
-    const motos = loadMotos();
+    // Usa dados REAIS para que o sync funcione mesmo com modo demo ativo
+    const motos = getRealDataCache().motos;
     if (!motos.length || !freshTracks.length) return;
     let token: string;
     try { token = await getValidToken(); } catch { return; }
 
     for (const track of freshTracks) {
-      const name = getDisplayName(track.imei, track.deviceName).toUpperCase();
-      if (!name) continue;
-      const moto = motos.find(m => m.placa && name.includes(m.placa.toUpperCase()));
+      // Nome REAL do dispositivo (não o mascarado)
+      const realName = (auth?.devices.find(d => d.imei === track.imei)?.deviceName || track.deviceName || customNames[track.imei] || track.imei).toUpperCase();
+      const moto = motos.find(m => m.placa && realName.includes(m.placa.toUpperCase()));
       if (!moto || moto.kmAtual == null) continue;
       if (syncedKmRef.current.get(track.imei) === moto.kmAtual) continue;
       const trackerKm = track.mileage ?? 0;
