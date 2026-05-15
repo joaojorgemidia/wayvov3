@@ -730,6 +730,7 @@ export default function RastreamentoPage() {
                     const since = track ? timeSince(track.gpstime) : "—";
                     const isSelected = dev.imei === selectedImei;
                     const name = getDisplayName(dev.imei, track?.deviceName);
+                    const renter = getRenterName(dev.imei, track?.deviceName);
                     return (
                       <button
                         key={dev.imei}
@@ -752,6 +753,11 @@ export default function RastreamentoPage() {
                             {track ? statusLabel(track).label : "Sem dados"}
                           </span>
                         </div>
+                        {renter && (
+                          <div className="text-[11px] text-muted-foreground truncate mt-0.5">
+                            👤 {renter}
+                          </div>
+                        )}
                       </button>
                     );
                   })}
