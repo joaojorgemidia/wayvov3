@@ -1398,7 +1398,8 @@ export default function FinanceiroPage() {
           else if (dueFilter === "amanha") matchDue = due === tomorrowStr;
         }
       }
-      return matchSearch && matchTipo && matchPago && matchCategoria && matchConta && matchPlaca && matchLocatario && matchDateFrom && matchDateTo && matchRecorrente && matchDue;
+      const matchIgnoradas = ignoradasFilter === "incluir" ? true : ignoradasFilter === "ocultar" ? !e.ignorada : !!e.ignorada;
+      return matchSearch && matchTipo && matchPago && matchCategoria && matchConta && matchPlaca && matchLocatario && matchDateFrom && matchDateTo && matchRecorrente && matchDue && matchIgnoradas;
     }).sort((a, b) => {
       // Primeiro: ordenar por data efetiva decrescente (dias do mês)
       const dateA = a.pago ? a.data : (a.dataPrevista || a.data);
