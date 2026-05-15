@@ -8,7 +8,7 @@ import {
   type BrasilSatConfig, type BrasilSatToken, type DeviceInfo,
   type DeviceTrack, type PlaybackPoint, type AlarmRecord,
 } from "@/lib/brasilsat";
-import { loadMotos } from "@/lib/store";
+import { loadMotos, loadRentals, loadClients } from "@/lib/store";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
