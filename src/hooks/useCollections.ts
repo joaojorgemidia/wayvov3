@@ -288,7 +288,7 @@ export function useCollections(): UseCollectionsReturn {
     }
 
     return result;
-  }, [rulesById, followups]);
+  }, [rulesById, followups, snoozeTick]);
 
   // Última data de envio por entidade (para desempate por antiguidade do último follow-up)
   const lastSentAtByEntity = useMemo(() => {
