@@ -783,62 +783,51 @@ function RowItemView({
   onRescheduleCustom: (i: RowItem) => void;
 }) {
   const meta = metaFor(item.catKey);
-  const Icon = meta.icon;
   const isOverdue = item.daysLate > 0;
   const tokens = tokensFor(item);
 
   return (
-    <div className="flex items-center gap-3 px-3 py-2.5 hover:bg-muted/40 transition-colors">
-      <div className={`w-1 self-stretch rounded-full ${isOverdue ? "bg-destructive" : meta.tone.stripe}`} />
-      <div className={`h-8 w-8 rounded-md grid place-items-center shrink-0 ${meta.tone.bg} ${meta.tone.text}`}>
-        <Icon className="h-4 w-4" />
-      </div>
-
+    <div className="flex items-center gap-3 px-3 py-2.5 hover:bg-muted/30 transition-colors">
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-sm font-semibold truncate">{item.clienteNome}</span>
+          <span className="text-sm font-medium truncate">{item.clienteNome}</span>
           {item.placa && (
-            <span className="inline-flex items-center gap-1 text-xs font-mono font-semibold text-muted-foreground tracking-wider">
-              <Bike className="h-3 w-3" />
+            <span className="text-[11px] font-mono text-muted-foreground tracking-wider">
               {item.placa}
             </span>
           )}
           {isOverdue && (
-            <Badge className="bg-destructive text-destructive-foreground border-0 h-4 px-1.5 text-[10px]">
+            <span className="text-[10px] font-medium text-destructive">
               {item.daysLate}d atraso
-            </Badge>
+            </span>
           )}
         </div>
-        <div className="text-[11px] text-muted-foreground truncate">
+        <div className="text-[11px] text-muted-foreground truncate mt-0.5">
           {meta.label}
-          {item.due && ` • Venc. ${item.due.toLocaleDateString("pt-BR")}`}
-          {item.entry.descricao && ` • ${item.entry.descricao}`}
+          {item.due && ` · ${item.due.toLocaleDateString("pt-BR")}`}
         </div>
       </div>
 
-      <div className={`text-right shrink-0 ${isOverdue ? "text-destructive" : ""}`}>
-        <div className="text-sm md:text-base font-extrabold tabular-nums leading-tight">
-          {fmtBRL(item.entry.valor || 0)}
-        </div>
+      <div className={`text-right shrink-0 tabular-nums text-sm font-semibold ${isOverdue ? "text-destructive" : ""}`}>
+        {fmtBRL(item.entry.valor || 0)}
       </div>
 
       {/* Confirmar pagamento */}
       <Button
         size="sm"
-        className="shrink-0 h-8 bg-success text-success-foreground hover:bg-success/90 px-2.5"
+        variant="ghost"
+        className="shrink-0 h-8 w-8 p-0 text-success hover:text-success hover:bg-success/10"
         onClick={() => onConfirm(item)}
         title="Confirmar pagamento"
       >
         <CheckCircle2 className="h-4 w-4" />
-        <span className="hidden md:inline ml-1.5 text-xs">Pago</span>
       </Button>
 
-      {/* WhatsApp (default = atraso se atrasado, dia se hoje, lembrete se futuro) */}
+      {/* WhatsApp */}
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <Button variant="outline" size="sm" className="shrink-0 h-8 px-2 gap-1" title="WhatsApp / Mensagem">
+          <Button variant="ghost" size="sm" className="shrink-0 h-8 w-8 p-0 text-muted-foreground" title="WhatsApp / Mensagem">
             <MessageCircle className="h-4 w-4" />
-            <ChevronDown className="h-3 w-3 opacity-60" />
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-60">
@@ -867,12 +856,11 @@ function RowItemView({
       {/* Mais ações */}
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <Button variant="ghost" size="sm" className="shrink-0 h-8 w-8 p-0" title="Mais ações">
+          <Button variant="ghost" size="sm" className="shrink-0 h-8 w-8 p-0 text-muted-foreground" title="Mais ações">
             <MoreHorizontal className="h-4 w-4" />
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-56">
-          {/* Copiar */}
           <DropdownMenuLabel className="text-[10px] uppercase tracking-wide text-muted-foreground">
             Copiar
           </DropdownMenuLabel>
