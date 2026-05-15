@@ -26,12 +26,17 @@ import {
 
 // ─── Ícones Leaflet ───────────────────────────────────────────────────────────
 function makeIcon(color: string, small = false) {
-  const s = small ? 18 : 22;
+  const s = small ? 30 : 38;
+  // Ícone de moto (lucide "bike") sobre um pino circular colorido
+  const bikeSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="${Math.round(s * 0.6)}" height="${Math.round(s * 0.6)}" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18.5" cy="17.5" r="3.5"/><circle cx="5.5" cy="17.5" r="3.5"/><circle cx="15" cy="5" r="1"/><path d="M12 17.5V14l-3-3 4-3 2 3h2"/></svg>`;
   return L.divIcon({
     className: "",
-    html: `<div style="width:${s}px;height:${s}px;border-radius:50% 50% 50% 0;background:${color};border:2px solid white;box-shadow:0 2px 6px rgba(0,0,0,.4);transform:rotate(-45deg)"></div>`,
-    iconSize: [s, s],
-    iconAnchor: [s / 2, s],
+    html: `<div style="position:relative;width:${s}px;height:${s + 6}px;">
+      <div style="position:absolute;left:0;top:0;width:${s}px;height:${s}px;border-radius:50%;background:${color};border:2.5px solid white;box-shadow:0 3px 8px rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;">${bikeSvg}</div>
+      <div style="position:absolute;left:50%;bottom:0;transform:translateX(-50%);width:0;height:0;border-left:5px solid transparent;border-right:5px solid transparent;border-top:7px solid ${color};filter:drop-shadow(0 2px 2px rgba(0,0,0,.35));"></div>
+    </div>`,
+    iconSize: [s, s + 6],
+    iconAnchor: [s / 2, s + 6],
     popupAnchor: [0, -(s + 4)],
   });
 }
