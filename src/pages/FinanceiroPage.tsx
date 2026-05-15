@@ -2637,7 +2637,7 @@ export default function FinanceiroPage() {
                   placeholder="Buscar descrição, placa, locatário…" value={search} onChange={e => setSearch(e.target.value)} />
               </div>
               {hasActiveFilters && (
-                <button onClick={() => { setCategoriaFilter("all"); setContaFilter("all"); setDateFrom(""); setDateTo(""); setPlacaFilter(""); setLocatarioFilter(""); setOnlyPagas(false); setOnlyPendentes(false); setOnlyRecorrentes(false); setDueFilter("all"); setTipoFilter("all"); setSearch(""); }}
+                <button onClick={() => { setCategoriaFilter("all"); setContaFilter("all"); setDateFrom(""); setDateTo(""); setPlacaFilter(""); setLocatarioFilter(""); setOnlyPagas(false); setOnlyPendentes(false); setOnlyRecorrentes(false); setDueFilter("all"); setIgnoradasFilter("incluir"); setTipoFilter("all"); setSearch(""); }}
                   className="text-xs text-muted-foreground hover:text-foreground transition-colors underline underline-offset-2">Limpar</button>
               )}
             </div>
