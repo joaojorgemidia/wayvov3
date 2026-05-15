@@ -738,6 +738,26 @@ export default function RastreamentoPage() {
                   </button>
                 </div>
 
+                {activeRentalsByPlate.size > 0 && (
+                  <details className="border-b bg-muted/20">
+                    <summary className="cursor-pointer text-[11px] font-medium px-3 py-2 hover:bg-muted/40">
+                      Locações ativas ({activeRentalsByPlate.size})
+                    </summary>
+                    <div className="max-h-40 overflow-auto px-3 pb-2 space-y-1">
+                      {Array.from(activeRentalsByPlate.values()).map(r => (
+                        <button
+                          key={r.motoId}
+                          onClick={() => setDeviceSearch(r.plate)}
+                          className="block w-full text-left text-[11px] hover:bg-muted/60 rounded px-1.5 py-1"
+                        >
+                          <span className="font-mono font-semibold">{r.plate}</span>
+                          <span className="text-muted-foreground"> · {r.renter}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </details>
+                )}
+
                 <div className="flex-1 overflow-auto">
                   {filteredDevices.length === 0 && (
                     <p className="text-center text-xs text-muted-foreground py-8">Nenhum dispositivo</p>
