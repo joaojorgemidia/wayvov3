@@ -303,7 +303,14 @@ export async function trackDevices(token: string, imeis: string[]): Promise<Devi
         ? Math.abs(Number(r.externalpower)) : undefined,
       externalPower: num(r.chargestatus ?? r.oilpowerstatus),
       mileage: mileageKm,
-      mileageDay: num(r.todaymileage ?? r.mileageDay ?? r.todayMileage ?? r.dailyMileage),
+      mileageDay: (() => {
+        const raw = r.todaymileage ?? r.mileageDay ?? r.todayMileage ?? r.dailyMileage;
+        if (raw == null || raw === "") return undefined;
+        const n = Number(raw);
+        if (!isFinite(n) || n <= 0) return undefined;
+        // API retorna em metros — converter para km
+        return n / 1000;
+      })(),
       fuel: r.fuel !== "" && r.fuel != null ? num(r.fuel)
           : r.fuellevel !== "" && r.fuellevel != null ? num(r.fuellevel) : undefined,
       // temperature pode vir como array vazio quando não disponível
