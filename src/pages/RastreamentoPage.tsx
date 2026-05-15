@@ -320,6 +320,19 @@ export default function RastreamentoPage() {
     return customNames[imei] || imei;
   }, [customNames, auth]);
 
+  // ── Locatário atual do dispositivo (via placa → moto → locação ativa) ────
+  const getRenterName = useCallback((imei: string, trackDeviceName?: string): string => {
+    const name = getDisplayName(imei, trackDeviceName).toUpperCase();
+    if (!name) return "";
+    const motos = loadMotos();
+    const moto = motos.find(m => m.placa && name.includes(m.placa.toUpperCase()));
+    if (!moto) return "";
+    const rental = loadRentals().find(r => r.motoId === moto.id && r.status === "ativa");
+    if (!rental) return "";
+    const client = loadClients().find(c => c.id === rental.clienteId);
+    return client?.nome ?? "";
+  }, [getDisplayName]);
+
   // ── Token ─────────────────────────────────────────────────────────────────
   const getValidToken = useCallback(async (): Promise<string> => {
     if (auth && Date.now() < auth.token.expires_at) return auth.token.access_token;
