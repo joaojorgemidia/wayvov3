@@ -289,7 +289,8 @@ export default function RastreamentoPage() {
   const [mapReady, setMapReady]   = useState(false);
   const [countdown, setCountdown] = useState(15);
 
-  const REFRESH_SECS = 15;
+  const REFRESH_SECS_IDLE = 15;
+  const REFRESH_SECS_MOVING = 4;
 
   const trackMapRef     = useRef<L.Map | null>(null);
   const trackMarkersRef = useRef<Map<string, L.Marker>>(new Map());
