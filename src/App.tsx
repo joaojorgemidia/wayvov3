@@ -61,7 +61,6 @@ const queryClient = new QueryClient({
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <TooltipProvider>
-      <div className="fixed top-0 left-0 right-0 h-2 bg-green-500 z-50" />
       <AuthProvider>
         <Sonner />
         <BrowserRouter>
