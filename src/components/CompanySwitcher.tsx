@@ -111,8 +111,8 @@ export function CompanySwitcher() {
                     <Building2 className="h-4 w-4 text-primary" />
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium truncate">{c.nome}</p>
-                    {c.cnpj && <p className="text-[10px] text-muted-foreground">{c.cnpj}</p>}
+                    <p className="text-sm font-medium truncate">{dispNome(c)}</p>
+                    {c.cnpj && <p className="text-[10px] text-muted-foreground">{dispCnpj(c)}</p>}
                   </div>
                   {c.id === activeCompany.id && <Check className="h-4 w-4 text-primary shrink-0" />}
                 </button>
