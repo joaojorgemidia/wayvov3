@@ -406,7 +406,7 @@ export default function RastreamentoPage() {
         }
       }
     }
-  }, [getValidToken, customNames, getDisplayName]);
+  }, [getValidToken, customNames, getDisplayName, auth]);
 
   // ── Conexão ────────────────────────────────────────────────────────────────
   const connect = useCallback(async (cfg: BrasilSatConfig) => {
