@@ -15,6 +15,10 @@ import { maskCompanyName, maskCnpj } from "@/lib/privacy-mask";
 export function CompanySwitcher() {
   const { companies, activeCompany, switchCompany, addCompany, updateCompany, removeCompany } = useCompany();
   const { isAdmin } = useAuth();
+  useDataCacheSnapshot();
+  const privacy = isPrivacyEnabled();
+  const dispNome = (c: { id: string; nome: string }) => privacy ? maskCompanyName(c.id || c.nome) : c.nome;
+  const dispCnpj = (c: { id: string; cnpj: string }) => privacy && c.cnpj ? maskCnpj(c.id || c.cnpj) : c.cnpj;
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [dialogOpen, setDialogOpen] = useState(false);
