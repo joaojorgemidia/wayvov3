@@ -1415,7 +1415,7 @@ export default function FinanceiroPage() {
       if (createdA && createdB && createdA !== createdB) return createdB.localeCompare(createdA);
       return (entryOrder.get(b.id) ?? -1) - (entryOrder.get(a.id) ?? -1);
     });
-  }, [filteredSource, search, tipoFilter, pagoFilter, categoriaFilter, contaFilter, getCatLabel, placaFilter, locatarioFilter, dateFrom, dateTo, onlyPagas, onlyPendentes, onlyRecorrentes, dueFilter, motos, clients]);
+  }, [filteredSource, search, tipoFilter, pagoFilter, categoriaFilter, contaFilter, getCatLabel, placaFilter, locatarioFilter, dateFrom, dateTo, onlyPagas, onlyPendentes, onlyRecorrentes, dueFilter, ignoradasFilter, motos, clients]);
 
   // Reset page when filters change
   const filteredLen = filtered.length;
