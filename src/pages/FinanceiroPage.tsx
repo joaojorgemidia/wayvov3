@@ -1893,7 +1893,17 @@ export default function FinanceiroPage() {
       const remaining = filtered.filter(e =>
         e.id !== baseEntry.id && isSameSeries(e, baseEntry)
       ).length;
-      filtered = filtered.map(e => e.id === baseEntry.id ? { ...e, recorrenciaVezes: remaining } : e);
+      // Importante: limpar `despesaFixa` (que ignora recorrenciaVezes e força 24
+      // ocorrências no auto-materialize) e, se nada sobrou, também `recorrente`.
+      // Sem isso, o efeito de auto-materialização recria as entradas excluídas.
+      filtered = filtered.map(e => e.id === baseEntry.id
+        ? {
+            ...e,
+            recorrenciaVezes: remaining,
+            despesaFixa: false,
+            recorrente: remaining > 0 ? e.recorrente : false,
+          }
+        : e);
     }
 
     const count = idsToRemove.size;
