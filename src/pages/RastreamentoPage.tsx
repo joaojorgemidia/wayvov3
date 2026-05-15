@@ -289,7 +289,8 @@ export default function RastreamentoPage() {
   const [mapReady, setMapReady]   = useState(false);
   const [countdown, setCountdown] = useState(15);
 
-  const REFRESH_SECS = 15;
+  const REFRESH_SECS_IDLE = 15;
+  const REFRESH_SECS_MOVING = 4;
 
   const trackMapRef     = useRef<L.Map | null>(null);
   const trackMarkersRef = useRef<Map<string, L.Marker>>(new Map());
@@ -489,18 +490,25 @@ export default function RastreamentoPage() {
     return () => clearTimeout(id);
   }, [activeTab]);
 
+  // Intervalo dinâmico: mais rápido quando há dispositivos em movimento
+  const anyMoving = tracks.some(t => (t.speed ?? 0) > 0);
+  const refreshSecs = anyMoving ? REFRESH_SECS_MOVING : REFRESH_SECS_IDLE;
+  const refreshSecsRef = useRef(refreshSecs);
+  useEffect(() => { refreshSecsRef.current = refreshSecs; }, [refreshSecs]);
+
   // ── Auto-refresh com countdown ────────────────────────────────────────────
   useEffect(() => {
     if (!auth) return;
     fetchTracks();
-    setCountdown(REFRESH_SECS);
+    setCountdown(refreshSecsRef.current);
     const tickId = setInterval(() => {
       setCountdown(c => {
         if (c <= 1) {
           fetchTracksRef.current?.();
-          return REFRESH_SECS;
+          return refreshSecsRef.current;
         }
-        return c - 1;
+        // Se mudou para modo "movimento" e o countdown atual está acima do novo limite, reduz
+        return Math.min(c - 1, refreshSecsRef.current);
       });
     }, 1000);
     return () => clearInterval(tickId);
@@ -731,7 +739,7 @@ export default function RastreamentoPage() {
                     ))}
                   </div>
                   <button
-                    onClick={() => { fetchTracks(); setCountdown(REFRESH_SECS); }}
+                    onClick={() => { fetchTracks(); setCountdown(refreshSecs); }}
                     disabled={loadingTrack}
                     className="flex items-center justify-between w-full text-[11px] px-2 py-1.5 rounded-md bg-muted/60 hover:bg-muted border border-border transition-colors disabled:opacity-50"
                   >
