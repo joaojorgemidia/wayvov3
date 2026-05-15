@@ -144,6 +144,11 @@ function dbToMaintenance(r: any): Maintenance {
     data: r.data || "", km: r.km ?? null, custo: Number(r.custo) || 0,
     descricao: r.descricao || "", fornecedor: r.fornecedor || "",
     status: r.status || "agendada",
+    natureza: r.natureza || "manutencao",
+    oficina: r.oficina || "",
+    conta: r.conta || "",
+    quemPaga: r.quem_paga || "locadora",
+    itens: r.itens || [],
   };
 }
 
