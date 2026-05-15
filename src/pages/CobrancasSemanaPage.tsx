@@ -432,33 +432,26 @@ export default function CobrancasSemanaPage() {
 
   // ─── Render ──────────────────────────────────────────────────────
   return (
-    <div className="p-4 md:p-6 space-y-4 max-w-[1400px] mx-auto">
+    <div className="p-4 md:p-6 space-y-5 max-w-[1200px] mx-auto">
       {/* Header */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
+      <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="text-xl md:text-2xl font-semibold flex items-center gap-2">
-            <CalendarDays className="h-5 w-5 md:h-6 md:w-6 text-primary" />
-            Cobranças da semana
-          </h1>
-          <p className="text-xs md:text-sm text-muted-foreground">
-            <strong>{monday.getDate()} {MONTH_SHORT[monday.getMonth()]}</strong> a{" "}
-            <strong>{sunday.getDate()} {MONTH_SHORT[sunday.getMonth()]}</strong>
-            {" • "}
-            <span>{weekItems.length} agendadas</span>
-            {overdueItems.length > 0 && (
-              <span className="text-destructive font-medium"> • {overdueItems.length} em atraso</span>
-            )}
+          <h1 className="text-lg md:text-xl font-semibold tracking-tight">Cobranças da semana</h1>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            {monday.getDate()} {MONTH_SHORT[monday.getMonth()]} – {sunday.getDate()} {MONTH_SHORT[sunday.getMonth()]}
+            {" · "}{weekItems.length} agendadas
+            {overdueItems.length > 0 && <span className="text-destructive"> · {overdueItems.length} em atraso</span>}
           </p>
         </div>
         <Button
-          variant={showResumo ? "default" : "outline"}
+          variant="ghost"
           size="sm"
           onClick={() => setShowResumo((v) => !v)}
-          className="gap-2"
+          className="h-8 gap-1.5 text-muted-foreground"
         >
-          <BarChart3 className="h-4 w-4" />
+          <BarChart3 className="h-3.5 w-3.5" />
           Resumo
-          <ChevronDown className={`h-3.5 w-3.5 transition-transform ${showResumo ? "rotate-180" : ""}`} />
+          <ChevronDown className={`h-3 w-3 transition-transform ${showResumo ? "rotate-180" : ""}`} />
         </Button>
       </div>
 
@@ -503,72 +496,71 @@ export default function CobrancasSemanaPage() {
         </div>
       )}
 
-      {/* Faixa de dias da semana */}
-      <div className="flex items-stretch gap-1.5 overflow-x-auto pb-1">
-        <button
-          onClick={() => setDayFilter("all")}
-          className={`shrink-0 rounded-lg border px-3 py-2 text-left transition-colors ${
-            dayFilter === "all" ? "border-primary bg-primary/10 text-primary" : "hover:bg-muted/60"
-          }`}
-        >
-          <div className="text-[10px] uppercase font-semibold tracking-wide opacity-70">Semana</div>
-          <div className="text-sm font-bold">{weekItems.length} cobr.</div>
-          <div className="text-[10px] opacity-70">{fmtBRL(totalSemanaPendente)}</div>
-        </button>
-        {weekStrip.map((d) => {
-          const active = dayFilter === d.dow;
-          const empty = d.count === 0;
-          return (
-            <button
-              key={d.dow}
-              onClick={() => setDayFilter(active ? "all" : d.dow)}
-              disabled={empty && !active}
-              className={`shrink-0 rounded-lg border px-3 py-2 text-center transition-colors min-w-[68px] ${
-                active
-                  ? "border-primary bg-primary text-primary-foreground"
-                  : d.isToday
-                    ? "border-primary/40 ring-1 ring-primary/20 bg-primary/5 hover:bg-primary/10"
-                    : empty
-                      ? "opacity-40 cursor-not-allowed"
-                      : "hover:bg-muted/60"
-              }`}
-            >
-              <div className="text-[10px] uppercase font-semibold tracking-wide">{WEEK_SHORT[d.dow]}</div>
-              <div className="text-base font-bold tabular-nums">{d.date.getDate()}</div>
-              <div className="text-[10px] opacity-80">
-                {d.count > 0 ? `${d.count} • ${fmtBRL(d.total).replace("R$", "").trim()}` : "—"}
-              </div>
-              {d.isToday && !active && (
-                <div className="text-[9px] uppercase font-bold text-primary mt-0.5">hoje</div>
-              )}
-            </button>
-          );
-        })}
+      {/* Faixa de dias + busca */}
+      <div className="space-y-2.5">
+        <div className="flex items-center gap-1 overflow-x-auto -mx-1 px-1">
+          <button
+            onClick={() => setDayFilter("all")}
+            className={`shrink-0 px-3 h-9 rounded-md text-xs font-medium transition-colors ${
+              dayFilter === "all" ? "bg-foreground text-background" : "text-muted-foreground hover:bg-muted"
+            }`}
+          >
+            Toda semana
+          </button>
+          {weekStrip.map((d) => {
+            const active = dayFilter === d.dow;
+            const empty = d.count === 0;
+            return (
+              <button
+                key={d.dow}
+                onClick={() => setDayFilter(active ? "all" : d.dow)}
+                disabled={empty && !active}
+                className={`shrink-0 h-9 px-2.5 rounded-md flex items-center gap-1.5 text-xs transition-colors ${
+                  active
+                    ? "bg-foreground text-background"
+                    : d.isToday
+                      ? "text-primary hover:bg-muted"
+                      : empty
+                        ? "text-muted-foreground/40 cursor-not-allowed"
+                        : "text-muted-foreground hover:bg-muted"
+                }`}
+              >
+                <span className="font-medium">{WEEK_SHORT[d.dow]}</span>
+                <span className="tabular-nums opacity-80">{d.date.getDate()}</span>
+                {d.count > 0 && (
+                  <span className={`ml-0.5 text-[10px] tabular-nums ${active ? "opacity-90" : "opacity-60"}`}>
+                    ·{d.count}
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+          <Input
+            placeholder="Buscar cliente, placa ou modelo"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="pl-9 h-9 bg-muted/30 border-transparent focus-visible:bg-background focus-visible:border-input"
+          />
+        </div>
       </div>
 
-      {/* Busca */}
-      <div className="relative">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-        <Input
-          placeholder="Buscar por cliente, placa ou modelo…"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="pl-9 h-9"
-        />
-      </div>
-
-      {/* Em atraso — destaque */}
+      {/* Em atraso */}
       {filteredOverdue.length > 0 && (
-        <section className="rounded-xl border border-destructive/40 bg-destructive/5 overflow-hidden">
-          <div className="flex items-center justify-between gap-2 px-3 py-2 border-b border-destructive/20 bg-destructive/10">
-            <div className="flex items-center gap-2">
-              <AlertTriangle className="h-4 w-4 text-destructive" />
-              <span className="text-sm font-semibold text-destructive">Em atraso</span>
-              <Badge variant="destructive" className="h-5 px-1.5 text-[10px]">{filteredOverdue.length}</Badge>
+        <section>
+          <div className="flex items-baseline justify-between mb-2 px-1">
+            <div className="flex items-baseline gap-2">
+              <span className="text-xs font-semibold uppercase tracking-wide text-destructive">Em atraso</span>
+              <span className="text-[11px] text-muted-foreground tabular-nums">{filteredOverdue.length}</span>
             </div>
-            <span className="text-xs font-semibold text-destructive">{fmtBRL(filteredOverdue.reduce((s, i) => s + (i.entry.valor || 0), 0))}</span>
+            <span className="text-[11px] text-muted-foreground tabular-nums">
+              {fmtBRL(filteredOverdue.reduce((s, i) => s + (i.entry.valor || 0), 0))}
+            </span>
           </div>
-          <div className="divide-y">
+          <div className="rounded-lg border divide-y bg-card">
             {filteredOverdue.map((it) => (
               <RowItemView
                 key={it.entry.id}
@@ -586,44 +578,45 @@ export default function CobrancasSemanaPage() {
       )}
 
       {/* Semana */}
-      <section className="rounded-xl border bg-card overflow-hidden">
-        <div className="flex items-center justify-between gap-2 px-3 py-2 border-b bg-muted/30">
-          <div className="flex items-center gap-2">
-            <CalendarDays className="h-4 w-4 text-primary" />
-            <span className="text-sm font-semibold">
-              {dayFilter === "all"
-                ? "Semana atual"
-                : `${WEEK_LONG[dayFilter as number]}`}
+      <section>
+        <div className="flex items-baseline justify-between mb-2 px-1">
+          <div className="flex items-baseline gap-2">
+            <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              {dayFilter === "all" ? "Semana" : WEEK_LONG[dayFilter as number]}
             </span>
-            <Badge variant="secondary" className="h-5 px-1.5 text-[10px]">{filteredWeek.length}</Badge>
+            <span className="text-[11px] text-muted-foreground tabular-nums">{filteredWeek.length}</span>
           </div>
           {dayFilter !== "all" && (
-            <Button variant="ghost" size="sm" onClick={() => setDayFilter("all")} className="h-7 text-xs">
-              Mostrar semana toda
-            </Button>
+            <button onClick={() => setDayFilter("all")} className="text-[11px] text-muted-foreground hover:text-foreground">
+              Ver semana toda
+            </button>
           )}
         </div>
 
         {filteredWeek.length === 0 ? (
-          <div className="p-8 text-sm text-muted-foreground text-center">
+          <div className="rounded-lg border bg-card p-10 text-sm text-muted-foreground text-center">
             {weekItems.length === 0
-              ? "Nenhuma cobrança agendada para esta semana. 🎉"
-              : "Nenhuma cobrança para o filtro selecionado."}
+              ? "Nenhuma cobrança agendada para esta semana."
+              : "Nenhuma cobrança para este filtro."}
           </div>
         ) : (
-          <div>
+          <div className="space-y-4">
             {groupedWeek.map((g) => {
               const isToday = diffDays(today, g.date) === 0;
               return (
                 <div key={g.dow}>
-                  <div className={`px-3 py-1.5 text-xs font-semibold flex items-center gap-2 border-b ${
-                    isToday ? "bg-primary/10 text-primary" : "bg-muted/20 text-muted-foreground"
-                  }`}>
-                    <span>{WEEK_LONG[g.dow]} • {g.date.getDate()} {MONTH_SHORT[g.date.getMonth()]}</span>
-                    {isToday && <Badge className="h-4 px-1.5 text-[9px] bg-primary text-primary-foreground border-0">HOJE</Badge>}
-                    <span className="ml-auto opacity-70">{g.items.length} • {fmtBRL(g.items.reduce((s, i) => s + (i.entry.valor || 0), 0))}</span>
+                  <div className="flex items-baseline justify-between mb-1.5 px-1">
+                    <div className="flex items-baseline gap-2">
+                      <span className={`text-[11px] font-medium ${isToday ? "text-primary" : "text-muted-foreground"}`}>
+                        {WEEK_LONG[g.dow]} {g.date.getDate()}/{g.date.getMonth() + 1}
+                        {isToday && " · hoje"}
+                      </span>
+                    </div>
+                    <span className="text-[11px] text-muted-foreground tabular-nums">
+                      {g.items.length} · {fmtBRL(g.items.reduce((s, i) => s + (i.entry.valor || 0), 0))}
+                    </span>
                   </div>
-                  <div className="divide-y">
+                  <div className="rounded-lg border divide-y bg-card">
                     {g.items.map((it) => (
                       <RowItemView
                         key={it.entry.id}
