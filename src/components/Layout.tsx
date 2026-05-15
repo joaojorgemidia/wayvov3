@@ -100,5 +100,3 @@ export function Layout() {
     </SidebarProvider>
   );
 }
-// suppress unused import warning
-void isPrivacyEnabled;
