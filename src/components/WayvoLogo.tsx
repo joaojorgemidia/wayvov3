@@ -5,7 +5,7 @@ interface WayvoLogoProps {
 
 export function WayvoLogo({ variant = 'default', collapsed = false }: WayvoLogoProps) {
   const coral = '#E11D48';
-  const outer = variant === 'mono' ? (variant === 'dark' ? '#FAFAFA' : '#09090B') : coral;
+  const outer = variant === 'mono' ? '#09090B' : variant === 'dark' ? '#FAFAFA' : coral;
   const inner = variant === 'dark' ? '#FAFAFA' : '#09090B';
   const text  = variant === 'dark' ? '#FAFAFA' : '#09090B';
 

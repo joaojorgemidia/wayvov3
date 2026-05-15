@@ -208,7 +208,7 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
   }, [companies, resolvedCompanies]);
 
   const updateAsaasConfig = useCallback(async (id: string, config: AsaasConfig) => {
-    const { error } = await supabase.from("companies").update({ asaas_config: config }).eq("id", id);
+    const { error } = await supabase.from("companies").update({ asaas_config: config } as any).eq("id", id);
     if (error) {
       toast.error("Falha ao salvar configuração Asaas: " + error.message);
       return;
