@@ -9,6 +9,7 @@
 
 import { useSyncExternalStore } from "react";
 import type { Motorcycle, Client, Rental, Fine, Maintenance, FinancialEntry } from "@/lib/types";
+import { maskClient, maskMoto, maskRental, maskFine, maskMaintenance, maskFinancial } from "@/lib/privacy-mask";
 
 export interface BankAccountData {
   id: string;
@@ -81,13 +82,52 @@ export function isDataCacheInitialized(): boolean {
   return cache.initialized;
 }
 
+// ─── Privacy/Demo mask ──────────────────────────────────────────
+let privacyEnabled = false;
+const maskedCache: DataCache = {
+  motos: [], clients: [], rentals: [], fines: [], maintenance: [], financial: [], bankAccounts: [], initialized: false,
+};
+let maskedVersion = -1;
+
+function rebuildMaskedCache() {
+  maskedCache.motos = cache.motos.map(maskMoto);
+  maskedCache.clients = cache.clients.map(maskClient);
+  maskedCache.rentals = cache.rentals.map(maskRental);
+  maskedCache.fines = cache.fines.map(maskFine);
+  maskedCache.maintenance = cache.maintenance.map(maskMaintenance);
+  maskedCache.financial = cache.financial.map(maskFinancial);
+  maskedCache.bankAccounts = cache.bankAccounts;
+  maskedCache.initialized = cache.initialized;
+  maskedVersion = version;
+}
+
+function activeCache(): DataCache {
+  if (!privacyEnabled) return cache;
+  if (maskedVersion !== version) rebuildMaskedCache();
+  return maskedCache;
+}
+
+export function setPrivacyEnabled(v: boolean) {
+  if (privacyEnabled === v) return;
+  privacyEnabled = v;
+  notifyCacheChange();
+}
+
+export function isPrivacyEnabled(): boolean {
+  return privacyEnabled;
+}
+
 export function getDataCache(): DataCache {
+  return activeCache();
+}
+
+export function getRealDataCache(): DataCache {
   return cache;
 }
 
 export function useDataCacheSnapshot(): DataCache {
   useSyncExternalStore(subscribe, () => version, () => version);
-  return cache;
+  return activeCache();
 }
 
 export function setSaveCallback(cb: SaveCallback) {
@@ -95,6 +135,14 @@ export function setSaveCallback(cb: SaveCallback) {
 }
 
 export function getSaveCallback(): SaveCallback | null {
+  if (privacyEnabled) {
+    // Bloqueia gravações enquanto o modo de privacidade está ativo,
+    // evitando sobrescrever dados reais com versões mascaradas.
+    return async () => {
+      console.warn("[privacy] save bloqueado: modo demo ativo");
+      throw new Error("Modo demo ativo — desative para salvar alterações.");
+    };
+  }
   return _onSave;
 }
 
@@ -103,6 +151,11 @@ export function setBulkInsertCallback(cb: BulkInsertCallback) {
 }
 
 export function getBulkInsertCallback(): BulkInsertCallback | null {
+  if (privacyEnabled) {
+    return async () => {
+      throw new Error("Modo demo ativo — desative para salvar alterações.");
+    };
+  }
   return _onBulkInsert;
 }
 
