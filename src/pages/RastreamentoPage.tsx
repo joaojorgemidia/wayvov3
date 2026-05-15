@@ -169,7 +169,7 @@ function DeviceDetail({
       : []),
     {
       label: "IMEI",
-      value: <span className="font-mono text-[11px]">{track.imei}</span>,
+      value: <span className="font-mono text-[11px]">{displayImei}</span>,
     },
     {
       label: "Coordenada",
