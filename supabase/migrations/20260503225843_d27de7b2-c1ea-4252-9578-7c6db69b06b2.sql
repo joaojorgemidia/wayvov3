@@ -1,0 +1,1 @@
+ALTER TABLE public.financial_entries ADD COLUMN IF NOT EXISTS recorrencia_por_periodo integer DEFAULT 1;

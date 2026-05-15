@@ -1,0 +1,70 @@
+name: Deploy Lovable via FTP na Hostinger
+
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        run: npm install --legacy-peer-deps
+
+      - name: Build
+        run: npm run build
+        env:
+          VITE_SUPABASE_URL: "https://qmwfotbczcruxaoemfde.supabase.co"
+          VITE_SUPABASE_PUBLISHABLE_KEY: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFtd2ZvdGJjemNydXhhb2VtZmRlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzYzMzk3MzYsImV4cCI6MjA5MTkxNTczNn0.Dg_Tb8tQDcEKwWufK0K27qXu-_6Htk5gQ_oV_uUlGpU"
+          VITE_SUPABASE_PROJECT_ID: "qmwfotbczcruxaoemfde"
+
+      - name: Create SPA .htaccess
+        run: |
+          cat > dist/.htaccess << 'EOF'
+          <IfModule mod_rewrite.c>
+            RewriteEngine On
+            RewriteBase /
+            RewriteRule ^index\.html$ - [L]
+            RewriteCond %{REQUEST_FILENAME} !-f
+            RewriteCond %{REQUEST_FILENAME} !-d
+            RewriteRule . /index.html [L]
+          </IfModule>
+          <FilesMatch "index\.html$">
+            Header set Cache-Control "no-cache, no-store, must-revalidate"
+            Header set Pragma "no-cache"
+            Header set Expires "0"
+          </FilesMatch>
+          <FilesMatch "\.(js|css|woff2?|png|jpg|svg|ico)$">
+            Header set Cache-Control "public, max-age=31536000, immutable"
+          </FilesMatch>
+          EOF
+
+      - name: Deploy via FTP
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.6
+        with:
+          server: ${{ secrets.FTP_HOST }}
+          username: ${{ secrets.FTP_USER }}
+          password: ${{ secrets.FTP_PASS }}
+          protocol: ftp
+          port: 21
+          local-dir: dist/
+          server-dir: /
+          timeout: 120000
+          dangerous-clean-slate: true
+          dry-run: false
+          log-level: verbose
+          exclude: |
+            **/.git*
+            **/.git*/**
+            **/.github/**
+            **/node_modules/**

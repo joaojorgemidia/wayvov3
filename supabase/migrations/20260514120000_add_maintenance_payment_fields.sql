@@ -1,0 +1,5 @@
+ALTER TABLE public.maintenance
+  ADD COLUMN IF NOT EXISTS conta TEXT NOT NULL DEFAULT '',
+  ADD COLUMN IF NOT EXISTS data_pagamento_previsto DATE,
+  ADD COLUMN IF NOT EXISTS quem_paga TEXT NOT NULL DEFAULT 'locadora',
+  ADD COLUMN IF NOT EXISTS pagamento_realizado BOOLEAN NOT NULL DEFAULT false;

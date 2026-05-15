@@ -1,0 +1,1 @@
+ALTER TABLE public.bank_accounts ADD COLUMN IF NOT EXISTS conta_pagamento text;

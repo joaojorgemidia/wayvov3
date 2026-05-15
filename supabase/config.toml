@@ -1,0 +1,7 @@
+project_id = "qrruxxysyzdqvqcjsszy"
+
+[functions.signup-with-company]
+verify_jwt = false
+
+[functions.onetime-set-password]
+verify_jwt = false

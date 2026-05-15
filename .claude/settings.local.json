@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(git config:*)",
+      "Bash(npm run:*)",
+      "Bash(npx tsc *)",
+      "Bash(npx supabase *)",
+      "Bash(xargs grep -l \"CREATE TABLE.*clients\")",
+      "Bash(xargs grep -l \"ALTER TABLE.*clients\\\\|ALTER TABLE.*rentals\")"
+    ]
+  }
+}
