@@ -893,6 +893,7 @@ export default function FinanceiroPage() {
   const [onlyPendentes, setOnlyPendentes] = useState(false);
   const [onlyRecorrentes, setOnlyRecorrentes] = useState(false);
   const [dueFilter, setDueFilter] = useState<"all" | "atrasadas" | "hoje" | "amanha">("all");
+  const [ignoradasFilter, setIgnoradasFilter] = useState<"incluir" | "ocultar" | "somente">("incluir");
   const [dialogOpen, setDialogOpen] = useState(false);
   const [form, setForm] = useState<FinancialEntry>(emptyEntry());
   const [mode, setMode] = useState<"add" | "edit">("add");
