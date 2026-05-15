@@ -325,43 +325,51 @@ export default function RastreamentoPage() {
 
   // ── Nome de exibição: BrasilSat > apelido local > imei ───────────────────
   const getDisplayName = useCallback((imei: string, trackDeviceName?: string) => {
+    if (privacy) return maskPlaca(imei);
     // Nome cadastrado na BrasilSat (da lista ou do track)
     const brasilsatName = auth?.devices.find(d => d.imei === imei)?.deviceName || trackDeviceName || "";
     if (brasilsatName && brasilsatName !== imei) return brasilsatName;
     // Fallback: apelido local (se BrasilSat não tiver nome cadastrado)
     return customNames[imei] || imei;
-  }, [customNames, auth]);
+  }, [customNames, auth, privacy]);
 
   // ── Locações ativas (placa → nome do locatário) ─────────────────────────
   const normalizePlate = (s: string) => s.toUpperCase().replace(/[^A-Z0-9]/g, "");
 
+  // Sempre usa dados REAIS para o lookup (placas reais batem com nome real do
+  // dispositivo da BrasilSat). O mascaramento é aplicado depois, na exibição.
   const activeRentalsByPlate = React.useMemo(() => {
-    const motos = loadMotos();
-    const rentals = loadRentals().filter(r => r.status === "ativa");
-    const clients = loadClients();
-    const map = new Map<string, { plate: string; renter: string; motoId: string }>();
+    const real = getRealDataCache();
+    const motos = real.motos;
+    const rentals = real.rentals.filter(r => r.status === "ativa");
+    const clients = real.clients;
+    const map = new Map<string, { plate: string; renter: string; motoId: string; realPlate: string }>();
     for (const r of rentals) {
       const moto = motos.find(m => m.id === r.motoId);
       if (!moto?.placa) continue;
       const client = clients.find(c => c.id === r.clienteId);
+      const realName = client?.nome ?? "—";
       map.set(normalizePlate(moto.placa), {
-        plate: moto.placa,
-        renter: client?.nome ?? "—",
+        plate: privacy ? maskPlaca(moto.id) : moto.placa,
+        realPlate: moto.placa,
+        renter: privacy && client ? maskName(client.id || client.cpf || client.nome) : realName,
         motoId: moto.id,
       });
     }
     return map;
-  }, [tracks, auth]); // recompute when tracks/auth refresh (cheap)
+  }, [tracks, auth, privacy]); // recompute when tracks/auth refresh (cheap)
 
   // ── Locatário atual do dispositivo (via placa → moto → locação ativa) ────
   const getRenterName = useCallback((imei: string, trackDeviceName?: string): string => {
-    const name = normalizePlate(getDisplayName(imei, trackDeviceName));
-    if (!name) return "";
+    // Sempre usa o nome REAL do dispositivo da BrasilSat para o lookup
+    const realName = (auth?.devices.find(d => d.imei === imei)?.deviceName || trackDeviceName || customNames[imei] || imei).toUpperCase();
+    const norm = normalizePlate(realName);
+    if (!norm) return "";
     for (const [plate, info] of activeRentalsByPlate) {
-      if (name.includes(plate)) return info.renter;
+      if (norm.includes(plate)) return info.renter;
     }
     return "";
-  }, [getDisplayName, activeRentalsByPlate]);
+  }, [activeRentalsByPlate, auth, customNames]);
 
   // ── Token ─────────────────────────────────────────────────────────────────
   const getValidToken = useCallback(async (): Promise<string> => {
