@@ -894,6 +894,63 @@ export default function TrocaOleoPage() {
   );
 }
 
+// ============== Snooze Button (Adiar lembrete) ==============
+function SnoozeButton({ motoId, placa }: { motoId: string; placa: string }) {
+  const [until, setUntil] = useState<string | null>(() => getSnoozeUntil(motoId));
+  useEffect(() => onSnoozeChange(() => setUntil(getSnoozeUntil(motoId))), [motoId]);
+  const snoozed = until !== null;
+  const apply = (days: number) => {
+    snoozeMoto(motoId, days);
+    const d = new Date();
+    d.setDate(d.getDate() + days);
+    toast.success(
+      `Lembrete da ${placa} adiado para ${d.toLocaleDateString("pt-BR")} (vencimento real não muda)`,
+    );
+  };
+  const clear = () => {
+    clearSnooze(motoId);
+    toast.success(`Lembrete da ${placa} reativado`);
+  };
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          className={cn(
+            "p-1.5 rounded-md transition-colors",
+            snoozed
+              ? "text-warning hover:bg-warning/10"
+              : "text-muted-foreground hover:text-foreground hover:bg-muted",
+          )}
+          title={
+            snoozed
+              ? `Lembrete adiado até ${new Date(until! + "T00:00:00").toLocaleDateString("pt-BR")}`
+              : "Adiar lembrete (não altera vencimento)"
+          }
+        >
+          {snoozed ? <BellOff className="h-4 w-4" /> : <Clock className="h-4 w-4" />}
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-56">
+        <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
+          Adiar lembrete · não muda vencimento
+        </DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem onClick={() => apply(1)}>+1 dia</DropdownMenuItem>
+        <DropdownMenuItem onClick={() => apply(3)}>+3 dias</DropdownMenuItem>
+        <DropdownMenuItem onClick={() => apply(7)}>+7 dias</DropdownMenuItem>
+        {snoozed && (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={clear} className="text-destructive">
+              Reativar lembrete agora
+            </DropdownMenuItem>
+          </>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
 // ============== Oil Table (lista reutilizável) ==============
 function OilTable({
   motos, motoStatusMap, motoClientMap,
