@@ -9,6 +9,8 @@ import {
   type DeviceTrack, type PlaybackPoint, type AlarmRecord,
 } from "@/lib/brasilsat";
 import { loadMotos, loadRentals, loadClients } from "@/lib/store";
+import { isPrivacyEnabled, getRealDataCache, useDataCacheSnapshot } from "@/lib/data-cache";
+import { maskPlaca, maskName, maskImei } from "@/lib/privacy-mask";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -112,6 +114,7 @@ interface DeviceDetailProps {
   track: DeviceTrack;
   device: DeviceInfo;
   displayName: string;
+  displayImei: string;
   relayLoading: boolean;
   onClose: () => void;
   onRename: () => void;
@@ -121,7 +124,7 @@ interface DeviceDetailProps {
 }
 
 function DeviceDetail({
-  track, device, displayName, relayLoading,
+  track, device, displayName, displayImei, relayLoading,
   onClose, onRename, onBlock, onUnblock, onUpdateKm,
 }: DeviceDetailProps) {
   const { color } = statusLabel(track);
@@ -166,7 +169,7 @@ function DeviceDetail({
       : []),
     {
       label: "IMEI",
-      value: <span className="font-mono text-[11px]">{track.imei}</span>,
+      value: <span className="font-mono text-[11px]">{displayImei}</span>,
     },
     {
       label: "Coordenada",
@@ -264,6 +267,10 @@ interface AuthState { token: BrasilSatToken; devices: DeviceInfo[] }
 
 // ─── Página principal ─────────────────────────────────────────────────────────
 export default function RastreamentoPage() {
+  // Re-render quando o modo demo é ativado/desativado
+  useDataCacheSnapshot();
+  const privacy = isPrivacyEnabled();
+
   const [auth, setAuth]             = useState<AuthState | null>(null);
   const [config, setConfig]         = useState<BrasilSatConfig>(
     () => loadBrasilSatConfig() ?? { account: "", password: "" },
@@ -319,43 +326,51 @@ export default function RastreamentoPage() {
 
   // ── Nome de exibição: BrasilSat > apelido local > imei ───────────────────
   const getDisplayName = useCallback((imei: string, trackDeviceName?: string) => {
+    if (privacy) return maskPlaca(imei);
     // Nome cadastrado na BrasilSat (da lista ou do track)
     const brasilsatName = auth?.devices.find(d => d.imei === imei)?.deviceName || trackDeviceName || "";
     if (brasilsatName && brasilsatName !== imei) return brasilsatName;
     // Fallback: apelido local (se BrasilSat não tiver nome cadastrado)
     return customNames[imei] || imei;
-  }, [customNames, auth]);
+  }, [customNames, auth, privacy]);
 
   // ── Locações ativas (placa → nome do locatário) ─────────────────────────
   const normalizePlate = (s: string) => s.toUpperCase().replace(/[^A-Z0-9]/g, "");
 
+  // Sempre usa dados REAIS para o lookup (placas reais batem com nome real do
+  // dispositivo da BrasilSat). O mascaramento é aplicado depois, na exibição.
   const activeRentalsByPlate = React.useMemo(() => {
-    const motos = loadMotos();
-    const rentals = loadRentals().filter(r => r.status === "ativa");
-    const clients = loadClients();
-    const map = new Map<string, { plate: string; renter: string; motoId: string }>();
+    const real = getRealDataCache();
+    const motos = real.motos;
+    const rentals = real.rentals.filter(r => r.status === "ativa");
+    const clients = real.clients;
+    const map = new Map<string, { plate: string; renter: string; motoId: string; realPlate: string }>();
     for (const r of rentals) {
       const moto = motos.find(m => m.id === r.motoId);
       if (!moto?.placa) continue;
       const client = clients.find(c => c.id === r.clienteId);
+      const realName = client?.nome ?? "—";
       map.set(normalizePlate(moto.placa), {
-        plate: moto.placa,
-        renter: client?.nome ?? "—",
+        plate: privacy ? maskPlaca(moto.id) : moto.placa,
+        realPlate: moto.placa,
+        renter: privacy && client ? maskName(client.id || client.cpf || client.nome) : realName,
         motoId: moto.id,
       });
     }
     return map;
-  }, [tracks, auth]); // recompute when tracks/auth refresh (cheap)
+  }, [tracks, auth, privacy]); // recompute when tracks/auth refresh (cheap)
 
   // ── Locatário atual do dispositivo (via placa → moto → locação ativa) ────
   const getRenterName = useCallback((imei: string, trackDeviceName?: string): string => {
-    const name = normalizePlate(getDisplayName(imei, trackDeviceName));
-    if (!name) return "";
+    // Sempre usa o nome REAL do dispositivo da BrasilSat para o lookup
+    const realName = (auth?.devices.find(d => d.imei === imei)?.deviceName || trackDeviceName || customNames[imei] || imei).toUpperCase();
+    const norm = normalizePlate(realName);
+    if (!norm) return "";
     for (const [plate, info] of activeRentalsByPlate) {
-      if (name.includes(plate)) return info.renter;
+      if (norm.includes(plate)) return info.renter;
     }
     return "";
-  }, [getDisplayName, activeRentalsByPlate]);
+  }, [activeRentalsByPlate, auth, customNames]);
 
   // ── Token ─────────────────────────────────────────────────────────────────
   const getValidToken = useCallback(async (): Promise<string> => {
@@ -369,15 +384,16 @@ export default function RastreamentoPage() {
 
   // ── Sincronização km moto → rastreador ────────────────────────────────────
   const syncKm = useCallback(async (freshTracks: DeviceTrack[]) => {
-    const motos = loadMotos();
+    // Usa dados REAIS para que o sync funcione mesmo com modo demo ativo
+    const motos = getRealDataCache().motos;
     if (!motos.length || !freshTracks.length) return;
     let token: string;
     try { token = await getValidToken(); } catch { return; }
 
     for (const track of freshTracks) {
-      const name = getDisplayName(track.imei, track.deviceName).toUpperCase();
-      if (!name) continue;
-      const moto = motos.find(m => m.placa && name.includes(m.placa.toUpperCase()));
+      // Nome REAL do dispositivo (não o mascarado)
+      const realName = (auth?.devices.find(d => d.imei === track.imei)?.deviceName || track.deviceName || customNames[track.imei] || track.imei).toUpperCase();
+      const moto = motos.find(m => m.placa && realName.includes(m.placa.toUpperCase()));
       if (!moto || moto.kmAtual == null) continue;
       if (syncedKmRef.current.get(track.imei) === moto.kmAtual) continue;
       const trackerKm = track.mileage ?? 0;
@@ -391,7 +407,7 @@ export default function RastreamentoPage() {
         }
       }
     }
-  }, [getValidToken, customNames, getDisplayName]);
+  }, [getValidToken, customNames, getDisplayName, auth]);
 
   // ── Conexão ────────────────────────────────────────────────────────────────
   const connect = useCallback(async (cfg: BrasilSatConfig) => {
@@ -827,6 +843,7 @@ export default function RastreamentoPage() {
                     track={selectedTrack}
                     device={selectedDevice}
                     displayName={getDisplayName(selectedImei, selectedTrack.deviceName)}
+                    displayImei={privacy ? maskImei(selectedImei) : selectedImei}
                     relayLoading={relayLoading.has(selectedImei)}
                     onClose={() => setSelectedImei(null)}
                     onRename={() => { setRenameValue(getDisplayName(selectedImei, selectedTrack.deviceName)); setRenameOpen(true); }}
@@ -929,7 +946,7 @@ export default function RastreamentoPage() {
                       <AlertTriangle className="h-4 w-4 text-amber-500 mt-0.5 shrink-0" />
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-medium">{a.alarmTypeName}</p>
-                        {a.address && <p className="text-xs text-muted-foreground truncate">{a.address}</p>}
+                        {a.address && !privacy && <p className="text-xs text-muted-foreground truncate">{a.address}</p>}
                         <p className="text-xs text-muted-foreground">{fmtTime(a.gpstime)}</p>
                       </div>
                       <div className="text-right shrink-0">

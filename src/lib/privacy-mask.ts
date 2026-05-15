@@ -101,6 +101,11 @@ export function maskChassi(seed: string): string {
   return out;
 }
 
+export function maskImei(seed: string): string {
+  if (!seed) return seed;
+  return digits("imei:" + seed, 15);
+}
+
 export function maskRenavam(seed: string): string {
   if (!seed) return seed;
   return digits("rv:" + seed, 11);
