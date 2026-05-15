@@ -1010,6 +1010,9 @@ function OilTable({
                           <Send className="h-4 w-4" />
                         </button>
                       )}
+                      {status.situation === "vencida" && (
+                        <SnoozeButton motoId={m.id} placa={m.placa} />
+                      )}
                       <Checkbox
                         checked={false}
                         onCheckedChange={() => onRegistrar(m)}
