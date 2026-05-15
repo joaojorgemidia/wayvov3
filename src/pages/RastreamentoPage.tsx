@@ -266,6 +266,10 @@ interface AuthState { token: BrasilSatToken; devices: DeviceInfo[] }
 
 // ─── Página principal ─────────────────────────────────────────────────────────
 export default function RastreamentoPage() {
+  // Re-render quando o modo demo é ativado/desativado
+  useDataCacheSnapshot();
+  const privacy = isPrivacyEnabled();
+
   const [auth, setAuth]             = useState<AuthState | null>(null);
   const [config, setConfig]         = useState<BrasilSatConfig>(
     () => loadBrasilSatConfig() ?? { account: "", password: "" },
