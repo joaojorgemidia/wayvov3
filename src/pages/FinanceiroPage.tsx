@@ -2616,6 +2616,21 @@ export default function FinanceiroPage() {
                   </button>
                 ))}
               </div>
+              <div className="inline-flex rounded-lg border border-border/60 overflow-hidden bg-background" title="Transações ignoradas não entram nos totais">
+                {([
+                  { key: "incluir", label: "Com ignoradas" },
+                  { key: "ocultar", label: "Sem ignoradas" },
+                  { key: "somente", label: "Só ignoradas" },
+                ] as const).map(chip => (
+                  <button key={chip.key}
+                    onClick={() => setIgnoradasFilter(chip.key)}
+                    className={`px-2.5 py-1.5 text-xs font-medium transition-colors ${
+                      ignoradasFilter === chip.key ? "bg-muted text-foreground" : "text-muted-foreground hover:bg-muted/50"
+                    }`}>
+                    {chip.label}
+                  </button>
+                ))}
+              </div>
               <div className="relative flex-1 min-w-[200px]">
                 <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
                 <input className="w-full bg-background border border-border/50 rounded-lg pl-8 pr-3 py-1.5 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
