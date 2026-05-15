@@ -135,6 +135,14 @@ export function setSaveCallback(cb: SaveCallback) {
 }
 
 export function getSaveCallback(): SaveCallback | null {
+  if (privacyEnabled) {
+    // Bloqueia gravações enquanto o modo de privacidade está ativo,
+    // evitando sobrescrever dados reais com versões mascaradas.
+    return async () => {
+      console.warn("[privacy] save bloqueado: modo demo ativo");
+      throw new Error("Modo demo ativo — desative para salvar alterações.");
+    };
+  }
   return _onSave;
 }
 
@@ -143,6 +151,11 @@ export function setBulkInsertCallback(cb: BulkInsertCallback) {
 }
 
 export function getBulkInsertCallback(): BulkInsertCallback | null {
+  if (privacyEnabled) {
+    return async () => {
+      throw new Error("Modo demo ativo — desative para salvar alterações.");
+    };
+  }
   return _onBulkInsert;
 }
 
