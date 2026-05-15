@@ -53,6 +53,8 @@ export function useCollections(): UseCollectionsReturn {
   });
   const [followups, setFollowups] = useState<CollectionFollowup[]>([]);
   const [loading, setLoading] = useState(true);
+  const [snoozeTick, setSnoozeTick] = useState(0);
+  useEffect(() => onOleoSnoozeChange(() => setSnoozeTick((t) => t + 1)), []);
 
   const fetchAll = useCallback(async () => {
     if (!cid) return;
