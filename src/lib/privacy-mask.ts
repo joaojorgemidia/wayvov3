@@ -60,6 +60,19 @@ export function maskCpf(seed: string): string {
   return `${d.slice(0,3)}.${d.slice(3,6)}.${d.slice(6,9)}-${d.slice(9,11)}`;
 }
 
+export function maskCnpj(seed: string): string {
+  if (!seed) return seed;
+  const d = digits("cnpj:" + seed, 14);
+  return `${d.slice(0,2)}.${d.slice(2,5)}.${d.slice(5,8)}/${d.slice(8,12)}-${d.slice(12,14)}`;
+}
+
+export function maskCompanyName(seed: string): string {
+  if (!seed) return seed;
+  const suffixes = ["Locadora","Motos","Rental","Frota","Fleet","Mobilidade"];
+  const tags = ["Demo","Alpha","Beta","Prime","Plus","Star","Pro"];
+  return `${pick(suffixes, "co1:" + seed)} ${pick(tags, "co2:" + seed)}`;
+}
+
 export function maskCnh(seed: string): string {
   if (!seed) return seed;
   return digits("cnh:" + seed, 11);

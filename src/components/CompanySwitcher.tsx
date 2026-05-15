@@ -9,10 +9,16 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { Label } from "@/components/ui/label";
 import { useAuth } from "@/contexts/AuthContext";
 import { cn } from "@/lib/utils";
+import { isPrivacyEnabled, useDataCacheSnapshot } from "@/lib/data-cache";
+import { maskCompanyName, maskCnpj } from "@/lib/privacy-mask";
 
 export function CompanySwitcher() {
   const { companies, activeCompany, switchCompany, addCompany, updateCompany, removeCompany } = useCompany();
   const { isAdmin } = useAuth();
+  useDataCacheSnapshot();
+  const privacy = isPrivacyEnabled();
+  const dispNome = (c: { id: string; nome: string }) => privacy ? maskCompanyName(c.id || c.nome) : c.nome;
+  const dispCnpj = (c: { id: string; cnpj: string }) => privacy && c.cnpj ? maskCnpj(c.id || c.cnpj) : c.cnpj;
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -62,9 +68,9 @@ export function CompanySwitcher() {
                 <Building2 className="h-4 w-4 text-primary" />
               </div>
               <div className="text-left">
-                <p className="text-sm font-semibold leading-none">{activeCompany.nome}</p>
+                <p className="text-sm font-semibold leading-none">{dispNome(activeCompany)}</p>
                 {activeCompany.cnpj && (
-                  <p className="text-[10px] text-muted-foreground leading-tight mt-0.5">{activeCompany.cnpj}</p>
+                  <p className="text-[10px] text-muted-foreground leading-tight mt-0.5">{dispCnpj(activeCompany)}</p>
                 )}
               </div>
             </div>
@@ -105,8 +111,8 @@ export function CompanySwitcher() {
                     <Building2 className="h-4 w-4 text-primary" />
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium truncate">{c.nome}</p>
-                    {c.cnpj && <p className="text-[10px] text-muted-foreground">{c.cnpj}</p>}
+                    <p className="text-sm font-medium truncate">{dispNome(c)}</p>
+                    {c.cnpj && <p className="text-[10px] text-muted-foreground">{dispCnpj(c)}</p>}
                   </div>
                   {c.id === activeCompany.id && <Check className="h-4 w-4 text-primary shrink-0" />}
                 </button>
