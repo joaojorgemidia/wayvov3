@@ -1,0 +1,1 @@
+DELETE FROM public.collection_rules WHERE jsonb_array_length(stages) = 0;

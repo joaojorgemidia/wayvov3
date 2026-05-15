@@ -1,0 +1,80 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap');
+
+@layer base {
+  :root {
+    /* Superfícies */
+    --background: 220 20% 97%;
+    --foreground: 222 47% 11%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 222 47% 11%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 47% 11%;
+
+    /* Chama — cor primária da marca */
+    --primary: 347 77% 48%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 220 14% 92%;
+    --secondary-foreground: 222 47% 11%;
+
+    --muted: 220 14% 94%;
+    --muted-foreground: 215 16% 47%;
+
+    --accent: 220 14% 92%;
+    --accent-foreground: 222 47% 11%;
+
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+
+    --warning: 38 88% 44%;
+    --warning-foreground: 0 0% 100%;
+
+    --success: 142 70% 40%;
+    --success-foreground: 0 0% 100%;
+
+    --border: 218 16% 88%;
+    --input: 218 16% 88%;
+    --ring: 347 77% 48%;
+
+    /* Bordas menos arredondadas — mais sério */
+    --radius: 0.375rem;
+
+    /* Sidebar escura — modelo Linear/Vercel */
+    --sidebar-background: 222 30% 15%;
+    --sidebar-foreground: 215 30% 82%;
+    --sidebar-primary: 0 0% 97%;
+    --sidebar-primary-foreground: 222 47% 9%;
+    --sidebar-accent: 222 25% 21%;
+    --sidebar-accent-foreground: 0 0% 97%;
+    --sidebar-border: 222 20% 22%;
+    --sidebar-ring: 347 77% 48%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-family: 'Inter', sans-serif;
+  }
+
+  h1, h2, h3 {
+    font-family: 'Inter', sans-serif;
+    font-weight: 800;
+    letter-spacing: -0.025em;
+  }
+}
+
+/* Classe utilitária para dados numéricos */
+.font-data {
+  font-family: 'JetBrains Mono', monospace;
+}
