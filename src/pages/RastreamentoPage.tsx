@@ -843,6 +843,7 @@ export default function RastreamentoPage() {
                     track={selectedTrack}
                     device={selectedDevice}
                     displayName={getDisplayName(selectedImei, selectedTrack.deviceName)}
+                    displayImei={privacy ? maskImei(selectedImei) : selectedImei}
                     relayLoading={relayLoading.has(selectedImei)}
                     onClose={() => setSelectedImei(null)}
                     onRename={() => { setRenameValue(getDisplayName(selectedImei, selectedTrack.deviceName)); setRenameOpen(true); }}
