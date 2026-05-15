@@ -10,7 +10,7 @@ import { Label } from "@/components/ui/label";
 import { useAuth } from "@/contexts/AuthContext";
 import { cn } from "@/lib/utils";
 import { isPrivacyEnabled, useDataCacheSnapshot } from "@/lib/data-cache";
-import { maskName, maskCnpj } from "@/lib/privacy-mask";
+import { maskCompanyName, maskCnpj } from "@/lib/privacy-mask";
 
 export function CompanySwitcher() {
   const { companies, activeCompany, switchCompany, addCompany, updateCompany, removeCompany } = useCompany();
