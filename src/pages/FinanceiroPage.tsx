@@ -2734,7 +2734,7 @@ export default function FinanceiroPage() {
               <div className="flex items-center gap-4">
                 {hasActiveFilters ? (
                   <span className="font-semibold text-foreground">
-                    Total filtrado: R$ {filtered.filter(e => !e.ignorada).reduce((s, e) => s + e.valor, 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                    Total filtrado: R$ {filtered.filter(e => ignoradasFilter === "somente" ? true : !e.ignorada).reduce((s, e) => s + e.valor, 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
                   </span>
                 ) : (
                   <span className="font-medium text-warning">Pendente: R$ {filteredTotals.totalPendente.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</span>
