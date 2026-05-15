@@ -243,6 +243,9 @@ export function useCollections(): UseCollectionsReturn {
       if (!activeRentalOleo) continue;
       const status = getOilStatus(m, brandCfg, globalCfg, cache.rentals);
       if (status.situation !== "vencida") continue;
+      // Lembrete adiado pelo usuário: não aparecer na fila de cobranças
+      // até a data definida (não altera o vencimento real).
+      if (isOleoSnoozed(m.id)) continue;
       // due date = momento em que ficou vencida (última troca + overdueDays)
       const overdueDays = globalCfg.overdueDays ?? 10;
       const diasDesde = status.diasDesdeUltima ?? overdueDays + 1;
