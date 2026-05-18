@@ -272,6 +272,34 @@ export default function TrocaOleoPage() {
     motoId?: string;
   }>({ open: false, title: "", mensagem: "", placa: "", cliente: "", telefone: "", highlights: [], templateKey: "", tokens: {} });
 
+  // Snooze: adiar notificação de troca vencida → move para "em dia" por N dias.
+  // Ao expirar, volta como "vencida" com contagem zerada (1 dia vencido no retorno).
+  const SNOOZE_KEY = "wayvo:troca-oleo:snooze";
+  const [snoozeMap, setSnoozeMap] = useState<Record<string, string>>(() => {
+    try {
+      const raw = localStorage.getItem("wayvo:troca-oleo:snooze");
+      return raw ? JSON.parse(raw) : {};
+    } catch {
+      return {};
+    }
+  });
+  const [snoozeDialog, setSnoozeDialog] = useState<{ open: boolean; moto: Motorcycle | null; days: number }>({
+    open: false, moto: null, days: 3,
+  });
+
+  function handleSnooze(moto: Motorcycle, days: number) {
+    const until = new Date();
+    until.setDate(until.getDate() + days);
+    const iso = until.toISOString().slice(0, 10);
+    setSnoozeMap((prev) => {
+      const next = { ...prev, [moto.id]: iso };
+      try { localStorage.setItem(SNOOZE_KEY, JSON.stringify(next)); } catch { /* ignora */ }
+      return next;
+    });
+    setSnoozeDialog({ open: false, moto: null, days: 3 });
+    toast.success(`Adiada por ${days} dia${days !== 1 ? "s" : ""} — volta em ${until.toLocaleDateString("pt-BR")}`);
+  }
+
   // Motos já contactadas (popup fechado) → vão para o FINAL da fila para
   // ajudar a entender quem já entramos em contato. Persistido em localStorage.
   const CONTACTED_KEY = "wayvo:troca-oleo:contacted";
@@ -307,12 +335,34 @@ export default function TrocaOleoPage() {
     });
   }, [kmBounds.max, kmBounds.min]);
 
-  // Status calculado por moto
+  // Status calculado por moto (com snooze aplicado)
   const motoStatusMap = useMemo(() => {
     const map = new Map<string, ReturnType<typeof getOilStatus>>();
-    motos.forEach((m) => map.set(m.id, getOilStatus(m, brandConfig, globalConfig, rentals)));
+    const msDia = 1000 * 60 * 60 * 24;
+    const todayMs = new Date().setHours(0, 0, 0, 0);
+    motos.forEach((m) => {
+      let status = getOilStatus(m, brandConfig, globalConfig, rentals);
+      const snoozeUntil = snoozeMap[m.id];
+      if (snoozeUntil && status.situation === "vencida") {
+        const snoozeMs = new Date(snoozeUntil).setHours(0, 0, 0, 0);
+        if (todayMs < snoozeMs) {
+          // Ainda no período de adiamento → exibe como "em dia"
+          status = { ...status, situation: "ok", label: `Adiada até ${formatDate(snoozeUntil)}` };
+        } else {
+          // Adiamento expirou → dias de atraso contam a partir da expiração (1 dia no retorno)
+          const diasAposSnooze = Math.floor((todayMs - snoozeMs) / msDia) + 1;
+          const kmPart = status.kmAtraso > 0 ? ` · +${status.kmAtraso.toLocaleString("pt-BR")} km` : "";
+          status = {
+            ...status,
+            diasDesdeUltima: diasAposSnooze,
+            label: `Vencida (${diasAposSnooze} dia${diasAposSnooze !== 1 ? "s" : ""} vencido${kmPart})`,
+          };
+        }
+      }
+      map.set(m.id, status);
+    });
     return map;
-  }, [motos, brandConfig, globalConfig, rentals]);
+  }, [motos, brandConfig, globalConfig, rentals, snoozeMap]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toUpperCase();
@@ -446,6 +496,15 @@ export default function TrocaOleoPage() {
     persistMotos(next);
     setRegisterMoto(null);
     setNewDialogOpen(false);
+    // Remove snooze ao registrar nova troca
+    if (snoozeMap[moto.id]) {
+      setSnoozeMap((prev) => {
+        const n = { ...prev };
+        delete n[moto.id];
+        try { localStorage.setItem(SNOOZE_KEY, JSON.stringify(n)); } catch { /* ignora */ }
+        return n;
+      });
+    }
 
     const cfg = brandConfigFor(moto.modelo, brandConfig);
     const proxOleoKm = km + cfg.oilKm;
@@ -785,6 +844,7 @@ export default function TrocaOleoPage() {
             onEdit={setEditMoto}
             onCobrar={handleCobrarAtraso}
             onRegistrar={(m) => { setRegisterMoto(m); setNewDialogOpen(true); }}
+            onSnooze={(m) => setSnoozeDialog({ open: true, moto: m, days: 3 })}
             emptyMessage="🎉 Nenhuma moto com troca vencida."
           />
         </CardContent>
@@ -890,6 +950,52 @@ export default function TrocaOleoPage() {
         templateKey={messagePopup.templateKey}
         tokens={messagePopup.tokens}
       />
+
+      <Dialog
+        open={snoozeDialog.open}
+        onOpenChange={(o) => !o && setSnoozeDialog((p) => ({ ...p, open: false }))}
+      >
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Adiar notificação</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <p className="text-sm text-muted-foreground">
+              A moto <strong>{snoozeDialog.moto?.placa}</strong> será movida para{" "}
+              <strong>Trocas em Dia</strong> e voltará para <strong>Vencidas</strong> com{" "}
+              <strong>1 dia vencido</strong> após o período selecionado.
+            </p>
+            <div className="space-y-2">
+              <Label htmlFor="snooze-days">Adiar por (dias)</Label>
+              <Input
+                id="snooze-days"
+                type="number"
+                min={1}
+                max={90}
+                value={snoozeDialog.days}
+                onChange={(e) =>
+                  setSnoozeDialog((p) => ({
+                    ...p,
+                    days: Math.max(1, Math.min(90, parseInt(e.target.value) || 1)),
+                  }))
+                }
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setSnoozeDialog((p) => ({ ...p, open: false }))}>
+              Cancelar
+            </Button>
+            <Button
+              onClick={() =>
+                snoozeDialog.moto && handleSnooze(snoozeDialog.moto, snoozeDialog.days)
+              }
+            >
+              Confirmar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -954,7 +1060,7 @@ function SnoozeButton({ motoId, placa }: { motoId: string; placa: string }) {
 // ============== Oil Table (lista reutilizável) ==============
 function OilTable({
   motos, motoStatusMap, motoClientMap,
-  expanded, onToggleExpand, onEdit, onCobrar, onRegistrar, emptyMessage,
+  expanded, onToggleExpand, onEdit, onCobrar, onRegistrar, onSnooze, emptyMessage,
 }: {
   motos: Motorcycle[];
   motoStatusMap: Map<string, ReturnType<typeof getOilStatus>>;
@@ -964,6 +1070,7 @@ function OilTable({
   onEdit: (m: Motorcycle) => void;
   onCobrar: (m: Motorcycle) => void;
   onRegistrar: (m: Motorcycle) => void;
+  onSnooze?: (m: Motorcycle) => void;
   emptyMessage: string;
 }) {
   return (

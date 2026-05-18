@@ -69,6 +69,7 @@ export function dbToClient(r: any): Client {
     emergenciaNome1: r.emergencia_nome1 || "", emergenciaTel1: r.emergencia_tel1 || "",
     emergenciaNome2: r.emergencia_nome2 || "", emergenciaTel2: r.emergencia_tel2 || "",
     observacoes: r.observacoes || "", createdAt: r.created_at || "",
+    asaasCustomerId: r.asaas_customer_id || null,
   };
 }
 
@@ -159,11 +160,14 @@ export function dbToMaintenance(r: any): Maintenance {
     data: r.data || "", dataFim: r.data_fim || null, km: r.km ?? null, custo: Number(r.custo) || 0,
     descricao: r.descricao || "", fornecedor: r.fornecedor || "",
     status: r.status || "agendada",
-    natureza: r.natureza || "manutencao",
+    natureza: r.natureza || "corretiva",
     oficina: r.oficina || "",
     conta: r.conta || "",
     quemPaga: r.quem_paga || "locadora",
     itens: r.itens || [],
+    numeroOS: r.numero_os || null,
+    dataPagamentoPrevisto: r.data_pagamento_previsto || null,
+    pagamentoRealizado: r.pagamento_realizado ?? false,
   };
 }
 
@@ -171,6 +175,11 @@ export function maintenanceToDb(m: Maintenance): any {
   return {
     moto_id: m.motoId, tipo: m.tipo, data: m.data, data_fim: m.dataFim || null, km: m.km,
     custo: m.custo, descricao: m.descricao, fornecedor: m.fornecedor, status: m.status,
+    natureza: m.natureza || null, oficina: m.oficina || null, conta: m.conta || null,
+    quem_paga: m.quemPaga || null, itens: m.itens || [],
+    numero_os: m.numeroOS || null,
+    data_pagamento_previsto: m.dataPagamentoPrevisto || null,
+    pagamento_realizado: m.pagamentoRealizado || false,
   };
 }
 
@@ -193,6 +202,10 @@ export function dbToFinancial(r: any): FinancialEntry {
     serieId: r.serie_id || undefined, fixedOriginId: r.fixed_origin_id || undefined,
     recurringGroupId: r.recurring_group_id || null,
     createdAt: r.created_at || undefined,
+    asaasPaymentId: r.asaas_payment_id || null,
+    asaasStatus: r.asaas_status || null,
+    asaasBoletoUrl: r.asaas_boleto_url || null,
+    asaasInvoiceUrl: r.asaas_invoice_url || null,
   };
 }
 
@@ -213,6 +226,10 @@ export function financialToDb(e: FinancialEntry): any {
     classificacao_manual: e.classificacaoManual || false,
     serie_id: e.serieId || null, fixed_origin_id: e.fixedOriginId || null,
     recurring_group_id: e.recurringGroupId || null,
+    asaas_payment_id: e.asaasPaymentId || null,
+    asaas_status: e.asaasStatus || null,
+    asaas_boleto_url: e.asaasBoletoUrl || null,
+    asaas_invoice_url: e.asaasInvoiceUrl || null,
   };
 }
 
@@ -234,4 +251,14 @@ export const TABLE_MAP: Record<string, { toDb: (item: any) => any }> = {
   maintenance: { toDb: maintenanceToDb },
   financial_entries: { toDb: financialToDb },
   bank_accounts: { toDb: bankAccountToDb },
+};
+
+export const TABLE_TO_CACHE_KEY: Record<string, "motos" | "clients" | "rentals" | "fines" | "maintenance" | "financial" | "bankAccounts"> = {
+  motorcycles: "motos",
+  clients: "clients",
+  rentals: "rentals",
+  fines: "fines",
+  maintenance: "maintenance",
+  financial_entries: "financial",
+  bank_accounts: "bankAccounts",
 };

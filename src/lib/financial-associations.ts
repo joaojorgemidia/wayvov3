@@ -138,7 +138,10 @@ export function resolveAssociations(
  * Score-based: motoId match + clienteId match + date within range.
  */
 function findBestRental(entry: FinancialEntry, rentals: Rental[]): Rental | null {
-  if (!rentals.length) return null;
+  // A rental is only considered when the entry already has a motoId resolved.
+  // Without a moto, client+date alone (score 2+1=3) would satisfy the threshold
+  // and incorrectly backfill a motoId/placa from the client's active rental.
+  if (!rentals.length || !entry.motoId) return null;
 
   let best: Rental | null = null;
   let bestScore = 0;

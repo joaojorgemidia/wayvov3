@@ -9,7 +9,22 @@
       "Bash(npx tsc *)",
       "Bash(npx supabase *)",
       "Bash(xargs grep -l \"CREATE TABLE.*clients\")",
-      "Bash(xargs grep -l \"ALTER TABLE.*clients\\\\|ALTER TABLE.*rentals\")"
+      "Bash(xargs grep -l \"ALTER TABLE.*clients\\\\|ALTER TABLE.*rentals\")",
+      "Bash(SUPABASE_ACCESS_TOKEN=sbp_632d9af1750742b1d181cb653437e6355da28796 npx supabase functions deploy asaas-charge --project-ref qmwfotbczcruxaoemfde --no-verify-jwt)",
+      "Bash(SUPABASE_ACCESS_TOKEN=sbp_632d9af1750742b1d181cb653437e6355da28796 npx supabase functions deploy asaas-webhook --project-ref qmwfotbczcruxaoemfde --no-verify-jwt)",
+      "Bash(SUPABASE_ACCESS_TOKEN=sbp_632d9af1750742b1d181cb653437e6355da28796 npx supabase functions logs asaas-charge --project-ref qmwfotbczcruxaoemfde)",
+      "mcp__plugin_supabase_supabase__execute_sql",
+      "mcp__plugin_supabase_supabase__get_logs",
+      "mcp__plugin_supabase_supabase__apply_migration",
+      "mcp__plugin_supabase_supabase__list_projects",
+      "Bash(xargs grep -l \"quem_paga\\\\|data_pagamento_previsto\\\\|quemPaga\\\\|conta\")",
+      "Bash(gh run *)",
+      "WebFetch(domain:gps.brasilsatgps.com.br)",
+      "Bash(npm install *)",
+      "mcp__plugin_supabase_supabase__deploy_edge_function",
+      "Bash(npx netlify *)",
+      "Bash(npx netlify-cli *)",
+      "Bash(git rebase *)"
     ]
   }
 }
