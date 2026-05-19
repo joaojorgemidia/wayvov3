@@ -181,50 +181,53 @@ export default function ContasPage() {
   };
 
   const handleAdjust = async () => {
-    if (!adjustAccount) return;
+    if (!adjustAccount || !adjustValue) return;
     const targetValue = parseBRL(adjustValue);
-    if (isNaN(targetValue)) { toast.error("Valor inválido"); return; }
-
-    const balance = accountBalances[adjustAccount.nome] || { atual: 0 };
-    const diff = targetValue - balance.atual;
-
-    if (Math.abs(diff) < 0.01) {
-      toast.info("O saldo já está correto");
-      setAdjustOpen(false);
-      return;
-    }
 
     if (adjustMode === "saldo_inicial") {
-      await saveBankAccount({ ...adjustAccount, saldoInicial: adjustAccount.saldoInicial + diff });
-      toast.success("Saldo inicial ajustado");
-    } else {
-      // Create adjustment transaction
-      const entry: FinancialEntry = {
+      // Calcula o saldo apenas das transações pagas desta conta
+      // SEM incluir saldoInicial (para evitar efeito de duplicatas)
+      const transactionBalance = (financial || [])
+        .filter(e => e.pago && e.conta === adjustAccount.nome)
+        .reduce((sum, e) => sum + (e.tipo === "receita" ? e.valor : -e.valor), 0);
+
+      // Novo saldoInicial = targetValue - transactionBalance
+      // Arredondado para evitar floating point
+      const newSaldoInicial = Math.round((targetValue - transactionBalance) * 100) / 100;
+
+      await saveBankAccount({ ...adjustAccount, saldoInicial: newSaldoInicial });
+    }
+
+    if (adjustMode === "transacao") {
+      const balance = accountBalances[adjustAccount.nome] || { atual: 0 };
+      const diff = Math.round((targetValue - balance.atual) * 100) / 100;
+      if (Math.abs(diff) < 0.01) return;
+
+      const entry = {
         id: crypto.randomUUID(),
         tipo: diff > 0 ? "receita" : "despesa",
-        categoria: "ajuste_saldo",
-        descricao: adjustDesc || "Reajuste de saldo",
         valor: Math.abs(diff),
+        descricao: "Ajuste de saldo",
         data: new Date().toISOString().split("T")[0],
-        motoId: null,
-        rentalId: null,
-        clienteId: null,
+        dataPrevista: new Date().toISOString().split("T")[0],
+        categoria: "ajuste_saldo",
+        subcategoria: null,
+        tags: [],
         pago: true,
         conta: adjustAccount.nome,
         natureza: "administrativa",
-        observacao: adjustDesc || "Reajuste de saldo",
-        tags: ["Ajuste"],
-      };
-      try {
-        await saveFinancialEntry({ ...entry });
-        toast.success(`Transação de ajuste criada (${diff > 0 ? "+" : ""}${fmt(diff)})`);
-      } catch (err: any) {
-        console.error("[ContasPage] saveFinancialEntry error:", err);
-        toast.error("Erro ao criar transação de ajuste. Tente novamente.");
-        return;
-      }
+        motoId: null, rentalId: null, clienteId: null,
+        placa: "", clienteNome: "",
+        recorrente: false, despesaFixa: false,
+        serieId: null, fixedOriginId: null, recurringGroupId: null,
+        recorrenciaTipo: "mensal", recorrenciaVezes: 0, recorrenciaPorPeriodo: 1,
+        observacao: null, asaasPaymentId: null,
+      } as FinancialEntry;
+      await saveFinancialEntry({ ...entry });
     }
 
+    setAdjustAccount(null);
+    setAdjustValue("");
     setAdjustOpen(false);
   };
 
