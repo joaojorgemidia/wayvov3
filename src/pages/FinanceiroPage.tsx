@@ -1234,13 +1234,15 @@ export default function FinanceiroPage() {
     [entries, currentMonth, customRangeMode, customFrom, customTo]
   );
 
-  // When explicit filter dates or a text search are set, search the full dataset instead of being limited by the top period navigator.
+  // When explicit filter dates are set, they should search the full dataset instead of being limited by the top period navigator.
   const filteredSource = useMemo(() => {
-    return dateFrom || dateTo || search ? entries : monthEntries;
-  }, [entries, monthEntries, dateFrom, dateTo, search]);
+    return dateFrom || dateTo ? entries : monthEntries;
+  }, [entries, monthEntries, dateFrom, dateTo]);
 
   const filtered = useMemo(() => {
-    const q = search.toLowerCase();
+    const norm = (s: string) => (s || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+    const normPlaca = (s: string) => norm(s).replace(/[\s\-]/g, "");
+    const q = norm(search);
     const entryOrder = new Map(filteredSource.map((entry, index) => [entry.id, index]));
 
     return filteredSource.filter(e => {
@@ -1270,8 +1272,8 @@ export default function FinanceiroPage() {
       // Locatário filter
       const clientName = e.clienteId ? (clients.find(c => c.id === e.clienteId)?.nome || e.clienteNome || "") : (e.clienteNome || "");
       const matchLocatario = !locatarioFilter || clientName === locatarioFilter || clientName.toLowerCase().includes(locatarioFilter.toLowerCase());
-      // Search — computed after motoPlaca/clientName so they can be reused
-      const matchSearch = !q || (e.descricao || "").toLowerCase().includes(q) || getCatLabel(normalizedEntryCategory, e.tipo).toLowerCase().includes(q) || (e.observacao || "").toLowerCase().includes(q) || (e.subcategoria || "").toLowerCase().includes(q) || motoPlaca.toLowerCase().includes(q) || clientName.toLowerCase().includes(q);
+      // Search — accent-insensitive, plate ignores dashes/spaces
+      const matchSearch = !q || norm(e.descricao).includes(q) || norm(getCatLabel(normalizedEntryCategory, e.tipo)).includes(q) || norm(e.observacao || "").includes(q) || norm(e.subcategoria || "").includes(q) || normPlaca(motoPlaca).includes(normPlaca(search)) || norm(clientName).includes(q);
       // Date range filter
       const effectiveDate = !e.pago && e.dataPrevista ? e.dataPrevista : e.data;
       const matchDateFrom = !dateFrom || effectiveDate >= dateFrom;
