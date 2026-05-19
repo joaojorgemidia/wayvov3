@@ -1003,11 +1003,11 @@ export default function FinanceiroPage() {
   }, [clients, form.clienteId, form.clienteNome]);
 
   const getCatLabel = useCallback((value: string, tipo: "receita" | "despesa") => {
-    return CATEGORIAS[tipo].find(c => c.value === value)?.label || value;
+    return (CATEGORIAS[tipo] || []).find(c => c.value === value)?.label || value;
   }, [CATEGORIAS]);
 
   const getCatIcon = useCallback((value: string, tipo: "receita" | "despesa") => {
-    return CATEGORIAS[tipo].find(c => c.value === value)?.icon || DollarSign;
+    return (CATEGORIAS[tipo] || []).find(c => c.value === value)?.icon || DollarSign;
   }, [CATEGORIAS]);
 
   const persist = useCallback(async (d: FinancialEntry[]) => {
@@ -1240,12 +1240,11 @@ export default function FinanceiroPage() {
   }, [entries, monthEntries, dateFrom, dateTo]);
 
   const filtered = useMemo(() => {
+    const q = search.toLowerCase();
     const entryOrder = new Map(filteredSource.map((entry, index) => [entry.id, index]));
 
     return filteredSource.filter(e => {
-      const q = search.toLowerCase();
       const normalizedEntryCategory = normalizeCategoryValue(e.categoria, e.tipo);
-      const matchSearch = !q || e.descricao.toLowerCase().includes(q) || getCatLabel(normalizedEntryCategory, e.tipo).toLowerCase().includes(q) || (e.observacao || "").toLowerCase().includes(q) || (e.subcategoria || "").toLowerCase().includes(q);
       const matchTipo = tipoFilter === "all" || e.tipo === tipoFilter;
       // Toggle switches override pagoFilter
       const matchPago = onlyPagas ? e.pago : onlyPendentes ? !e.pago : (pagoFilter === "all" || (pagoFilter === "pago" ? e.pago : !e.pago));
@@ -1271,6 +1270,8 @@ export default function FinanceiroPage() {
       // Locatário filter
       const clientName = e.clienteId ? (clients.find(c => c.id === e.clienteId)?.nome || e.clienteNome || "") : (e.clienteNome || "");
       const matchLocatario = !locatarioFilter || clientName === locatarioFilter || clientName.toLowerCase().includes(locatarioFilter.toLowerCase());
+      // Search — computed after motoPlaca/clientName so they can be reused
+      const matchSearch = !q || (e.descricao || "").toLowerCase().includes(q) || getCatLabel(normalizedEntryCategory, e.tipo).toLowerCase().includes(q) || (e.observacao || "").toLowerCase().includes(q) || (e.subcategoria || "").toLowerCase().includes(q) || motoPlaca.toLowerCase().includes(q) || clientName.toLowerCase().includes(q);
       // Date range filter
       const effectiveDate = !e.pago && e.dataPrevista ? e.dataPrevista : e.data;
       const matchDateFrom = !dateFrom || effectiveDate >= dateFrom;
@@ -2525,7 +2526,9 @@ export default function FinanceiroPage() {
                   </button>
                 ))}
               </div>
-              <div className="relative flex-1 min-w-[200px]">
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="relative flex-1">
                 <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
                 <input className="w-full bg-background border border-border/50 rounded-lg pl-8 pr-3 py-1.5 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
                   placeholder="Buscar descrição, placa, locatário…" value={search} onChange={e => setSearch(e.target.value)} />
