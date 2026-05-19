@@ -32,6 +32,21 @@ export function reconcileCardInvoices(
   cards.filter(c => c.tipo === "cartao").forEach(c => cardByName.set(c.nome, c));
   if (cardByName.size === 0) return entries;
 
+  // Collect advance payments: fatura_cartao entries with serieId "adv_[cardId]",
+  // paid and NOT auto-generated. They reduce the matching invoice's remaining amount.
+  const advancesByKey = new Map<string, number>(); // "cardId::YYYY-MM" -> total paid
+  entries.forEach((e) => {
+    if (e.categoria !== "fatura_cartao") return;
+    if (e.id.startsWith("inv__") || e.id.startsWith("fatura-")) return;
+    if (!e.pago || !e.serieId?.startsWith("adv_")) return;
+    const cardId = e.serieId.slice(4);
+    const dueStr = e.dataPrevista || e.data;
+    if (!dueStr) return;
+    const due = new Date(dueStr + "T00:00:00");
+    if (Number.isNaN(due.getTime())) return;
+    advancesByKey.set(`${cardId}::${ymKey(due)}`, (advancesByKey.get(`${cardId}::${ymKey(due)}`) || 0) + (Number(e.valor) || 0));
+  });
+
   // Group despesas posted to a card by (cardId, month-YYYY-MM of due date).
   // Invoice entries themselves (categoria "fatura_cartao") are excluded.
   const groups = new Map<string, { card: CreditCardLike; ym: string; total: number; ids: string[] }>();
@@ -80,6 +95,10 @@ export function reconcileCardInvoices(
     const dueDay = Math.min(g.card.diaVencimento || 1, lastDayOfMonth(y, m));
     const dueIso = `${yStr}-${mStr}-${String(dueDay).padStart(2, "0")}`;
     const prev = existingInvoices.get(id);
+    // Subtract paid advance payments from the invoice total
+    const advances = advancesByKey.get(`${g.card.id}::${g.ym}`) || 0;
+    const remaining = Math.max(0, Math.round((g.total - advances) * 100) / 100);
+    const fullyPaidByAdvances = advances > 0 && remaining <= 0.001;
     // Preserve user changes if they marked it pago/ignorada or changed contaPagamento
     const merged: FinancialEntry = {
       id,
@@ -87,13 +106,13 @@ export function reconcileCardInvoices(
       categoria: "fatura_cartao",
       subcategoria: undefined,
       descricao: `Fatura ${g.card.nome} • ${g.ym}`,
-      valor: Math.round(g.total * 100) / 100,
-      data: prev?.pago ? (prev.data || dueIso) : dueIso,
+      valor: remaining,
+      data: (prev?.pago || fullyPaidByAdvances) ? (prev?.data || dueIso) : dueIso,
       dataPrevista: dueIso,
       motoId: null,
       rentalId: null,
       clienteId: null,
-      pago: prev?.pago || false,
+      pago: prev?.pago || fullyPaidByAdvances,
       conta: prev?.conta || g.card.contaPagamento || "",
       natureza: "administrativa",
       tags: ["Fatura cartão"],

@@ -799,6 +799,12 @@ export default function FinanceiroPage() {
   const [transferValor, setTransferValor] = useState("");
   const [transferData, setTransferData] = useState(new Date().toISOString().split("T")[0]);
   const [transferObs, setTransferObs] = useState("");
+  const [advOpen, setAdvOpen] = useState(false);
+  const [advCardId, setAdvCardId] = useState("");
+  const [advAmount, setAdvAmount] = useState("");
+  const [advDate, setAdvDate] = useState(new Date().toISOString().split("T")[0]);
+  const [advBank, setAdvBank] = useState("");
+  const [advNote, setAdvNote] = useState("");
   const [activeTab, setActiveTab] = useState("transacoes");
   const [rowsPerPage, setRowsPerPage] = useState(50);
   const [currentPage, setCurrentPage] = useState(1);
@@ -1739,6 +1745,50 @@ export default function FinanceiroPage() {
     scrollToEntryRow(baseId);
   };
 
+  const handleSaveAdiantamento = async () => {
+    const card = creditCards.find(c => c.id === advCardId);
+    if (!card || !advAmount || !advDate || !advBank) return;
+    const valor = parseFloat(advAmount.replace(/\./g, "").replace(",", "."));
+    if (isNaN(valor) || valor <= 0) return;
+    // Calculate which invoice due date this advance applies to (same logic as purchases)
+    const closingDay = card.diaFechamento || 1;
+    const dueDay = card.diaVencimento || 1;
+    const advD = new Date(advDate + "T00:00:00");
+    const closingMonthOffset = advD.getDate() > closingDay ? 1 : 0;
+    const dueMonthOffsetFromClosing = dueDay > closingDay ? 0 : 1;
+    const firstInvoiceMonthOffset = closingMonthOffset + dueMonthOffsetFromClosing;
+    const invMonth = new Date(advD.getFullYear(), advD.getMonth() + firstInvoiceMonthOffset, 1);
+    const lastDay = new Date(invMonth.getFullYear(), invMonth.getMonth() + 1, 0).getDate();
+    invMonth.setDate(Math.min(dueDay, lastDay));
+    const invDueIso = invMonth.toISOString().split("T")[0];
+    const advance: FinancialEntry = {
+      ...emptyEntry(),
+      id: crypto.randomUUID(),
+      tipo: "despesa",
+      categoria: "fatura_cartao",
+      descricao: `Adiantamento fatura ${card.nome}`,
+      valor,
+      data: advDate,
+      dataPrevista: invDueIso,
+      pago: true,
+      conta: advBank,
+      ignorada: true,
+      tags: ["Adiantamento"],
+      natureza: "administrativa",
+      serieId: `adv_${card.id}`,
+      observacao: advNote ? `Adiantamento fatura ${card.nome} • ${advNote}` : `Adiantamento fatura ${card.nome}`,
+    };
+    const saved = await persistWithFeedback([...entries, advance], {
+      successMessage: `Adiantamento de R$ ${valor.toLocaleString("pt-BR", { minimumFractionDigits: 2 })} registrado.`,
+    });
+    if (saved) {
+      setAdvOpen(false);
+      setAdvAmount("");
+      setAdvNote("");
+      setAdvDate(new Date().toISOString().split("T")[0]);
+    }
+  };
+
   const [deleteTarget, setDeleteTarget] = useState<FinancialEntry | null>(null);
 
   // Nunca usar confirm() nativo — pode ser bloqueado pelo browser.
@@ -2344,6 +2394,11 @@ export default function FinanceiroPage() {
             <DropdownMenuItem onClick={() => setTransferOpen(true)} className="gap-2">
               <ArrowLeftRight className="h-4 w-4" /> Transferência
             </DropdownMenuItem>
+            {creditCards.length > 0 && (
+              <DropdownMenuItem onClick={() => { setAdvCardId(creditCards[0].id); setAdvBank(creditCards[0].contaPagamento || ""); setAdvOpen(true); }} className="gap-2">
+                <Banknote className="h-4 w-4 text-primary" /> Adiantamento de fatura
+              </DropdownMenuItem>
+            )}
           </DropdownMenuContent>
         </DropdownMenu>}
       </div>
@@ -3934,6 +3989,112 @@ export default function FinanceiroPage() {
             </div>
             <Button onClick={handleTransfer} className="w-full gap-2" disabled={!transferFrom || !transferTo || !transferValor || transferFrom === transferTo}>
               <ArrowLeftRight className="h-4 w-4" /> Confirmar Transferência
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* ═══ Dialog: Adiantamento de Fatura ═══ */}
+      <Dialog open={advOpen} onOpenChange={setAdvOpen}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Banknote className="h-5 w-5 text-primary" /> Adiantamento de Fatura
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 pt-1">
+            {/* Cartão */}
+            <div className="space-y-1.5">
+              <Label>Cartão</Label>
+              <Select value={advCardId} onValueChange={id => {
+                setAdvCardId(id);
+                const c = creditCards.find(x => x.id === id);
+                if (c?.contaPagamento) setAdvBank(c.contaPagamento);
+              }}>
+                <SelectTrigger className="h-9">
+                  <SelectValue placeholder="Selecione o cartão" />
+                </SelectTrigger>
+                <SelectContent>
+                  {creditCards.map(c => (
+                    <SelectItem key={c.id} value={c.id}>
+                      <span className="flex items-center gap-2">
+                        <CreditCard className="h-3.5 w-3.5 text-muted-foreground" /> {c.nome}
+                      </span>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {(() => {
+                const card = creditCards.find(c => c.id === advCardId);
+                if (!card) return null;
+                const invKey = `inv__${card.id}__`;
+                const openInvoice = entries
+                  .filter(e => e.categoria === "fatura_cartao" && e.id.startsWith(invKey) && !e.pago)
+                  .sort((a, b) => (a.dataPrevista || a.data).localeCompare(b.dataPrevista || b.data))[0];
+                if (!openInvoice) return <p className="text-xs text-muted-foreground mt-1">Nenhuma fatura aberta encontrada.</p>;
+                return (
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Fatura em aberto: <span className="font-semibold text-foreground">R$ {openInvoice.valor.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</span>
+                    {" "}— vence {new Date(openInvoice.dataPrevista! + "T12:00:00").toLocaleDateString("pt-BR")}
+                  </p>
+                );
+              })()}
+            </div>
+
+            {/* Valor */}
+            <div className="space-y-1.5">
+              <Label>Valor do adiantamento</Label>
+              <div className="relative">
+                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">R$</span>
+                <Input className="pl-9" value={advAmount} onChange={e => {
+                  const raw = e.target.value.replace(/[^\d]/g, "");
+                  if (!raw) { setAdvAmount(""); return; }
+                  setAdvAmount((parseInt(raw, 10) / 100).toLocaleString("pt-BR", { minimumFractionDigits: 2 }));
+                }} placeholder="0,00" />
+              </div>
+            </div>
+
+            {/* Data */}
+            <div className="space-y-1.5">
+              <Label>Data do pagamento</Label>
+              <div className="flex items-center gap-2">
+                <button type="button" onClick={() => setAdvDate(new Date().toISOString().split("T")[0])}
+                  className={`text-xs px-3 py-1.5 rounded-full border transition-colors ${advDate === new Date().toISOString().split("T")[0] ? "bg-primary text-primary-foreground border-primary" : "bg-muted/50 text-muted-foreground border-border hover:bg-muted"}`}>Hoje</button>
+                <button type="button" onClick={() => { const d = new Date(); d.setDate(d.getDate() - 1); setAdvDate(d.toISOString().split("T")[0]); }}
+                  className="text-xs px-3 py-1.5 rounded-full border bg-muted/50 text-muted-foreground border-border hover:bg-muted transition-colors">Ontem</button>
+                <Input type="date" value={advDate} onChange={e => setAdvDate(e.target.value)} className="flex-1 h-8 text-sm" />
+              </div>
+            </div>
+
+            {/* Conta de débito */}
+            <div className="space-y-1.5">
+              <Label>Débitar de</Label>
+              <Select value={advBank} onValueChange={setAdvBank}>
+                <SelectTrigger className="h-9">
+                  <SelectValue placeholder="Selecione a conta" />
+                </SelectTrigger>
+                <SelectContent>
+                  {(bankAccountsList || []).filter(a => a.tipo !== "cartao").map(a => (
+                    <SelectItem key={a.id} value={a.nome}>
+                      <span className="flex items-center gap-2"><BankIcon conta={a.nome} size={16} /> {a.nome}</span>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Observação */}
+            <div className="space-y-1.5">
+              <Label className="text-sm">Observação <span className="text-muted-foreground font-normal">(opcional)</span></Label>
+              <Input value={advNote} onChange={e => setAdvNote(e.target.value)} placeholder="Ex: Pagamento parcial fevereiro" />
+            </div>
+
+            <Button
+              onClick={handleSaveAdiantamento}
+              className="w-full gap-2"
+              disabled={!advCardId || !advAmount || !advDate || !advBank}
+            >
+              <Banknote className="h-4 w-4" /> Registrar Adiantamento
             </Button>
           </div>
         </DialogContent>
