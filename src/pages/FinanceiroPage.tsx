@@ -4066,12 +4066,14 @@ export default function FinanceiroPage() {
               </div>
             </div>
 
-            {/* Conta de débito */}
+            {/* Banco pagador */}
             <div className="space-y-1.5">
-              <Label>Débitar de</Label>
+              <Label className="flex items-center gap-1.5">
+                <Wallet className="h-4 w-4 text-muted-foreground" /> Banco que está pagando a fatura
+              </Label>
               <Select value={advBank} onValueChange={setAdvBank}>
                 <SelectTrigger className="h-9">
-                  <SelectValue placeholder="Selecione a conta" />
+                  <SelectValue placeholder="Selecione o banco" />
                 </SelectTrigger>
                 <SelectContent>
                   {(bankAccountsList || []).filter(a => a.tipo !== "cartao").map(a => (
