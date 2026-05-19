@@ -1234,10 +1234,10 @@ export default function FinanceiroPage() {
     [entries, currentMonth, customRangeMode, customFrom, customTo]
   );
 
-  // When explicit filter dates are set, they should search the full dataset instead of being limited by the top period navigator.
+  // When explicit filter dates or a text search are set, search the full dataset instead of being limited by the top period navigator.
   const filteredSource = useMemo(() => {
-    return dateFrom || dateTo ? entries : monthEntries;
-  }, [entries, monthEntries, dateFrom, dateTo]);
+    return dateFrom || dateTo || search ? entries : monthEntries;
+  }, [entries, monthEntries, dateFrom, dateTo, search]);
 
   const filtered = useMemo(() => {
     const q = search.toLowerCase();
