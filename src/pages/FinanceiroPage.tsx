@@ -1371,8 +1371,14 @@ export default function FinanceiroPage() {
     const receitasPagas = active.filter(e => e.tipo === "receita" && e.pago).reduce((s, e) => s + e.valor, 0);
     const despesasPagas = active.filter(e => e.tipo === "despesa" && e.pago).reduce((s, e) => s + e.valor, 0);
     const pendentes = active.filter(e => !e.pago).reduce((s, e) => s + e.valor, 0);
-    return { receitas, despesas, saldo: receitas - despesas, receitasPagas, despesasPagas, pendentes };
+    const saldoEfetuado = receitasPagas - despesasPagas;
+    return { receitas, despesas, saldo: receitas - despesas, receitasPagas, despesasPagas, pendentes, saldoEfetuado };
   }, [filtered]);
+
+  // CC / non-CC split for transaction list
+  const ccCardNames = useMemo(() => new Set(creditCards.map((c: any) => c.nome)), [creditCards]);
+  const filteredNonCC = useMemo(() => filtered.filter(e => !ccCardNames.has(e.conta || "")), [filtered, ccCardNames]);
+  const filteredCC = useMemo(() => filtered.filter(e => !e.ignorada && ccCardNames.has(e.conta || "") && e.tipo === "despesa"), [filtered, ccCardNames]);
 
   // Comparison period totals
   const compTotals = useMemo(() => {
@@ -2414,10 +2420,16 @@ export default function FinanceiroPage() {
               </div>
             </div>
             <p className={`text-2xl font-bold text-success ${mono}`}>
-              R$ {totals.receitas.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+              R$ {totals.receitasPagas.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
             </p>
             {compTotals && (
-              <CompBadge current={totals.receitas} previous={compTotals.receitas} label={compTotals.label} positiveIsGood />
+              <CompBadge current={totals.receitasPagas} previous={compTotals.receitas} label={compTotals.label} positiveIsGood />
+            )}
+            {(totals.receitas - totals.receitasPagas) > 0.005 && (
+              <p className="text-xs text-muted-foreground mt-1">
+                Projeção: <span className={`font-medium ${mono} text-warning`}>R$ {totals.receitas.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</span>
+                <span className="ml-1">(+R$ {(totals.receitas - totals.receitasPagas).toLocaleString("pt-BR", { minimumFractionDigits: 2 })} pendente)</span>
+              </p>
             )}
             <div className="flex items-center gap-3 mt-3 text-xs text-muted-foreground">
               <span className="flex items-center gap-1"><CheckCircle2 className="h-3 w-3 text-success" />{receitasRealizadas} recebida{receitasRealizadas !== 1 ? "s" : ""}</span>
@@ -2434,10 +2446,16 @@ export default function FinanceiroPage() {
               </div>
             </div>
             <p className={`text-2xl font-bold text-destructive ${mono}`}>
-              R$ {totals.despesas.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+              R$ {totals.despesasPagas.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
             </p>
             {compTotals && (
-              <CompBadge current={totals.despesas} previous={compTotals.despesas} label={compTotals.label} positiveIsGood={false} />
+              <CompBadge current={totals.despesasPagas} previous={compTotals.despesas} label={compTotals.label} positiveIsGood={false} />
+            )}
+            {(totals.despesas - totals.despesasPagas) > 0.005 && (
+              <p className="text-xs text-muted-foreground mt-1">
+                Projeção: <span className={`font-medium ${mono} text-warning`}>R$ {totals.despesas.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</span>
+                <span className="ml-1">(+R$ {(totals.despesas - totals.despesasPagas).toLocaleString("pt-BR", { minimumFractionDigits: 2 })} pendente)</span>
+              </p>
             )}
             <div className="flex items-center gap-3 mt-3 text-xs text-muted-foreground">
               <span className="flex items-center gap-1"><CheckCircle2 className="h-3 w-3 text-success" />{despesasRealizadas} paga{despesasRealizadas !== 1 ? "s" : ""}</span>
@@ -2453,15 +2471,31 @@ export default function FinanceiroPage() {
                 <DollarSign className="h-5 w-5 text-primary" />
               </div>
             </div>
-            <p className={`text-2xl font-bold ${totals.saldo >= 0 ? "text-success" : "text-destructive"} ${mono}`}>
-              {totals.saldo < 0 ? "– " : ""}R$ {Math.abs(totals.saldo).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
-            </p>
-            {compTotals && (
-              <CompBadge current={totals.saldo} previous={compTotals.saldo} label={compTotals.label} positiveIsGood />
-            )}
-            <div className="flex items-center gap-3 mt-3 text-xs text-muted-foreground">
-              <span>{totalTransacoes} transaç{totalTransacoes !== 1 ? "ões" : "ão"} no período</span>
-            </div>
+            {(() => {
+              const saldoRealizado = totals.saldoEfetuado; // receitasPagas - despesasPagas
+              const saldoProjecao = totals.saldo; // receitas - despesas (se tudo pendente resolver)
+              const temPendente = Math.abs(saldoProjecao - saldoRealizado) > 0.005;
+              return (
+                <>
+                  <p className={`text-2xl font-bold ${saldoRealizado >= 0 ? "text-success" : "text-destructive"} ${mono}`}>
+                    {saldoRealizado < 0 ? "– " : ""}R$ {Math.abs(saldoRealizado).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                  </p>
+                  {compTotals && (
+                    <CompBadge current={saldoRealizado} previous={compTotals.saldo} label={compTotals.label} positiveIsGood />
+                  )}
+                  {temPendente && (
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Projeção: <span className={`font-medium ${mono} ${saldoProjecao >= 0 ? "text-warning" : "text-destructive"}`}>
+                        {saldoProjecao < 0 ? "– " : ""}R$ {Math.abs(saldoProjecao).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                      </span>
+                    </p>
+                  )}
+                  <div className="flex items-center gap-3 mt-3 text-xs text-muted-foreground">
+                    <span>{totalTransacoes} transaç{totalTransacoes !== 1 ? "ões" : "ão"} no período</span>
+                  </div>
+                </>
+              );
+            })()}
           </CardContent>
         </Card>
       </div>
@@ -2683,18 +2717,31 @@ export default function FinanceiroPage() {
                   </div>
                 </div>
               </div>
-            <div className="flex flex-wrap items-center justify-between text-xs px-1">
-              <span className="text-muted-foreground">{filtered.length} lançamento{filtered.length !== 1 ? "s" : ""}</span>
-              <div className="flex items-center gap-4">
-                {hasActiveFilters ? (
-                  <span className="font-semibold text-foreground">
-                    Total filtrado: R$ {filtered.filter(e => ignoradasFilter === "somente" ? true : !e.ignorada).reduce((s, e) => s + e.valor, 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+            {/* ── Totais do filtro ── */}
+            <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 rounded-lg border border-border/30 bg-muted/20 px-3 py-2 text-xs">
+              <span className="text-muted-foreground">
+                {filteredNonCC.length} lançamento{filteredNonCC.length !== 1 ? "s" : ""}
+                {filteredCC.length > 0 && <span className="ml-1.5 text-muted-foreground/60">• {filteredCC.length} no cartão</span>}
+              </span>
+              <div className="flex flex-wrap items-center gap-4">
+                <span className="flex items-center gap-1 text-muted-foreground">
+                  <TrendingUp className="h-3 w-3 text-success" />
+                  Receitas: <span className={`ml-0.5 font-semibold text-success ${mono}`}>R$ {totals.receitas.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</span>
+                </span>
+                <span className="flex items-center gap-1 text-muted-foreground">
+                  <TrendingDown className="h-3 w-3 text-destructive" />
+                  Despesas: <span className={`ml-0.5 font-semibold text-destructive ${mono}`}>R$ {totals.despesas.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</span>
+                </span>
+                <span className="flex items-center gap-1 text-muted-foreground">
+                  Saldo: <span className={`ml-0.5 font-bold ${totals.saldo >= 0 ? "text-success" : "text-destructive"} ${mono}`}>
+                    {totals.saldo < 0 ? "– " : ""}R$ {Math.abs(totals.saldo).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
                   </span>
-                ) : (
-                  <span className="font-medium text-warning">Pendente: R$ {filteredTotals.totalPendente.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</span>
+                </span>
+                {filteredTotals.totalPendente > 0.005 && (
+                  <span className="text-muted-foreground/80">Pendente: <span className={`font-medium text-warning ${mono}`}>R$ {filteredTotals.totalPendente.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</span></span>
                 )}
-                {Math.abs(filteredTotals.totalAtrasado) > 0 && (
-                  <span className="font-semibold text-destructive">Atrasado: R$ {Math.abs(filteredTotals.totalAtrasado).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</span>
+                {Math.abs(filteredTotals.totalAtrasado) > 0.005 && (
+                  <span className="font-semibold text-destructive">Atrasado: <span className={mono}>R$ {Math.abs(filteredTotals.totalAtrasado).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</span></span>
                 )}
               </div>
             </div>
@@ -2768,14 +2815,14 @@ export default function FinanceiroPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {filtered.length === 0 && (
+                  {filteredNonCC.length === 0 && (
                     <tr><td colSpan={12} className="py-16 text-center text-muted-foreground text-sm">Nenhum lançamento encontrado</td></tr>
                   )}
                   {(() => {
-                    const totalPages = Math.ceil(filtered.length / rowsPerPage);
+                    const totalPages = Math.ceil(filteredNonCC.length / rowsPerPage);
                     const safePage = Math.min(currentPage, totalPages || 1);
                     const startIdx = (safePage - 1) * rowsPerPage;
-                    const paginated = filtered.slice(startIdx, startIdx + rowsPerPage);
+                    const paginated = filteredNonCC.slice(startIdx, startIdx + rowsPerPage);
                     return paginated;
                   })().map((e) => {
                     const motoPlaca = e.motoId ? (motos.find(m => m.id === e.motoId)?.placa || e.placa || null) : (e.placa || null);
@@ -3050,11 +3097,11 @@ export default function FinanceiroPage() {
               </table>
             </div>
             {/* Pagination controls */}
-            {filtered.length > 0 && (() => {
-              const totalPages = Math.ceil(filtered.length / rowsPerPage);
+            {filteredNonCC.length > 0 && (() => {
+              const totalPages = Math.ceil(filteredNonCC.length / rowsPerPage);
               const safePage = Math.min(currentPage, totalPages || 1);
               const startIdx = (safePage - 1) * rowsPerPage + 1;
-              const endIdx = Math.min(safePage * rowsPerPage, filtered.length);
+              const endIdx = Math.min(safePage * rowsPerPage, filteredNonCC.length);
               return (
                 <div className="flex items-center justify-between px-4 py-3 border-t border-border/30">
                   <div className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -3071,7 +3118,7 @@ export default function FinanceiroPage() {
                     </Select>
                   </div>
                   <div className="flex items-center gap-3 text-sm text-muted-foreground">
-                    <span>{startIdx}-{endIdx} de {filtered.length}</span>
+                    <span>{startIdx}-{endIdx} de {filteredNonCC.length}</span>
                     <div className="flex items-center gap-1">
                       <Button variant="ghost" size="icon" className="h-8 w-8" disabled={safePage <= 1} onClick={() => setCurrentPage(1)}>
                         <ChevronsLeft className="h-4 w-4" />
@@ -3091,6 +3138,78 @@ export default function FinanceiroPage() {
               );
             })()}
           </div>
+
+          {/* ═══ Compras no Cartão de Crédito ═══ */}
+          {filteredCC.length > 0 && (
+            <div className="rounded-xl border border-border/50 overflow-hidden bg-card">
+              <div className="flex items-center justify-between px-4 py-3 border-b border-border/30 bg-muted/20">
+                <div className="flex items-center gap-2">
+                  <CreditCard className="h-4 w-4 text-muted-foreground" />
+                  <span className="text-sm font-semibold">Compras no Cartão de Crédito</span>
+                  <span className="text-xs text-muted-foreground bg-muted rounded px-1.5 py-0.5">{filteredCC.length}</span>
+                </div>
+                <div className="flex items-center gap-4 text-xs">
+                  <span className="text-muted-foreground">
+                    Total: <span className={`font-semibold text-destructive ${mono}`}>
+                      R$ {filteredCC.reduce((s, e) => s + e.valor, 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                    </span>
+                  </span>
+                  {filteredCC.some(e => e.pago) && (
+                    <span className="text-muted-foreground">
+                      Pago: <span className={`font-semibold text-success ${mono}`}>
+                        R$ {filteredCC.filter(e => e.pago).reduce((s, e) => s + e.valor, 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                      </span>
+                    </span>
+                  )}
+                  {filteredCC.some(e => !e.pago) && (
+                    <span className="text-muted-foreground">
+                      Pendente: <span className={`font-semibold text-warning ${mono}`}>
+                        R$ {filteredCC.filter(e => !e.pago).reduce((s, e) => s + e.valor, 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                      </span>
+                    </span>
+                  )}
+                </div>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead>
+                    <tr className="border-b border-border/20 text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
+                      <th className="text-left py-2 px-3">Data</th>
+                      <th className="text-left py-2 px-3">Descrição</th>
+                      <th className="text-left py-2 px-3">Cartão</th>
+                      <th className="text-left py-2 px-3">Categoria</th>
+                      <th className="text-right py-2 px-3">Valor</th>
+                      <th className="text-center py-2 px-3">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredCC.map(e => {
+                      const catLabel = getCatLabel(e.categoria, e.tipo);
+                      return (
+                        <tr key={e.id} className="border-b border-border/20 last:border-0 hover:bg-muted/10 transition-colors">
+                          <td className={`py-2 px-3 text-xs text-muted-foreground whitespace-nowrap ${mono}`}>
+                            {(() => { try { return format(parseISO(e.data), "dd/MM/yy"); } catch { return e.data; } })()}
+                          </td>
+                          <td className="py-2 px-3 text-xs font-medium max-w-[220px] truncate">{e.descricao}</td>
+                          <td className="py-2 px-3 text-xs text-muted-foreground">{e.conta}</td>
+                          <td className="py-2 px-3 text-xs text-muted-foreground">{catLabel}{e.subcategoria ? ` · ${e.subcategoria}` : ""}</td>
+                          <td className={`py-2 px-3 text-xs font-semibold text-right text-destructive ${mono}`}>
+                            R$ {e.valor.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                          </td>
+                          <td className="py-2 px-3 text-center">
+                            {e.pago
+                              ? <span className="text-xs text-success font-medium">✓ Pago</span>
+                              : <span className="text-xs text-warning font-medium">○ Pendente</span>
+                            }
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
         </TabsContent>
 
         {/* TAB: Categorias */}

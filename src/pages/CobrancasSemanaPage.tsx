@@ -1,7 +1,5 @@
 import React, { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { Card, CardContent } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -11,18 +9,17 @@ import {
 } from "@/components/ui/dialog";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
-  DropdownMenuSeparator, DropdownMenuLabel, DropdownMenuSub, DropdownMenuSubTrigger,
-  DropdownMenuSubContent, DropdownMenuPortal,
+  DropdownMenuSeparator, DropdownMenuLabel,
 } from "@/components/ui/dropdown-menu";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import {
   CalendarDays, AlertTriangle, CheckCircle2, User, Bike,
   Wallet, ShieldCheck, Receipt, Coins, Tag, MessageCircle,
-  Bell, Wrench, ChevronDown, MoreHorizontal, Phone, Copy,
-  CalendarClock, ExternalLink, BarChart3, Search,
+  Bell, Wrench, MoreHorizontal, Phone, Copy,
+  CalendarClock, ExternalLink, Search, TrendingUp,
+  LayoutDashboard, SlidersHorizontal, Check,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useDataCacheSnapshot } from "@/lib/data-cache";
@@ -164,9 +161,8 @@ export default function CobrancasSemanaPage() {
   const [confirmItem, setConfirmItem] = useState<RowItem | null>(null);
   const [form, setForm] = useState({ data: "", valor: "", conta: "", observacao: "" });
   const [msgState, setMsgState] = useState<{ item: RowItem; type: MsgType } | null>(null);
-  const [showResumo, setShowResumo] = useState(false);
   const [search, setSearch] = useState("");
-  const [dayFilter, setDayFilter] = useState<number | "all">("all"); // 0..6 ou "all"
+  const [dayFilter, setDayFilter] = useState<number | "all">("all");
   const [reschedItem, setReschedItem] = useState<RowItem | null>(null);
   const [reschedDate, setReschedDate] = useState("");
 
@@ -262,6 +258,18 @@ export default function CobrancasSemanaPage() {
     });
   }, [monday, weekItems, today]);
 
+  // Paid entries per weekday (for day strip progress bars)
+  const weekDayPaid = useMemo(() => {
+    const m = new Map<number, number>();
+    for (const e of cache.financial) {
+      if (e.tipo !== "receita" || !e.pago || e.ignorada) continue;
+      const due = parseISO(e.dataPrevista || e.data);
+      if (!due || due < monday || due > sunday) continue;
+      m.set(due.getDay(), (m.get(due.getDay()) || 0) + 1);
+    }
+    return m;
+  }, [cache.financial, monday, sunday]);
+
   // Aplica filtros (busca + dia)
   const filterFn = (i: RowItem) => {
     if (search.trim()) {
@@ -290,7 +298,7 @@ export default function CobrancasSemanaPage() {
     return groups;
   }, [filteredWeek]);
 
-  // ── KPIs (resumo) ──────────────────────────────────────────────────
+  // ── KPIs ──────────────────────────────────────────────────────────
   const totalsByCat = useMemo(() => {
     const m = new Map<string, { count: number; valor: number; paidCount: number; paidValor: number }>();
     const bump = (key: string, valor: number, paid: boolean) => {
@@ -333,6 +341,27 @@ export default function CobrancasSemanaPage() {
 
   const totalSemanaPendente = weekItems.reduce((s, i) => s + (i.entry.valor || 0), 0);
   const totalAtrasado = overdueItems.reduce((s, i) => s + (i.entry.valor || 0), 0);
+
+  // Previsão total da semana (todas categorias, pago + pendente)
+  const weekPrevisao = useMemo(() => {
+    let pago = 0, pendente = 0;
+    for (const [, t] of totalsByCat) {
+      pago += t.paidValor;
+      pendente += t.valor;
+    }
+    return { total: pago + pendente, pago, pendente };
+  }, [totalsByCat]);
+
+  // Outros recebimentos da semana (excluindo aluguel)
+  const outrosRecebimentos = useMemo(() => {
+    const result: { catKey: string; count: number; valor: number; paidCount: number; paidValor: number }[] = [];
+    for (const [catKey, t] of totalsByCat) {
+      if (catKey === "aluguel") continue;
+      if (t.count + t.paidCount === 0) continue;
+      result.push({ catKey, count: t.count, valor: t.valor, paidCount: t.paidCount, paidValor: t.paidValor });
+    }
+    return result;
+  }, [totalsByCat]);
 
   // ── Ações ──────────────────────────────────────────────────────────
   const openConfirm = (item: RowItem) => {
@@ -408,6 +437,18 @@ export default function CobrancasSemanaPage() {
     }
   };
 
+  const handleIgnore = async (item: RowItem) => {
+    try {
+      const next = cache.financial.map((e) =>
+        e.id === item.entry.id ? { ...e, ignorada: true } : e,
+      );
+      await saveFinancial(next);
+      toast.success("Cobrança ignorada");
+    } catch {
+      toast.error("Erro ao ignorar cobrança");
+    }
+  };
+
   const copyText = async (text: string, label: string) => {
     try {
       await navigator.clipboard.writeText(text);
@@ -430,214 +471,308 @@ export default function CobrancasSemanaPage() {
     return Array.from(set).sort();
   }, [cache.bankAccounts, cache.financial]);
 
+  // Progress bar segments
+  const barTotal = weekPrevisao.pago + totalSemanaPendente + totalAtrasado;
+  const recPct   = barTotal > 0 ? (weekPrevisao.pago / barTotal) * 100 : 0;
+  const pendPct  = barTotal > 0 ? (totalSemanaPendente / barTotal) * 100 : 0;
+  const atrasadoPct = barTotal > 0 ? (totalAtrasado / barTotal) * 100 : 0;
+
   // ─── Render ──────────────────────────────────────────────────────
   return (
-    <div className="p-4 md:p-6 space-y-5 max-w-[1200px] mx-auto">
-      {/* Header */}
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h1 className="text-lg md:text-xl font-semibold tracking-tight">Cobranças da semana</h1>
-          <p className="text-xs text-muted-foreground mt-0.5">
-            {monday.getDate()} {MONTH_SHORT[monday.getMonth()]} – {sunday.getDate()} {MONTH_SHORT[sunday.getMonth()]}
-            {" · "}{weekItems.length} agendadas
-            {overdueItems.length > 0 && <span className="text-destructive"> · {overdueItems.length} em atraso</span>}
-          </p>
+    <div className="flex flex-col min-h-screen bg-background">
+
+      {/* ── STICKY HEADER ────────────────────────────────────────── */}
+      <div className="sticky top-0 z-20 bg-background border-b">
+
+        {/* Sub-seção 1: título + botões */}
+        <div className="px-5 pt-4 pb-3 flex items-start justify-between">
+          <div>
+            <h1 className="text-[15px] font-medium tracking-tight">Cobranças da semana</h1>
+            <p className="text-[11px] text-muted-foreground mt-0.5">
+              {monday.getDate()} {MONTH_SHORT[monday.getMonth()]} – {sunday.getDate()} {MONTH_SHORT[sunday.getMonth()]}
+              {" · "}{weekItems.length} agendadas
+              {overdueItems.length > 0 && (
+                <span className="text-destructive"> · {overdueItems.length} em atraso</span>
+              )}
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" className="h-7 px-2.5 text-[11px] gap-1.5 rounded-md">
+              <LayoutDashboard className="h-3 w-3" />
+              Painel geral
+            </Button>
+            <Button variant="outline" size="sm" className="h-7 w-7 p-0 rounded-md">
+              <MoreHorizontal className="h-3.5 w-3.5" />
+            </Button>
+          </div>
         </div>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => setShowResumo((v) => !v)}
-          className="h-8 gap-1.5 text-muted-foreground"
-        >
-          <BarChart3 className="h-3.5 w-3.5" />
-          Resumo
-          <ChevronDown className={`h-3 w-3 transition-transform ${showResumo ? "rotate-180" : ""}`} />
-        </Button>
+
+        {/* Sub-seção 2: métricas em 4 células */}
+        <div className="grid grid-cols-4 divide-x border-t border-b border-border/50">
+          <div className="px-3.5 py-2.5">
+            <div className="text-[9px] font-semibold uppercase tracking-[.5px] text-muted-foreground/70 mb-1">Locações</div>
+            <div className="text-[17px] font-medium tabular-nums tracking-tight leading-none text-foreground">
+              {aluguelStats.totalActive}
+            </div>
+            <div className="text-[10px] mt-1 text-muted-foreground">
+              {aluguelStats.desbalanco === 0
+                ? "todas com cobrança"
+                : aluguelStats.desbalanco > 0
+                  ? `${aluguelStats.desbalanco} sem cobrança`
+                  : `${Math.abs(aluguelStats.desbalanco)} a mais`}
+            </div>
+          </div>
+          <div className="px-3.5 py-2.5">
+            <div className="text-[9px] font-semibold uppercase tracking-[.5px] text-muted-foreground/70 mb-1">Recebido</div>
+            <div className="text-[17px] font-medium tabular-nums tracking-tight leading-none text-emerald-600">
+              {fmtBRL(weekPrevisao.pago)}
+            </div>
+            <div className="text-[10px] mt-1 text-muted-foreground">
+              {aluguelStats.pagas} pagamento{aluguelStats.pagas !== 1 ? "s" : ""}
+            </div>
+          </div>
+          <div className="px-3.5 py-2.5">
+            <div className="text-[9px] font-semibold uppercase tracking-[.5px] text-muted-foreground/70 mb-1">A receber</div>
+            <div className="text-[17px] font-medium tabular-nums tracking-tight leading-none text-primary">
+              {fmtBRL(totalSemanaPendente)}
+            </div>
+            <div className="text-[10px] mt-1 text-muted-foreground">
+              {weekItems.length} pendente{weekItems.length !== 1 ? "s" : ""}
+            </div>
+          </div>
+          <div className="px-3.5 py-2.5">
+            <div className="text-[9px] font-semibold uppercase tracking-[.5px] text-muted-foreground/70 mb-1">Em atraso</div>
+            <div className="text-[17px] font-medium tabular-nums tracking-tight leading-none text-destructive">
+              {fmtBRL(totalAtrasado)}
+            </div>
+            <div className="text-[10px] mt-1 text-muted-foreground">
+              {overdueItems.length} cobrança{overdueItems.length !== 1 ? "s" : ""}
+            </div>
+          </div>
+        </div>
+
+        {/* Sub-seção 3: barra de progresso tripartida + legenda */}
+        <div className="px-4 pt-1.5 pb-3.5">
+          <div className="h-[3px] rounded-full overflow-hidden flex gap-px bg-border/30">
+            <div className="bg-emerald-500 h-full transition-all" style={{ width: `${recPct}%` }} />
+            <div className="bg-primary h-full transition-all" style={{ width: `${pendPct}%` }} />
+            <div className="bg-destructive h-full transition-all" style={{ width: `${atrasadoPct}%` }} />
+          </div>
+          <div className="flex gap-4 mt-1.5">
+            <span className="text-[9px] text-muted-foreground/70 flex items-center gap-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block shrink-0" />
+              {fmtBRL(weekPrevisao.pago)} recebido
+            </span>
+            <span className="text-[9px] text-muted-foreground/70 flex items-center gap-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-primary inline-block shrink-0" />
+              {fmtBRL(totalSemanaPendente)} pendente
+            </span>
+            <span className="text-[9px] text-muted-foreground/70 flex items-center gap-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-destructive inline-block shrink-0" />
+              {fmtBRL(totalAtrasado)} atrasado
+            </span>
+          </div>
+        </div>
       </div>
 
-      {/* Resumo (KPIs) — colapsável */}
-      {showResumo && (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 animate-in fade-in slide-in-from-top-2 duration-200">
-          <KpiCard
-            icon={Wallet}
-            label="Aluguéis da semana"
-            value={String(aluguelStats.totalCobr)}
-            sub={`${fmtBRL(aluguelStats.valorPendente + aluguelStats.valorPago)} total`}
-            tone="primary"
-            extra={
-              <div className="text-[11px] text-muted-foreground space-y-0.5">
-                <div>Pagos <strong className="text-success">{aluguelStats.pagas}</strong> ({fmtBRL(aluguelStats.valorPago)})</div>
-                <div>Pendentes <strong className="text-destructive">{aluguelStats.pendentes}</strong> ({fmtBRL(aluguelStats.valorPendente)})</div>
+      {/* ── DAY STRIP ────────────────────────────────────────────── */}
+      <div className="bg-background border-b px-4 py-2.5 flex gap-1 overflow-x-auto">
+        {/* "Todos" */}
+        <button
+          onClick={() => setDayFilter("all")}
+          className={`w-14 shrink-0 flex flex-col items-center gap-0 rounded-lg border px-1 py-1.5 cursor-pointer transition-all ${
+            dayFilter === "all" ? "bg-foreground border-foreground" : "border-transparent hover:bg-muted/50"
+          }`}
+        >
+          <span className={`text-[9px] font-semibold uppercase tracking-[.5px] ${dayFilter === "all" ? "text-background/90" : "text-muted-foreground/60"}`}>
+            Todos
+          </span>
+          <span className={`text-[15px] font-medium leading-tight ${dayFilter === "all" ? "text-background/90" : "text-foreground"}`}>
+            {weekItems.length}
+          </span>
+          <span className={`text-[9px] tabular-nums ${dayFilter === "all" ? "text-background/70" : "text-muted-foreground/60"}`}>
+            {weekItems.length > 0 ? `R$ ${Math.round(weekItems.reduce((s, i) => s + (i.entry.valor || 0), 0))}` : "—"}
+          </span>
+          <div className={`w-7 h-[2px] rounded-full mt-[3px] ${dayFilter === "all" ? "bg-background/20" : "bg-border"}`} />
+        </button>
+
+        {weekStrip.map((d) => {
+          const isActive = dayFilter === d.dow;
+          const isEmpty = d.count === 0;
+          const paidCount = weekDayPaid.get(d.dow) || 0;
+          const totalCount = d.count + paidCount;
+          const paidPct = totalCount > 0 ? (paidCount / totalCount) * 100 : 0;
+          return (
+            <button
+              key={d.dow}
+              onClick={() => setDayFilter(isActive ? "all" : d.dow)}
+              disabled={isEmpty && !isActive}
+              className={`w-[62px] shrink-0 flex flex-col items-center gap-0 rounded-lg border px-1 py-1.5 cursor-pointer transition-all ${
+                isActive
+                  ? "bg-foreground border-foreground"
+                  : d.isToday
+                    ? "border-primary/40"
+                    : isEmpty
+                      ? "opacity-30 pointer-events-none border-transparent"
+                      : "border-transparent hover:bg-muted/50"
+              }`}
+            >
+              <span className={`text-[9px] font-semibold uppercase tracking-[.5px] ${
+                isActive ? "text-background/90" : d.isToday ? "text-primary" : "text-muted-foreground/60"
+              }`}>
+                {WEEK_SHORT[d.dow]}
+              </span>
+              <span className={`text-[15px] font-medium leading-tight ${
+                isActive ? "text-background/90" : d.isToday ? "text-primary" : "text-foreground"
+              }`}>
+                {d.date.getDate()}
+              </span>
+              <span className={`text-[9px] tabular-nums ${isActive ? "text-background/70" : "text-muted-foreground/60"}`}>
+                {d.total > 0 ? `R$ ${Math.round(d.total)}` : "—"}
+              </span>
+              {d.isToday && !isActive && (
+                <span className="w-[3px] h-[3px] rounded-full bg-primary mx-auto mt-0.5" />
+              )}
+              <div className={`w-7 h-[2px] rounded-full mt-[3px] overflow-hidden ${isActive ? "bg-background/20" : "bg-border"}`}>
+                <div
+                  className={`h-full rounded-full ${isActive ? "bg-background/80" : "bg-emerald-500"}`}
+                  style={{ width: `${paidPct}%` }}
+                />
               </div>
-            }
-          />
-          <KpiCard
-            icon={Bike}
-            label="Locações ativas"
-            value={String(aluguelStats.totalActive)}
-            sub={
-              aluguelStats.desbalanco === 0
-                ? "✓ Todas com cobrança"
-                : aluguelStats.desbalanco > 0
-                  ? `Faltam ${aluguelStats.desbalanco} cobrança(s)`
-                  : `${Math.abs(aluguelStats.desbalanco)} a mais que locações`
-            }
-            tone={aluguelStats.desbalanco === 0 ? "success" : "destructive"}
-            warn={aluguelStats.desbalanco !== 0}
-          />
-          <CategoryKpi catKey="caucao" totals={totalsByCat.get("caucao")} />
-          <KpiCard
-            icon={AlertTriangle}
-            label="Em atraso"
-            value={String(overdueItems.length)}
-            sub={fmtBRL(totalAtrasado)}
-            tone="destructive"
-          />
-        </div>
-      )}
+            </button>
+          );
+        })}
+      </div>
 
-      {/* Faixa de dias + busca */}
-      <div className="space-y-2.5">
-        <div className="flex items-center gap-1 overflow-x-auto -mx-1 px-1">
-          <button
-            onClick={() => setDayFilter("all")}
-            className={`shrink-0 px-3 h-9 rounded-md text-xs font-medium transition-colors ${
-              dayFilter === "all" ? "bg-foreground text-background" : "text-muted-foreground hover:bg-muted"
-            }`}
-          >
-            Toda semana
-          </button>
-          {weekStrip.map((d) => {
-            const active = dayFilter === d.dow;
-            const empty = d.count === 0;
-            return (
-              <button
-                key={d.dow}
-                onClick={() => setDayFilter(active ? "all" : d.dow)}
-                disabled={empty && !active}
-                className={`shrink-0 h-9 px-2.5 rounded-md flex items-center gap-1.5 text-xs transition-colors ${
-                  active
-                    ? "bg-foreground text-background"
-                    : d.isToday
-                      ? "text-primary hover:bg-muted"
-                      : empty
-                        ? "text-muted-foreground/40 cursor-not-allowed"
-                        : "text-muted-foreground hover:bg-muted"
-                }`}
-              >
-                <span className="font-medium">{WEEK_SHORT[d.dow]}</span>
-                <span className="tabular-nums opacity-80">{d.date.getDate()}</span>
-                {d.count > 0 && (
-                  <span className={`ml-0.5 text-[10px] tabular-nums ${active ? "opacity-90" : "opacity-60"}`}>
-                    ·{d.count}
-                  </span>
-                )}
-              </button>
-            );
-          })}
-        </div>
-
-        <div className="relative">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
-          <Input
-            placeholder="Buscar cliente, placa ou modelo"
+      {/* ── SEARCH ───────────────────────────────────────────────── */}
+      <div className="bg-background border-b px-4 py-2">
+        <div className="flex items-center gap-2 h-[34px] bg-muted/50 border border-transparent rounded-[7px] px-2.5">
+          <Search className="h-[13px] w-[13px] text-muted-foreground/50 shrink-0" />
+          <input
+            className="flex-1 bg-transparent text-[12px] outline-none placeholder:text-muted-foreground/40"
+            placeholder="Buscar cliente, placa ou modelo…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="pl-9 h-9 bg-muted/30 border-transparent focus-visible:bg-background focus-visible:border-input"
           />
+          <div className="w-px h-3.5 bg-border/60 shrink-0" />
+          <button className="flex items-center gap-1.5 text-[11px] text-muted-foreground/60 shrink-0">
+            <SlidersHorizontal className="h-3 w-3" />
+            Filtros
+          </button>
         </div>
       </div>
 
-      {/* Em atraso */}
-      {filteredOverdue.length > 0 && (
-        <section>
-          <div className="flex items-baseline justify-between mb-2 px-1">
-            <div className="flex items-baseline gap-2">
-              <span className="text-xs font-semibold uppercase tracking-wide text-destructive">Em atraso</span>
-              <span className="text-[11px] text-muted-foreground tabular-nums">{filteredOverdue.length}</span>
-            </div>
-            <span className="text-[11px] text-muted-foreground tabular-nums">
-              {fmtBRL(filteredOverdue.reduce((s, i) => s + (i.entry.valor || 0), 0))}
-            </span>
-          </div>
-          <div className="rounded-lg border divide-y bg-card">
-            {filteredOverdue.map((it) => (
-              <RowItemView
-                key={it.entry.id}
-                item={it}
-                onConfirm={openConfirm}
-                onMessage={handleMessage}
-                onWhatsApp={openWhatsApp}
-                onCopy={copyText}
-                onRescheduleQuick={quickReschedule}
-                onRescheduleCustom={openReschedule}
-              />
-            ))}
-          </div>
-        </section>
-      )}
+      {/* ── CONTENT ──────────────────────────────────────────────── */}
+      <div className="px-4 pt-3 pb-6 flex flex-col gap-2.5">
 
-      {/* Semana */}
-      <section>
-        <div className="flex items-baseline justify-between mb-2 px-1">
-          <div className="flex items-baseline gap-2">
-            <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-              {dayFilter === "all" ? "Semana" : WEEK_LONG[dayFilter as number]}
-            </span>
-            <span className="text-[11px] text-muted-foreground tabular-nums">{filteredWeek.length}</span>
-          </div>
-          {dayFilter !== "all" && (
-            <button onClick={() => setDayFilter("all")} className="text-[11px] text-muted-foreground hover:text-foreground">
-              Ver semana toda
-            </button>
-          )}
-        </div>
-
-        {filteredWeek.length === 0 ? (
-          <div className="rounded-lg border bg-card p-10 text-sm text-muted-foreground text-center">
-            {weekItems.length === 0
-              ? "Nenhuma cobrança agendada para esta semana."
-              : "Nenhuma cobrança para este filtro."}
-          </div>
-        ) : (
-          <div className="space-y-4">
-            {groupedWeek.map((g) => {
-              const isToday = diffDays(today, g.date) === 0;
+        {/* Outros recebimentos (caução, multas, etc.) */}
+        {outrosRecebimentos.length > 0 && (
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-[9px] font-semibold uppercase tracking-[.5px] text-muted-foreground/60">Outros:</span>
+            {outrosRecebimentos.map(({ catKey, count, valor, paidCount, paidValor }) => {
+              const meta = metaFor(catKey);
+              const Icon = meta.icon;
+              const totalCount = count + paidCount;
+              const totalValor = valor + paidValor;
               return (
-                <div key={g.dow}>
-                  <div className="flex items-baseline justify-between mb-1.5 px-1">
-                    <div className="flex items-baseline gap-2">
-                      <span className={`text-[11px] font-medium ${isToday ? "text-primary" : "text-muted-foreground"}`}>
-                        {WEEK_LONG[g.dow]} {g.date.getDate()}/{g.date.getMonth() + 1}
-                        {isToday && " · hoje"}
-                      </span>
-                    </div>
-                    <span className="text-[11px] text-muted-foreground tabular-nums">
-                      {g.items.length} · {fmtBRL(g.items.reduce((s, i) => s + (i.entry.valor || 0), 0))}
-                    </span>
-                  </div>
-                  <div className="rounded-lg border divide-y bg-card">
-                    {g.items.map((it) => (
-                      <RowItemView
-                        key={it.entry.id}
-                        item={it}
-                        onConfirm={openConfirm}
-                        onMessage={handleMessage}
-                        onWhatsApp={openWhatsApp}
-                        onCopy={copyText}
-                        onRescheduleQuick={quickReschedule}
-                        onRescheduleCustom={openReschedule}
-                      />
-                    ))}
-                  </div>
+                <div key={catKey} className={`inline-flex items-center gap-1.5 rounded-lg border ${meta.tone.border} ${meta.tone.bg} px-2.5 py-1.5`}>
+                  <Icon className={`h-3 w-3 ${meta.tone.text}`} />
+                  <span className={`text-[9px] font-semibold uppercase tracking-[.3px] ${meta.tone.text}`}>{meta.label}</span>
+                  <span className="text-[11px] font-bold tabular-nums">{totalCount}</span>
+                  <span className="text-[10px] text-muted-foreground">{fmtBRL(totalValor)}</span>
                 </div>
               );
             })}
           </div>
         )}
-      </section>
 
-      {/* MessagePopup */}
+        {/* Em atraso */}
+        {filteredOverdue.length > 0 && (
+          <div className="rounded-[10px] overflow-hidden border border-destructive/25">
+            <div className="bg-destructive/[.06] border-b border-destructive/15 px-3.5 py-2 flex items-center justify-between">
+              <div className="flex items-center">
+                <AlertTriangle className="h-3 w-3 text-destructive" />
+                <span className="text-[9px] font-bold uppercase tracking-[.6px] text-destructive ml-1.5">Em atraso</span>
+                <span className="text-[9px] font-bold bg-destructive/15 text-destructive rounded-full px-1.5 ml-2">
+                  {filteredOverdue.length}
+                </span>
+              </div>
+              <span className="text-[11px] font-semibold text-destructive tabular-nums">
+                {fmtBRL(filteredOverdue.reduce((s, i) => s + (i.entry.valor || 0), 0))}
+              </span>
+            </div>
+            <div className="bg-background divide-y divide-border/50">
+              {filteredOverdue.map((it) => (
+                <RowItemView
+                  key={it.entry.id}
+                  item={it}
+                  onConfirm={openConfirm}
+                  onMessage={handleMessage}
+                  onWhatsApp={openWhatsApp}
+                  onCopy={copyText}
+                  onRescheduleQuick={quickReschedule}
+                  onRescheduleCustom={openReschedule}
+                  onIgnore={handleIgnore}
+                />
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Semana agrupada por dia */}
+        {filteredWeek.length === 0 && filteredOverdue.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-12 gap-2">
+            <CalendarDays className="h-8 w-8 text-muted-foreground/30" />
+            <p className="text-[13px] text-muted-foreground/50">
+              {weekItems.length === 0 ? "Nenhuma cobrança esta semana" : "Nenhuma cobrança para este filtro"}
+            </p>
+            <p className="text-[11px] text-muted-foreground/35">
+              {weekItems.length === 0 ? "As cobranças agendadas aparecem aqui" : "Tente remover os filtros"}
+            </p>
+          </div>
+        ) : filteredWeek.length === 0 ? null : (
+          groupedWeek.map((g) => {
+            const isToday = diffDays(today, g.date) === 0;
+            const dayTotal = g.items.reduce((s, i) => s + (i.entry.valor || 0), 0);
+            return (
+              <div key={g.dow}>
+                <div className="flex justify-between items-center px-0.5 pt-1 pb-1.5">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[11px] font-semibold uppercase tracking-[.4px] text-muted-foreground">
+                      {WEEK_LONG[g.dow]} {g.date.getDate()}/{g.date.getMonth() + 1}
+                    </span>
+                    {isToday && (
+                      <span className="text-[9px] font-bold bg-primary/10 text-primary rounded-full px-1.5 py-px">
+                        HOJE
+                      </span>
+                    )}
+                  </div>
+                  <span className="text-[10px] text-muted-foreground/60 tabular-nums">
+                    {g.items.length} · {fmtBRL(dayTotal)}
+                  </span>
+                </div>
+                <div className="rounded-[10px] border border-border/60 overflow-hidden divide-y divide-border/50 bg-card">
+                  {g.items.map((it) => (
+                    <RowItemView
+                      key={it.entry.id}
+                      item={it}
+                      onConfirm={openConfirm}
+                      onMessage={handleMessage}
+                      onWhatsApp={openWhatsApp}
+                      onCopy={copyText}
+                      onRescheduleQuick={quickReschedule}
+                      onRescheduleCustom={openReschedule}
+                      onIgnore={handleIgnore}
+                    />
+                  ))}
+                </div>
+              </div>
+            );
+          })
+        )}
+      </div>
+
+      {/* ── MessagePopup ─────────────────────────────────────────── */}
       {msgState && (() => {
         const { item, type } = msgState;
         const tokens = tokensFor(item);
@@ -659,7 +794,7 @@ export default function CobrancasSemanaPage() {
         );
       })()}
 
-      {/* Dialog: Confirmar pagamento */}
+      {/* ── Dialog: Confirmar pagamento ───────────────────────────── */}
       <Dialog open={!!confirmItem} onOpenChange={(o) => !o && setConfirmItem(null)}>
         <DialogContent>
           <DialogHeader>
@@ -744,7 +879,7 @@ export default function CobrancasSemanaPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Dialog: Adiar (data customizada) */}
+      {/* ── Dialog: Adiar (data customizada) ─────────────────────── */}
       <Dialog open={!!reschedItem} onOpenChange={(o) => !o && setReschedItem(null)}>
         <DialogContent className="max-w-sm">
           <DialogHeader>
@@ -772,7 +907,7 @@ export default function CobrancasSemanaPage() {
 
 // ─── Linha de cobrança ─────────────────────────────────────────────
 function RowItemView({
-  item, onConfirm, onMessage, onWhatsApp, onCopy, onRescheduleQuick, onRescheduleCustom,
+  item, onConfirm, onMessage, onWhatsApp, onCopy, onRescheduleQuick, onRescheduleCustom, onIgnore,
 }: {
   item: RowItem;
   onConfirm: (i: RowItem) => void;
@@ -781,214 +916,208 @@ function RowItemView({
   onCopy: (text: string, label: string) => void;
   onRescheduleQuick: (i: RowItem, deltaDays: number) => void;
   onRescheduleCustom: (i: RowItem) => void;
+  onIgnore: (i: RowItem) => void;
 }) {
   const meta = metaFor(item.catKey);
   const isOverdue = item.daysLate > 0;
-  const tokens = tokensFor(item);
+  const isPago = item.entry.pago;
+  const pagoHoje = isPago && item.entry.data === new Date().toISOString().slice(0, 10);
+  const boletoUrl = item.entry.asaasBoletoUrl || item.entry.asaasInvoiceUrl;
+  const asaasStatus = item.entry.asaasStatus;
+  const hasAsaas = !!item.entry.asaasPaymentId;
+
+  // Listro lateral
+  const listroCor = isPago
+    ? "bg-emerald-500"
+    : isOverdue
+      ? "bg-destructive"
+      : item.catKey === "aluguel"
+        ? "bg-primary/60"
+        : item.catKey === "caucao"
+          ? "bg-muted-foreground/30"
+          : "bg-border";
+
+  // Category badge
+  const catBadge = item.catKey === "aluguel"
+    ? "bg-blue-50 text-blue-700 dark:bg-blue-950/30 dark:text-blue-400"
+    : item.catKey === "caucao"
+      ? "bg-muted text-muted-foreground border border-border/60"
+      : (item.catKey === "multa_transito_receita" || item.catKey === "multa")
+        ? "bg-red-50 text-red-700 dark:bg-red-950/30 dark:text-red-400"
+        : "bg-muted/50 text-muted-foreground";
+
+  // Asaas status badge
+  const asaasBadge = hasAsaas && !isPago ? (
+    <span className={`text-[9px] font-semibold rounded-[3px] px-1.5 py-px ${
+      asaasStatus === "OVERDUE"
+        ? "bg-destructive/10 text-destructive"
+        : asaasStatus === "RECEIVED"
+          ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-400"
+          : "bg-amber-50 text-amber-700 dark:bg-amber-950/30 dark:text-amber-400"
+    }`}>
+      {asaasStatus === "RECEIVED" ? "Pago"
+        : asaasStatus === "OVERDUE" ? "Boleto vencido"
+        : asaasStatus === "REFUNDED" ? "Estornado"
+        : "Boleto gerado"}
+    </span>
+  ) : null;
+
+  const msgCobranca = MSG_TYPES.find((m) => m.key === "pagamento-dia")!;
+  const msgLembrete = MSG_TYPES.find((m) => m.key === "lembrete")!;
+  const msgAtraso   = MSG_TYPES.find((m) => m.key === "pagamento-atraso")!;
 
   return (
-    <div className="flex items-center gap-3 px-3 py-2.5 hover:bg-muted/30 transition-colors">
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-sm font-medium truncate">{item.clienteNome}</span>
+    <div className="flex items-stretch hover:bg-muted/30 transition-colors">
+      {/* Listro lateral */}
+      <div className={`w-[2.5px] self-stretch flex-shrink-0 ${listroCor}`} />
+
+      {/* Bloco info */}
+      <div className="flex-1 min-w-0 px-3 py-2.5">
+        {/* Linha 1: nome + valor */}
+        <div className="flex items-baseline justify-between gap-2">
+          <span className="text-[12px] font-medium truncate flex-1">{item.clienteNome}</span>
+          <span className={`text-[13px] font-medium tabular-nums flex-shrink-0 ${
+            isPago ? "text-emerald-600" : isOverdue ? "text-destructive" : ""
+          }`}>
+            {isPago && "✓ "}{fmtBRL(item.entry.valor || 0)}
+          </span>
+        </div>
+        {/* Linha 2: badges */}
+        <div className="flex items-center gap-1.5 mt-[3px] flex-wrap">
+          <span className={`text-[9px] font-semibold uppercase tracking-[.3px] rounded-[3px] px-1.5 py-px ${catBadge}`}>
+            {meta.label}
+          </span>
           {item.placa && (
-            <span className="text-[11px] font-mono text-muted-foreground tracking-wider">
+            <span className="font-mono text-[9px] bg-muted/70 border border-border/50 rounded-[3px] px-1.5 py-px tracking-[.5px] text-muted-foreground">
               {item.placa}
             </span>
           )}
           {isOverdue && (
-            <span className="text-[10px] font-medium text-destructive">
+            <span className="text-[9px] font-semibold bg-destructive/10 text-destructive rounded-[3px] px-1.5 py-px">
               {item.daysLate}d atraso
             </span>
           )}
-        </div>
-        <div className="text-[11px] text-muted-foreground truncate mt-0.5">
-          {meta.label}
-          {item.due && ` · ${item.due.toLocaleDateString("pt-BR")}`}
-        </div>
-      </div>
-
-      <div className={`text-right shrink-0 tabular-nums text-sm font-semibold ${isOverdue ? "text-destructive" : ""}`}>
-        {fmtBRL(item.entry.valor || 0)}
-      </div>
-
-      {/* Confirmar pagamento */}
-      <Button
-        size="sm"
-        variant="ghost"
-        className="shrink-0 h-8 w-8 p-0 text-success hover:text-success hover:bg-success/10"
-        onClick={() => onConfirm(item)}
-        title="Confirmar pagamento"
-      >
-        <CheckCircle2 className="h-4 w-4" />
-      </Button>
-
-      {/* WhatsApp */}
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button variant="ghost" size="sm" className="shrink-0 h-8 w-8 p-0 text-muted-foreground" title="WhatsApp / Mensagem">
-            <MessageCircle className="h-4 w-4" />
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="w-60">
-          <DropdownMenuLabel className="text-[10px] uppercase tracking-wide text-muted-foreground">
-            Enviar WhatsApp
-          </DropdownMenuLabel>
-          {MSG_TYPES.map((mt) => (
-            <DropdownMenuItem key={`wa-${mt.key}`} onClick={() => onWhatsApp(item, mt)} className="gap-2 cursor-pointer">
-              <mt.icon className="h-4 w-4 text-muted-foreground" />
-              <span className="text-xs">{mt.label}</span>
-            </DropdownMenuItem>
-          ))}
-          <DropdownMenuSeparator />
-          <DropdownMenuLabel className="text-[10px] uppercase tracking-wide text-muted-foreground">
-            Abrir editor
-          </DropdownMenuLabel>
-          {MSG_TYPES.map((mt) => (
-            <DropdownMenuItem key={`ed-${mt.key}`} onClick={() => onMessage(item, mt)} className="gap-2 cursor-pointer">
-              <ExternalLink className="h-3.5 w-3.5 text-muted-foreground" />
-              <span className="text-xs">{mt.label}</span>
-            </DropdownMenuItem>
-          ))}
-        </DropdownMenuContent>
-      </DropdownMenu>
-
-      {/* Mais ações */}
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button variant="ghost" size="sm" className="shrink-0 h-8 w-8 p-0 text-muted-foreground" title="Mais ações">
-            <MoreHorizontal className="h-4 w-4" />
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="w-56">
-          <DropdownMenuLabel className="text-[10px] uppercase tracking-wide text-muted-foreground">
-            Copiar
-          </DropdownMenuLabel>
-          {item.telefoneCliente && (
-            <DropdownMenuItem
-              onClick={() => onCopy(item.telefoneCliente!, "Telefone")}
-              className="gap-2 cursor-pointer"
-            >
-              <Phone className="h-4 w-4 text-muted-foreground" />
-              <span className="text-xs">Telefone</span>
-              <span className="ml-auto text-[10px] text-muted-foreground font-mono">{item.telefoneCliente}</span>
-            </DropdownMenuItem>
+          {pagoHoje && (
+            <span className="text-[9px] font-semibold bg-emerald-50 text-emerald-700 rounded-[3px] px-1.5 py-px dark:bg-emerald-950/30 dark:text-emerald-400">
+              Pago hoje
+            </span>
           )}
-          <DropdownMenuSub>
-            <DropdownMenuSubTrigger className="gap-2 text-xs">
-              <Copy className="h-4 w-4 text-muted-foreground" />
-              Copiar mensagem
-            </DropdownMenuSubTrigger>
-            <DropdownMenuPortal>
-              <DropdownMenuSubContent className="w-60">
-                {MSG_TYPES.map((mt) => (
-                  <DropdownMenuItem
-                    key={`cp-${mt.key}`}
-                    onClick={() => onCopy(applyTokens(mt.template, tokens), mt.label)}
-                    className="gap-2 cursor-pointer"
-                  >
-                    <mt.icon className="h-4 w-4 text-muted-foreground" />
-                    <span className="text-xs">{mt.label}</span>
-                  </DropdownMenuItem>
-                ))}
-              </DropdownMenuSubContent>
-            </DropdownMenuPortal>
-          </DropdownMenuSub>
-
-          <DropdownMenuSeparator />
-          <DropdownMenuLabel className="text-[10px] uppercase tracking-wide text-muted-foreground">
-            Adiar vencimento
-          </DropdownMenuLabel>
-          <DropdownMenuItem onClick={() => onRescheduleQuick(item, 1)} className="gap-2 cursor-pointer">
-            <CalendarClock className="h-4 w-4 text-muted-foreground" />
-            <span className="text-xs">+ 1 dia</span>
-          </DropdownMenuItem>
-          <DropdownMenuItem onClick={() => onRescheduleQuick(item, 3)} className="gap-2 cursor-pointer">
-            <CalendarClock className="h-4 w-4 text-muted-foreground" />
-            <span className="text-xs">+ 3 dias</span>
-          </DropdownMenuItem>
-          <DropdownMenuItem onClick={() => onRescheduleQuick(item, 7)} className="gap-2 cursor-pointer">
-            <CalendarClock className="h-4 w-4 text-muted-foreground" />
-            <span className="text-xs">+ 7 dias</span>
-          </DropdownMenuItem>
-          <DropdownMenuItem onClick={() => onRescheduleCustom(item)} className="gap-2 cursor-pointer">
-            <CalendarDays className="h-4 w-4 text-muted-foreground" />
-            <span className="text-xs">Outra data…</span>
-          </DropdownMenuItem>
-
-          <DropdownMenuSeparator />
-          <DropdownMenuLabel className="text-[10px] uppercase tracking-wide text-muted-foreground">
-            Abrir cadastro
-          </DropdownMenuLabel>
-          <DropdownMenuItem asChild className="cursor-pointer">
-            <Link to="/clientes" className="gap-2 flex items-center">
-              <User className="h-4 w-4 text-muted-foreground" />
-              <span className="text-xs">Ver cliente</span>
-            </Link>
-          </DropdownMenuItem>
-          <DropdownMenuItem asChild className="cursor-pointer">
-            <Link to="/motos" className="gap-2 flex items-center">
-              <Bike className="h-4 w-4 text-muted-foreground" />
-              <span className="text-xs">Ver moto</span>
-            </Link>
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
-    </div>
-  );
-}
-
-// ─── KPI auxiliares ───────────────────────────────────────────────
-function KpiCard({
-  icon: Icon, label, value, sub, tone, warn, extra,
-}: {
-  icon: any; label: string; value: string; sub?: string;
-  tone: "primary" | "destructive" | "success" | "muted";
-  warn?: boolean;
-  extra?: React.ReactNode;
-}) {
-  const map = {
-    primary: { border: "border-primary/30", bg: "bg-primary/5", text: "text-primary" },
-    destructive: { border: "border-destructive/30", bg: "bg-destructive/5", text: "text-destructive" },
-    success: { border: "border-success/30", bg: "bg-success/5", text: "text-success" },
-    muted: { border: "border-border", bg: "bg-muted/40", text: "text-foreground" },
-  }[tone];
-  return (
-    <div className={`rounded-xl border ${map.border} ${map.bg} p-3 space-y-1`}>
-      <div className={`flex items-center gap-2 ${map.text}`}>
-        <Icon className="h-4 w-4" />
-        <span className="text-[11px] font-semibold uppercase tracking-wide">{label}</span>
-      </div>
-      <div className={`text-xl font-extrabold tabular-nums ${map.text}`}>{value}</div>
-      {sub && (
-        <div className={`text-[11px] ${warn ? "text-destructive font-semibold" : "text-muted-foreground"}`}>
-          {sub}
+          {asaasBadge}
         </div>
-      )}
-      {extra}
-    </div>
-  );
-}
-
-function CategoryKpi({
-  catKey, totals,
-}: {
-  catKey: string;
-  totals?: { count: number; valor: number; paidCount: number; paidValor: number };
-}) {
-  const meta = metaFor(catKey);
-  const Icon = meta.icon;
-  const t = totals || { count: 0, valor: 0, paidCount: 0, paidValor: 0 };
-  return (
-    <div className={`rounded-xl border ${meta.tone.border} ${meta.tone.bg} p-3 space-y-1`}>
-      <div className={`flex items-center gap-2 ${meta.tone.text}`}>
-        <Icon className="h-4 w-4" />
-        <span className="text-[11px] font-semibold uppercase tracking-wide">{meta.label}</span>
       </div>
-      <div className={`text-xl font-extrabold tabular-nums ${meta.tone.text}`}>{t.count + t.paidCount}</div>
-      <div className="text-[11px] text-muted-foreground">
-        Pagas <strong className="text-success">{t.paidCount}</strong>
-        {" • "}Pendentes <strong className="text-destructive">{t.count}</strong>
+
+      {/* Ações — desabilitadas se pago (exceto "...") */}
+      <div className={`flex items-center gap-1 pr-2 flex-shrink-0 ${isPago ? "opacity-30 pointer-events-none" : ""}`}>
+        {/* Boleto link */}
+        {boletoUrl && (
+          <a href={boletoUrl} target="_blank" rel="noopener noreferrer">
+            <button className="w-[30px] h-[30px] rounded-[7px] border border-amber-200 flex items-center justify-center text-amber-600 hover:bg-amber-50 dark:hover:bg-amber-950/20 transition-colors">
+              <Receipt className="h-3.5 w-3.5" />
+            </button>
+          </a>
+        )}
+
+        {/* WhatsApp */}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button className="w-[30px] h-[30px] rounded-[7px] border border-border/60 flex items-center justify-center text-muted-foreground hover:bg-emerald-50 hover:border-emerald-200 hover:text-emerald-600 dark:hover:bg-emerald-950/20 transition-colors">
+              <MessageCircle className="h-3.5 w-3.5" />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-52">
+            <DropdownMenuLabel className="text-[10px] uppercase tracking-wide text-muted-foreground">WhatsApp</DropdownMenuLabel>
+            <DropdownMenuItem onClick={() => onWhatsApp(item, msgCobranca)} className="gap-2 cursor-pointer">
+              <msgCobranca.icon className="h-4 w-4 text-muted-foreground" />
+              <span className="text-xs">{msgCobranca.label}</span>
+            </DropdownMenuItem>
+            {isOverdue && (
+              <DropdownMenuItem onClick={() => onWhatsApp(item, msgAtraso)} className="gap-2 cursor-pointer">
+                <msgAtraso.icon className="h-4 w-4 text-muted-foreground" />
+                <span className="text-xs">{msgAtraso.label}</span>
+              </DropdownMenuItem>
+            )}
+            <DropdownMenuItem onClick={() => onWhatsApp(item, msgLembrete)} className="gap-2 cursor-pointer">
+              <msgLembrete.icon className="h-4 w-4 text-muted-foreground" />
+              <span className="text-xs">{msgLembrete.label}</span>
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+
+        {/* Confirmar pagamento */}
+        <button
+          className="h-[30px] px-2.5 rounded-[7px] border border-emerald-200 bg-emerald-50 text-emerald-700 text-[11px] font-semibold flex items-center gap-1 hover:bg-emerald-100 dark:bg-emerald-950/20 dark:border-emerald-800 dark:text-emerald-400 transition-colors"
+          onClick={() => onConfirm(item)}
+        >
+          <Check className="h-[10px] w-[10px]" />
+          Pago
+        </button>
+      </div>
+
+      {/* Mais ações — sempre visível */}
+      <div className="flex items-center pr-1.5 flex-shrink-0">
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button className="w-[26px] h-[26px] rounded-[6px] flex items-center justify-center text-muted-foreground/50 hover:bg-muted hover:text-muted-foreground transition-colors">
+              <MoreHorizontal className="h-3.5 w-3.5" />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-52">
+            {item.telefoneCliente && (
+              <DropdownMenuItem onClick={() => onCopy(item.telefoneCliente!, "Telefone")} className="gap-2 cursor-pointer">
+                <Phone className="h-4 w-4 text-muted-foreground" />
+                <span className="text-xs">Copiar telefone</span>
+              </DropdownMenuItem>
+            )}
+            <DropdownMenuItem onClick={() => onWhatsApp(item, msgCobranca)} className="gap-2 cursor-pointer">
+              <MessageCircle className="h-4 w-4 text-muted-foreground" />
+              <span className="text-xs">WhatsApp cobrança</span>
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => onWhatsApp(item, msgLembrete)} className="gap-2 cursor-pointer">
+              <Bell className="h-4 w-4 text-muted-foreground" />
+              <span className="text-xs">WhatsApp lembrete</span>
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={() => onRescheduleQuick(item, 1)} className="gap-2 cursor-pointer">
+              <CalendarClock className="h-4 w-4 text-muted-foreground" />
+              <span className="text-xs">Adiar +1 dia</span>
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => onRescheduleQuick(item, 3)} className="gap-2 cursor-pointer">
+              <CalendarClock className="h-4 w-4 text-muted-foreground" />
+              <span className="text-xs">Adiar +3 dias</span>
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => onRescheduleCustom(item)} className="gap-2 cursor-pointer">
+              <CalendarDays className="h-4 w-4 text-muted-foreground" />
+              <span className="text-xs">Adiar para data…</span>
+            </DropdownMenuItem>
+            {(boletoUrl || hasAsaas) && (
+              <>
+                <DropdownMenuSeparator />
+                {boletoUrl && (
+                  <DropdownMenuItem asChild className="cursor-pointer">
+                    <a href={boletoUrl} target="_blank" rel="noopener noreferrer" className="gap-2 flex items-center">
+                      <ExternalLink className="h-4 w-4 text-muted-foreground" />
+                      <span className="text-xs">Abrir boleto</span>
+                    </a>
+                  </DropdownMenuItem>
+                )}
+                {boletoUrl && (
+                  <DropdownMenuItem onClick={() => onCopy(boletoUrl, "Link do boleto")} className="gap-2 cursor-pointer">
+                    <Copy className="h-4 w-4 text-muted-foreground" />
+                    <span className="text-xs">Copiar link do boleto</span>
+                  </DropdownMenuItem>
+                )}
+              </>
+            )}
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              onClick={() => onIgnore(item)}
+              className="gap-2 cursor-pointer text-muted-foreground"
+            >
+              <span className="h-4 w-4 flex items-center justify-center text-[11px]">✕</span>
+              <span className="text-xs">Ignorar cobrança</span>
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
     </div>
   );
