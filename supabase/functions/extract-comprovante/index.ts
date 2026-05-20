@@ -1,5 +1,14 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 
+function parseJsonFromText(text: string): Record<string, unknown> {
+  const cleaned = text.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
+  try { return JSON.parse(cleaned); } catch {}
+  const start = cleaned.indexOf("{");
+  const end = cleaned.lastIndexOf("}");
+  if (start !== -1 && end > start) return JSON.parse(cleaned.slice(start, end + 1));
+  throw new Error("No JSON object found in response");
+}
+
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
@@ -97,15 +106,24 @@ Retorne SOMENTE o JSON puro, sem markdown, sem \`\`\`, sem explicação.`;
     }
 
     const aiResult = await response.json();
-    const content = aiResult.candidates?.[0]?.content?.parts?.[0]?.text || "";
+
+    if (!aiResult.candidates || aiResult.candidates.length === 0) {
+      const blockReason = aiResult.promptFeedback?.blockReason ?? "sem candidatos";
+      console.error("Gemini blocked:", blockReason);
+      return new Response(
+        JSON.stringify({ error: "Documento não pôde ser processado. Tente outro arquivo." }),
+        { status: 422, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    const content = aiResult.candidates[0]?.content?.parts?.[0]?.text ?? "";
     console.log("Gemini raw response:", content);
 
     let extracted: Record<string, unknown>;
     try {
-      const jsonStr = content.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
-      extracted = JSON.parse(jsonStr);
-    } catch {
-      console.error("Failed to parse Gemini response as JSON");
+      extracted = parseJsonFromText(content);
+    } catch (parseError) {
+      console.error("Failed to parse Gemini response as JSON:", parseError, "raw:", content);
       return new Response(
         JSON.stringify({ error: "Não foi possível interpretar os dados do documento. Tente novamente." }),
         { status: 422, headers: { ...corsHeaders, "Content-Type": "application/json" } }
