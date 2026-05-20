@@ -7,7 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Progress } from "@/components/ui/progress";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Motorcycle } from "@/lib/types";
-import { loadRastreadores, saveRastreadores, loadFinancial, saveFinancial } from "@/lib/store";
+import { loadRastreadores, saveRastreadores, loadFinancial, saveFinancial, loadMotos } from "@/lib/store";
 import { getDataCache } from "@/lib/data-cache";
 import { InfoTooltip } from "@/components/InfoTooltip";
 import { FileText, Upload, Bike, DollarSign, Check, ChevronLeft, ChevronRight, AlertCircle, Settings2, Plus, Pencil, Trash2, CheckCircle2, Circle, Loader2, AlertTriangle, Download, TrendingUp, Wallet, Target, Sparkles, Calendar, Repeat } from "lucide-react";
@@ -641,6 +641,17 @@ export function MotoDialog({ open, onOpenChange, moto, onSave, mode }: MotoDialo
   const canAdvanceStep2 = Object.keys(validateStep2(form)).length === 0;
   const canAdvanceStep3 = Object.keys(validateStep3(form)).length === 0;
 
+  // Detecta placa duplicada (ignora a própria moto em edição)
+  const duplicatePlaca = (() => {
+    const placa = (form.placa || "").trim().toUpperCase();
+    if (!placa) return null;
+    const found = loadMotos().find(
+      (m) => (m.placa || "").trim().toUpperCase() === placa && m.id !== form.id,
+    );
+    return found || null;
+  })();
+  const isDuplicate = !!duplicatePlaca;
+
   const tryAdvance = (from: number) => {
     setTouched(prev => ({ ...prev, [from]: true }));
     if (from === 2 && !canAdvanceStep2) {
@@ -653,6 +664,10 @@ export function MotoDialog({ open, onOpenChange, moto, onSave, mode }: MotoDialo
         toast.error("Preencha todos os campos obrigatórios corretamente");
         return;
       }
+    }
+    if (from === 2 && isDuplicate) {
+      toast.error(`Placa ${duplicatePlaca!.placa} já cadastrada${duplicatePlaca!.modelo ? ` (${duplicatePlaca!.modelo})` : ""}`);
+      return;
     }
     if (from === 3 && !canAdvanceStep3) {
       toast.error("Preencha todos os campos obrigatórios corretamente");
@@ -669,6 +684,7 @@ export function MotoDialog({ open, onOpenChange, moto, onSave, mode }: MotoDialo
       const placaErr = validatePlaca(form.placa);
       if (placaErr) { toast.error("A placa é obrigatória e não pode ser ignorada"); return; }
       if (!canAdvanceStep2 && !skipStep2) { toast.error("Corrija os erros no Passo 2 antes de avançar"); return; }
+      if (isDuplicate) { toast.error(`Placa ${duplicatePlaca!.placa} já cadastrada${duplicatePlaca!.modelo ? ` (${duplicatePlaca!.modelo})` : ""}`); return; }
     }
     setStep(target);
   };
@@ -677,6 +693,11 @@ export function MotoDialog({ open, onOpenChange, moto, onSave, mode }: MotoDialo
     setTouched(prev => ({ ...prev, 2: true, 3: true }));
     const placaErr = validatePlaca(form.placa);
     if (placaErr) { toast.error("A placa é obrigatória e não pode ser ignorada"); setStep(2); return; }
+    if (isDuplicate) {
+      toast.error(`Placa ${duplicatePlaca!.placa} já cadastrada${duplicatePlaca!.modelo ? ` (${duplicatePlaca!.modelo})` : ""}. Cadastro bloqueado.`);
+      setStep(2);
+      return;
+    }
     if (!canAdvanceStep2 && !skipStep2) { toast.error("Corrija os erros nos dados do veículo"); setStep(2); return; }
     if (!canAdvanceStep3) { toast.error("Corrija os erros nos dados financeiros"); setStep(3); return; }
     // Gera lançamentos financeiros conforme checkboxes
@@ -945,8 +966,13 @@ export function MotoDialog({ open, onOpenChange, moto, onSave, mode }: MotoDialo
                     Placa <span className="text-destructive">*</span>
                     <InfoTooltip text="Placa no padrão Mercosul (ABC1D23) ou antigo (ABC1234)" />
                   </Label>
-                  <Input className={errBorder("placa", step2Errors)} value={form.placa} onChange={(e) => setForm({ ...form, placa: e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "") })} placeholder="ABC1D23" maxLength={7} />
+                  <Input className={`${errBorder("placa", step2Errors)} ${isDuplicate ? "border-destructive focus-visible:ring-destructive" : ""}`} value={form.placa} onChange={(e) => setForm({ ...form, placa: e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "") })} placeholder="ABC1D23" maxLength={7} />
                   <FieldError msg={step2Errors.placa} />
+                  {isDuplicate && (
+                    <p className="text-xs text-destructive font-medium">
+                      Placa já cadastrada{duplicatePlaca!.modelo ? ` em "${duplicatePlaca!.modelo}"` : ""}. Cadastro bloqueado.
+                    </p>
+                  )}
                 </div>
                 <div className="grid gap-1">
                   <Label className="flex items-center gap-1 text-xs">
