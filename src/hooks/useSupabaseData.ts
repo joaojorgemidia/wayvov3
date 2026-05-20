@@ -121,7 +121,8 @@ function dbToMoto(r: any): Motorcycle {
     lucroOperacional: r.lucro_operacional != null ? Number(r.lucro_operacional) : null,
     decisao: r.decisao || null,
     crlvPdfName: r.crlv_pdf_name || null,
-    crlvPdfData: null, // Not stored in DB, use storage
+    crlvPdfData: null,
+    crlvStoragePath: r.crlv_storage_path || null,
   };
 }
 
@@ -154,6 +155,7 @@ function motoToDb(m: Motorcycle): any {
     lucro_operacional: m.lucroOperacional,
     decisao: m.decisao,
     crlv_pdf_name: m.crlvPdfName,
+    crlv_storage_path: m.crlvStoragePath ?? null,
   };
 }
 
