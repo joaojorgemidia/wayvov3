@@ -684,6 +684,7 @@ export function MotoDialog({ open, onOpenChange, moto, onSave, mode }: MotoDialo
       const placaErr = validatePlaca(form.placa);
       if (placaErr) { toast.error("A placa é obrigatória e não pode ser ignorada"); return; }
       if (!canAdvanceStep2 && !skipStep2) { toast.error("Corrija os erros no Passo 2 antes de avançar"); return; }
+      if (isDuplicate) { toast.error(`Placa ${duplicatePlaca!.placa} já cadastrada${duplicatePlaca!.modelo ? ` (${duplicatePlaca!.modelo})` : ""}`); return; }
     }
     setStep(target);
   };
