@@ -641,6 +641,17 @@ export function MotoDialog({ open, onOpenChange, moto, onSave, mode }: MotoDialo
   const canAdvanceStep2 = Object.keys(validateStep2(form)).length === 0;
   const canAdvanceStep3 = Object.keys(validateStep3(form)).length === 0;
 
+  // Detecta placa duplicada (ignora a própria moto em edição)
+  const duplicatePlaca = (() => {
+    const placa = (form.placa || "").trim().toUpperCase();
+    if (!placa) return null;
+    const found = loadMotos().find(
+      (m) => (m.placa || "").trim().toUpperCase() === placa && m.id !== form.id,
+    );
+    return found || null;
+  })();
+  const isDuplicate = !!duplicatePlaca;
+
   const tryAdvance = (from: number) => {
     setTouched(prev => ({ ...prev, [from]: true }));
     if (from === 2 && !canAdvanceStep2) {
