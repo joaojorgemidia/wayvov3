@@ -20,36 +20,21 @@ serve(async (req) => {
       );
     }
 
-    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
-    if (!LOVABLE_API_KEY) {
+    const GOOGLE_AI_API_KEY = Deno.env.get("GOOGLE_AI_API_KEY");
+    if (!GOOGLE_AI_API_KEY) {
       return new Response(
-        JSON.stringify({ error: "LOVABLE_API_KEY not configured" }),
+        JSON.stringify({ error: "GOOGLE_AI_API_KEY not configured" }),
         { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
-    console.log("Sending PDF to AI for CRLV extraction...");
+    console.log("Sending PDF to Gemini for CRLV extraction...");
 
     const systemPrompt = `Você é um especialista em extrair dados de documentos CRLV (Certificado de Registro e Licenciamento de Veículo) brasileiros.
 Analise o documento PDF fornecido e extraia TODOS os campos disponíveis.
 Retorne APENAS um JSON válido com os campos encontrados. Se um campo não for encontrado, use null.`;
 
-    const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${LOVABLE_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "google/gemini-2.5-flash",
-        messages: [
-          { role: "system", content: systemPrompt },
-          {
-            role: "user",
-            content: [
-              {
-                type: "text",
-                text: `Extraia os dados deste CRLV e retorne um JSON com exatamente estes campos:
+    const userPrompt = `Extraia os dados deste CRLV e retorne um JSON com exatamente estes campos:
 {
   "placa": "string ou null",
   "modelo": "string ou null (marca/modelo completo)",
@@ -61,34 +46,35 @@ Retorne APENAS um JSON válido com os campos encontrados. Se um campo não for e
   "combustivel": "string ou null",
   "proprietario": "string ou null (nome do proprietário)"
 }
-Retorne SOMENTE o JSON, sem markdown, sem explicação.`,
-              },
-              {
-                type: "image_url",
-                image_url: {
-                  url: `data:application/pdf;base64,${pdfBase64}`,
-                },
-              },
+Retorne SOMENTE o JSON, sem markdown, sem explicação.`;
+
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GOOGLE_AI_API_KEY}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          systemInstruction: { parts: [{ text: systemPrompt }] },
+          contents: [{
+            role: "user",
+            parts: [
+              { text: userPrompt },
+              { inlineData: { mimeType: "application/pdf", data: pdfBase64 } },
             ],
-          },
-        ],
-      }),
-    });
+          }],
+          generationConfig: { responseMimeType: "text/plain" },
+        }),
+      }
+    );
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error("AI gateway error:", response.status, errorText);
+      console.error("Gemini API error:", response.status, errorText);
 
       if (response.status === 429) {
         return new Response(
           JSON.stringify({ error: "Limite de requisições excedido. Tente novamente em alguns segundos." }),
           { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
-      }
-      if (response.status === 402) {
-        return new Response(
-          JSON.stringify({ error: "Créditos insuficientes. Adicione créditos em Settings > Workspace > Usage." }),
-          { status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
 
@@ -99,16 +85,15 @@ Retorne SOMENTE o JSON, sem markdown, sem explicação.`,
     }
 
     const aiResult = await response.json();
-    const content = aiResult.choices?.[0]?.message?.content || "";
-    console.log("AI raw response:", content);
+    const content = aiResult.candidates?.[0]?.content?.parts?.[0]?.text || "";
+    console.log("Gemini raw response:", content);
 
-    // Parse the JSON from AI response (handle potential markdown wrapping)
     let extracted: Record<string, unknown>;
     try {
       const jsonStr = content.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
       extracted = JSON.parse(jsonStr);
     } catch (parseError) {
-      console.error("Failed to parse AI response as JSON:", parseError);
+      console.error("Failed to parse Gemini response as JSON:", parseError);
       return new Response(
         JSON.stringify({ error: "Não foi possível interpretar os dados do documento. Tente novamente." }),
         { status: 422, headers: { ...corsHeaders, "Content-Type": "application/json" } }

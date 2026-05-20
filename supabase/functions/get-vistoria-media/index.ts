@@ -2,23 +2,11 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.4";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type, range",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, range",
   "Access-Control-Expose-Headers": "content-length, content-range, accept-ranges",
 };
 
-const DRIVE_API = "https://connector-gateway.lovable.dev/google_drive/drive/v3";
-
-function gatewayHeaders() {
-  const lovableKey = Deno.env.get("LOVABLE_API_KEY");
-  const driveKey = Deno.env.get("GOOGLE_DRIVE_API_KEY");
-  if (!lovableKey) throw new Error("LOVABLE_API_KEY ausente");
-  if (!driveKey) throw new Error("GOOGLE_DRIVE_API_KEY ausente");
-  return {
-    Authorization: `Bearer ${lovableKey}`,
-    "X-Connection-Api-Key": driveKey,
-  };
-}
+const BUCKET = "vistorias";
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
@@ -31,14 +19,13 @@ Deno.serve(async (req) => {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
-    const supabase = createClient(
+    const userClient = createClient(
       Deno.env.get("SUPABASE_URL")!,
       Deno.env.get("SUPABASE_ANON_KEY")!,
       { global: { headers: { Authorization: authHeader } } },
     );
-    const token = authHeader.replace("Bearer ", "");
-    const { data: claims, error: claimsErr } = await supabase.auth.getClaims(token);
-    if (claimsErr || !claims?.claims) {
+    const { data: { user }, error: authErr } = await userClient.auth.getUser();
+    if (authErr || !user) {
       return new Response(JSON.stringify({ error: "Unauthorized" }), {
         status: 401,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -46,18 +33,20 @@ Deno.serve(async (req) => {
     }
 
     const url = new URL(req.url);
+    const storagePath = url.searchParams.get("storagePath");
     const fileId = url.searchParams.get("fileId");
     const inspectionId = url.searchParams.get("inspectionId");
     const download = url.searchParams.get("download") === "1";
-    if (!fileId || !inspectionId) {
-      return new Response(JSON.stringify({ error: "fileId e inspectionId obrigatórios" }), {
+
+    if ((!storagePath && !fileId) || !inspectionId) {
+      return new Response(JSON.stringify({ error: "storagePath (ou fileId) e inspectionId obrigatórios" }), {
         status: 400,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    // Valida posse via RLS — se SELECT retorna a vistoria, o usuário tem acesso
-    const { data: insp, error: inspErr } = await supabase
+    // Valida acesso via RLS — se SELECT retorna a vistoria, o usuário tem acesso
+    const { data: insp, error: inspErr } = await userClient
       .from("inspections")
       .select("id, media")
       .eq("id", inspectionId)
@@ -69,8 +58,12 @@ Deno.serve(async (req) => {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
+
     const media = Array.isArray(insp.media) ? insp.media : [];
-    const found = media.find((m: any) => m?.fileId === fileId);
+    const found = storagePath
+      ? media.find((m: any) => m?.storagePath === storagePath)
+      : media.find((m: any) => m?.fileId === fileId);
+
     if (!found) {
       return new Response(JSON.stringify({ error: "Arquivo não pertence à vistoria" }), {
         status: 403,
@@ -78,38 +71,51 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Stream do arquivo
-    const driveHeaders: Record<string, string> = { ...gatewayHeaders() };
-    const range = req.headers.get("range");
-    if (range) driveHeaders.Range = range;
+    // Arquivos legados (fileId do Google Drive) não são mais acessíveis
+    if (!storagePath && fileId) {
+      return new Response(JSON.stringify({ error: "Arquivo legado do Google Drive não disponível. Apenas novos uploads são suportados." }), {
+        status: 410,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
 
-    const driveRes = await fetch(`${DRIVE_API}/files/${fileId}?alt=media`, {
-      headers: driveHeaders,
-    });
-    if (!driveRes.ok && driveRes.status !== 206) {
-      const t = await driveRes.text();
-      console.error("Drive download falhou", driveRes.status, t);
-      return new Response(JSON.stringify({ error: `Drive [${driveRes.status}]` }), {
+    // Stream do arquivo via Supabase Storage (service role para bypass de RLS)
+    const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+    const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+    const range = req.headers.get("range");
+
+    const storageHeaders: Record<string, string> = {
+      Authorization: `Bearer ${serviceRoleKey}`,
+    };
+    if (range) storageHeaders.Range = range;
+
+    const storageRes = await fetch(
+      `${supabaseUrl}/storage/v1/object/${BUCKET}/${storagePath}`,
+      { headers: storageHeaders },
+    );
+
+    if (!storageRes.ok && storageRes.status !== 206) {
+      const t = await storageRes.text();
+      console.error("Storage download failed", storageRes.status, t);
+      return new Response(JSON.stringify({ error: `Storage [${storageRes.status}]` }), {
         status: 502,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
     const headers = new Headers(corsHeaders);
-    headers.set("Content-Type", found.type || driveRes.headers.get("Content-Type") || "application/octet-stream");
-    const cl = driveRes.headers.get("Content-Length");
+    const contentType = found.type || storageRes.headers.get("Content-Type") || "application/octet-stream";
+    headers.set("Content-Type", contentType);
+    const cl = storageRes.headers.get("Content-Length");
     if (cl) headers.set("Content-Length", cl);
-    const cr = driveRes.headers.get("Content-Range");
+    const cr = storageRes.headers.get("Content-Range");
     if (cr) headers.set("Content-Range", cr);
     headers.set("Accept-Ranges", "bytes");
     headers.set("Cache-Control", "private, max-age=300");
-    if (download) {
-      headers.set("Content-Disposition", `attachment; filename="${found.name || "vistoria"}"`);
-    } else {
-      headers.set("Content-Disposition", `inline; filename="${found.name || "vistoria"}"`);
-    }
+    const filename = found.name || "vistoria";
+    headers.set("Content-Disposition", download ? `attachment; filename="${filename}"` : `inline; filename="${filename}"`);
 
-    return new Response(driveRes.body, { status: driveRes.status, headers });
+    return new Response(storageRes.body, { status: storageRes.status, headers });
   } catch (e) {
     console.error("get-vistoria-media error:", e);
     const msg = e instanceof Error ? e.message : "Erro desconhecido";

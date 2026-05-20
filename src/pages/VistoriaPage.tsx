@@ -11,7 +11,7 @@ import {
 } from "@/components/ui/dialog";
 import {
   Settings, Plus, ChevronDown, ChevronRight, Search, Upload,
-  Download, Trash2, FileVideo, ImageIcon, Loader2, Eye, X, FolderOpen, Send, Copy, Phone,
+  Download, Trash2, FileVideo, ImageIcon, Loader2, Eye, Send, Copy, Phone,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -20,7 +20,6 @@ import { useDataCacheSnapshot } from "@/lib/data-cache";
 import { getActiveCompanyId } from "@/lib/companies";
 import { Motorcycle } from "@/lib/types";
 import { formatDate } from "@/lib/alerts";
-import { resolveVistoriaFolders } from "@/lib/vistoria-folders";
 import { buildWhatsAppUrl } from "@/lib/whatsapp";
 import { applyTokens, buildAllTokens } from "@/lib/message-tokens";
 import { DEFAULT_STAGES } from "@/lib/collections";
@@ -50,12 +49,13 @@ function VistoriaRuleSection() {
 }
 
 interface InspectionMedia {
-  fileId: string;
+  storagePath?: string;
+  fileId?: string;        // legado Google Drive
   name: string;
   type: string; // mime
   size: number;
-  webViewLink?: string | null;
-  folder?: string;
+  webViewLink?: string | null;  // legado
+  folder?: string;              // legado
 }
 
 interface Inspection {
@@ -265,8 +265,6 @@ export default function VistoriaPage() {
     url: string | null;
     loading: boolean;
   } | null>(null);
-  // chave de loading do botão "abrir pasta": `placa:{id}` ou `data:{inspectionId}`
-  const [openingFolderKey, setOpeningFolderKey] = useState<string | null>(null);
 
   const companyId = getActiveCompanyId();
 
@@ -377,21 +375,24 @@ export default function VistoriaPage() {
     await loadAll();
   }
 
+  function buildMediaUrl(media: InspectionMedia, inspectionId: string, download = false): string {
+    const projectId = import.meta.env.VITE_SUPABASE_PROJECT_ID;
+    const base = `https://${projectId}.supabase.co/functions/v1/get-vistoria-media`;
+    const identifier = media.storagePath
+      ? `storagePath=${encodeURIComponent(media.storagePath)}`
+      : `fileId=${encodeURIComponent(media.fileId ?? "")}`;
+    return `${base}?${identifier}&inspectionId=${encodeURIComponent(inspectionId)}${download ? "&download=1" : ""}`;
+  }
+
   async function downloadMedia(media: InspectionMedia, inspectionId: string) {
     try {
       const { data: sess } = await supabase.auth.getSession();
       const token = sess.session?.access_token;
-      if (!token) {
-        toast.error("Sessão expirada");
-        return;
-      }
-      const projectId = import.meta.env.VITE_SUPABASE_PROJECT_ID;
-      const url = `https://${projectId}.supabase.co/functions/v1/get-vistoria-media?fileId=${encodeURIComponent(media.fileId)}&inspectionId=${encodeURIComponent(inspectionId)}&download=1`;
-      const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
-      if (!res.ok) {
-        toast.error("Falha ao baixar arquivo");
-        return;
-      }
+      if (!token) { toast.error("Sessão expirada"); return; }
+      const res = await fetch(buildMediaUrl(media, inspectionId, true), {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) { toast.error("Falha ao baixar arquivo"); return; }
       const blob = await res.blob();
       const objectUrl = URL.createObjectURL(blob);
       const a = document.createElement("a");
@@ -409,17 +410,11 @@ export default function VistoriaPage() {
   async function fetchMediaBlobUrl(media: InspectionMedia, inspectionId: string): Promise<string | null> {
     const { data: sess } = await supabase.auth.getSession();
     const token = sess.session?.access_token;
-    if (!token) {
-      toast.error("Sessão expirada");
-      return null;
-    }
-    const projectId = import.meta.env.VITE_SUPABASE_PROJECT_ID;
-    const url = `https://${projectId}.supabase.co/functions/v1/get-vistoria-media?fileId=${encodeURIComponent(media.fileId)}&inspectionId=${encodeURIComponent(inspectionId)}`;
-    const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
-    if (!res.ok) {
-      toast.error("Falha ao carregar arquivo");
-      return null;
-    }
+    if (!token) { toast.error("Sessão expirada"); return null; }
+    const res = await fetch(buildMediaUrl(media, inspectionId), {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) { toast.error("Falha ao carregar arquivo"); return null; }
     const blob = await res.blob();
     return URL.createObjectURL(blob);
   }
@@ -451,49 +446,6 @@ export default function VistoriaPage() {
     setPreview(null);
   }
 
-  async function openDriveFolder(opts: {
-    key: string;
-    placa: string;
-    locatario?: string;
-    data?: string;
-    levelLabel: string;
-  }) {
-    setOpeningFolderKey(opts.key);
-    try {
-      const entry = await resolveVistoriaFolders({
-        placa: opts.placa,
-        locatario: opts.locatario,
-        data: opts.data,
-      });
-      if (!entry) {
-        toast.error("Não foi possível abrir a pasta no Drive");
-        return;
-      }
-      let link: string | null = null;
-      if (opts.data && opts.locatario) {
-        link = (entry[`data_${opts.locatario}_webViewLink`] as string | null) ?? null;
-      } else if (opts.data) {
-        link = (entry["data_webViewLink"] as string | null) ?? null;
-      } else {
-        link = entry.webViewLink;
-      }
-      if (!link) {
-        toast.error("Pasta criada, mas link indisponível");
-        return;
-      }
-      // Abre via <a> sintético para escapar do iframe do preview
-      // (window.open dentro de iframe pode ser bloqueado pelo Drive: ERR_BLOCKED_BY_RESPONSE)
-      const a = document.createElement("a");
-      a.href = link;
-      a.target = "_blank";
-      a.rel = "noopener noreferrer";
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-    } finally {
-      setOpeningFolderKey(null);
-    }
-  }
 
   return (
     <div className="p-6 space-y-6">
@@ -653,26 +605,6 @@ export default function VistoriaPage() {
                               <Button
                                 size="sm"
                                 variant="outline"
-                                onClick={() =>
-                                  openDriveFolder({
-                                    key: `placa:${moto.id}`,
-                                    placa: moto.placa,
-                                    levelLabel: "placa",
-                                  })
-                                }
-                                disabled={openingFolderKey === `placa:${moto.id}`}
-                                title="Abrir pasta da placa no Drive"
-                              >
-                                {openingFolderKey === `placa:${moto.id}` ? (
-                                  <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />
-                                ) : (
-                                  <FolderOpen className="h-3.5 w-3.5 mr-1" />
-                                )}
-                                Drive
-                              </Button>
-                              <Button
-                                size="sm"
-                                variant="outline"
                                 onClick={() => openRequestDialog(moto)}
                                 disabled={!activeClientByMoto.get(moto.id)}
                                 title={
@@ -721,8 +653,8 @@ export default function VistoriaPage() {
                                           )}
                                         </div>
                                         <div className="flex flex-wrap gap-1.5">
-                                          {insp.media.map((m) => (
-                                            <div key={m.fileId} className="inline-flex rounded-md border overflow-hidden">
+                                          {insp.media.map((m, idx) => (
+                                            <div key={m.storagePath ?? m.fileId ?? idx} className="inline-flex rounded-md border overflow-hidden">
                                               <button
                                                 type="button"
                                                 onClick={() => openPreview(insp.media, insp.id, insp.media.indexOf(m))}
@@ -746,28 +678,6 @@ export default function VistoriaPage() {
                                               </button>
                                             </div>
                                           ))}
-                                          <Button
-                                            size="sm"
-                                            variant="ghost"
-                                            onClick={() =>
-                                              openDriveFolder({
-                                                key: `data:${insp.id}`,
-                                                placa: moto.placa,
-                                                locatario: activeRenterByMoto.get(moto.id) || undefined,
-                                                data: insp.data,
-                                                levelLabel: "data",
-                                              })
-                                            }
-                                            disabled={openingFolderKey === `data:${insp.id}`}
-                                            className="h-7"
-                                            title="Abrir pasta desta vistoria no Drive"
-                                          >
-                                            {openingFolderKey === `data:${insp.id}` ? (
-                                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                                            ) : (
-                                              <FolderOpen className="h-3.5 w-3.5" />
-                                            )}
-                                          </Button>
                                           <Button
                                             size="sm"
                                             variant="ghost"
@@ -1090,12 +1000,10 @@ function RegisterDialog({
         }
         const out = await res.json();
         uploaded.push({
-          fileId: out.fileId,
+          storagePath: out.storagePath,
           name: f.name,
           type: f.type,
           size: f.size,
-          webViewLink: out.webViewLink ?? null,
-          folder: out.folder,
         });
       }
       const kmNum = km ? parseInt(km.replace(/\D/g, ""), 10) : null;

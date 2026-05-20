@@ -20,15 +20,15 @@ serve(async (req) => {
       );
     }
 
-    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
-    if (!LOVABLE_API_KEY) {
+    const GOOGLE_AI_API_KEY = Deno.env.get("GOOGLE_AI_API_KEY");
+    if (!GOOGLE_AI_API_KEY) {
       return new Response(
-        JSON.stringify({ error: "LOVABLE_API_KEY not configured" }),
+        JSON.stringify({ error: "GOOGLE_AI_API_KEY not configured" }),
         { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
-    console.log("Sending comprovante to AI for address extraction...");
+    console.log("Sending comprovante to Gemini for address extraction...");
 
     const detectedMime = mimeType || "application/pdf";
 
@@ -45,22 +45,7 @@ REGRAS IMPORTANTES:
 8. Se reconhecer a cidade, infira o estado (UF). Ex: Goiânia → GO, São Paulo → SP.
 9. Retorne SEMPRE um JSON válido, mesmo que parcial. Use "" para campos não encontrados — NUNCA invente dados.`;
 
-    const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${LOVABLE_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "google/gemini-2.5-pro",
-        messages: [
-          { role: "system", content: systemPrompt },
-          {
-            role: "user",
-            content: [
-              {
-                type: "text",
-                text: `Analise este comprovante de endereço (a imagem PODE ESTAR ROTACIONADA — gire mentalmente se necessário) e extraia o endereço.
+    const userPrompt = `Analise este comprovante de endereço (a imagem PODE ESTAR ROTACIONADA — gire mentalmente se necessário) e extraia o endereço.
 
 Retorne um JSON com EXATAMENTE estes campos:
 {
@@ -73,34 +58,35 @@ Retorne um JSON com EXATAMENTE estes campos:
   "estado": "string (sigla UF com 2 letras. Ex: 'GO')"
 }
 
-Retorne SOMENTE o JSON puro, sem markdown, sem \`\`\`, sem explicação.`,
-              },
-              {
-                type: "image_url",
-                image_url: {
-                  url: `data:${detectedMime};base64,${fileBase64}`,
-                },
-              },
+Retorne SOMENTE o JSON puro, sem markdown, sem \`\`\`, sem explicação.`;
+
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent?key=${GOOGLE_AI_API_KEY}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          systemInstruction: { parts: [{ text: systemPrompt }] },
+          contents: [{
+            role: "user",
+            parts: [
+              { text: userPrompt },
+              { inlineData: { mimeType: detectedMime, data: fileBase64 } },
             ],
-          },
-        ],
-      }),
-    });
+          }],
+          generationConfig: { responseMimeType: "text/plain" },
+        }),
+      }
+    );
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error("AI gateway error:", response.status, errorText);
+      console.error("Gemini API error:", response.status, errorText);
 
       if (response.status === 429) {
         return new Response(
           JSON.stringify({ error: "Limite de requisições excedido. Tente novamente em alguns segundos." }),
           { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
-      }
-      if (response.status === 402) {
-        return new Response(
-          JSON.stringify({ error: "Créditos insuficientes." }),
-          { status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
 
@@ -111,15 +97,15 @@ Retorne SOMENTE o JSON puro, sem markdown, sem \`\`\`, sem explicação.`,
     }
 
     const aiResult = await response.json();
-    const content = aiResult.choices?.[0]?.message?.content || "";
-    console.log("AI raw response:", content);
+    const content = aiResult.candidates?.[0]?.content?.parts?.[0]?.text || "";
+    console.log("Gemini raw response:", content);
 
     let extracted: Record<string, unknown>;
     try {
       const jsonStr = content.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
       extracted = JSON.parse(jsonStr);
     } catch {
-      console.error("Failed to parse AI response as JSON");
+      console.error("Failed to parse Gemini response as JSON");
       return new Response(
         JSON.stringify({ error: "Não foi possível interpretar os dados do documento. Tente novamente." }),
         { status: 422, headers: { ...corsHeaders, "Content-Type": "application/json" } }
