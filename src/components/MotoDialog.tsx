@@ -966,8 +966,13 @@ export function MotoDialog({ open, onOpenChange, moto, onSave, mode }: MotoDialo
                     Placa <span className="text-destructive">*</span>
                     <InfoTooltip text="Placa no padrão Mercosul (ABC1D23) ou antigo (ABC1234)" />
                   </Label>
-                  <Input className={errBorder("placa", step2Errors)} value={form.placa} onChange={(e) => setForm({ ...form, placa: e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "") })} placeholder="ABC1D23" maxLength={7} />
+                  <Input className={`${errBorder("placa", step2Errors)} ${isDuplicate ? "border-destructive focus-visible:ring-destructive" : ""}`} value={form.placa} onChange={(e) => setForm({ ...form, placa: e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "") })} placeholder="ABC1D23" maxLength={7} />
                   <FieldError msg={step2Errors.placa} />
+                  {isDuplicate && (
+                    <p className="text-xs text-destructive font-medium">
+                      Placa já cadastrada{duplicatePlaca!.modelo ? ` em "${duplicatePlaca!.modelo}"` : ""}. Cadastro bloqueado.
+                    </p>
+                  )}
                 </div>
                 <div className="grid gap-1">
                   <Label className="flex items-center gap-1 text-xs">
