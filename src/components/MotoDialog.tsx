@@ -665,6 +665,10 @@ export function MotoDialog({ open, onOpenChange, moto, onSave, mode }: MotoDialo
         return;
       }
     }
+    if (from === 2 && isDuplicate) {
+      toast.error(`Placa ${duplicatePlaca!.placa} já cadastrada${duplicatePlaca!.modelo ? ` (${duplicatePlaca!.modelo})` : ""}`);
+      return;
+    }
     if (from === 3 && !canAdvanceStep3) {
       toast.error("Preencha todos os campos obrigatórios corretamente");
       return;
