@@ -626,6 +626,8 @@ export function MotoDialog({ open, onOpenChange, moto, onSave, mode }: MotoDialo
         if (data.data.aviso) toast.info(data.data.aviso, { duration: 5000 });
       } else if (data?.error) {
         toast.warning(data.error);
+      } else if (data?.success) {
+        toast.warning("Valor FIPE não disponível para este modelo. Preencha manualmente.");
       }
     } catch (err) {
       console.error("FIPE lookup error:", err);

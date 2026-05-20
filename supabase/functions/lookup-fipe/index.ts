@@ -9,7 +9,7 @@ const corsHeaders = {
 const FIPE_BASE = "https://fipe.parallelum.com.br/api/v2";
 
 function normalize(s: string): string {
-  return s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
+  return s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().trim();
 }
 
 function similarity(a: string, b: string): number {
@@ -29,6 +29,16 @@ async function fetchJson(url: string) {
   return res.json();
 }
 
+function bestBrandMatch(brands: { code: string; name: string }[], search: string) {
+  let best = brands[0];
+  let bestScore = 0;
+  for (const b of brands) {
+    const score = similarity(b.name, search);
+    if (score > bestScore) { bestScore = score; best = b; }
+  }
+  return { brand: best, score: bestScore };
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -45,37 +55,64 @@ serve(async (req) => {
 
     console.log(`Looking up FIPE for: ${modelo} ${anoModelo}`);
 
-    const parts = modelo.split("/");
-    const brandSearch = normalize(parts[0]);
-    const modelSearch = normalize(parts.length > 1 ? parts.slice(1).join(" ") : modelo);
-
-    // 1. Get brands
+    // 1. Get brands first (needed for prefix-based brand detection)
     const brands: { code: string; name: string }[] = await fetchJson(`${FIPE_BASE}/motorcycles/brands`);
 
-    let bestBrand = brands[0];
-    let bestBrandScore = 0;
-    for (const b of brands) {
-      const score = similarity(b.name, brandSearch);
-      if (score > bestBrandScore) {
-        bestBrandScore = score;
-        bestBrand = b;
+    let brandSearch: string;
+    let modelSearch: string;
+
+    const parts = modelo.split("/");
+    if (parts.length > 1) {
+      // Explicit "Brand/Model" format (from CRLV extraction)
+      brandSearch = normalize(parts[0]);
+      modelSearch = normalize(parts.slice(1).join(" "));
+    } else {
+      // No "/" separator — try to detect brand from word prefixes
+      // Handles "Honda CG 160 Fan", "YAMAHA FAZER 250", etc.
+      const words = normalize(modelo).split(/\s+/).filter(Boolean);
+      let detectedBrand = "";
+      let detectedModel = "";
+      let bestPrefixScore = 0;
+
+      for (let prefixLen = 1; prefixLen <= Math.min(2, words.length - 1); prefixLen++) {
+        const prefix = words.slice(0, prefixLen).join(" ");
+        const rest = words.slice(prefixLen).join(" ");
+        if (!rest) continue;
+        const { score } = bestBrandMatch(brands, prefix);
+        if (score > bestPrefixScore) {
+          bestPrefixScore = score;
+          detectedBrand = prefix;
+          detectedModel = rest;
+        }
+      }
+
+      if (bestPrefixScore >= 0.5) {
+        brandSearch = detectedBrand;
+        modelSearch = detectedModel;
+        console.log(`Auto-detected brand prefix: "${brandSearch}" (score ${bestPrefixScore}), model: "${modelSearch}"`);
+      } else {
+        // No brand prefix found — use full string and let brand matching decide
+        brandSearch = normalize(modelo);
+        modelSearch = normalize(modelo);
       }
     }
-    console.log(`Matched brand: ${bestBrand.name} (${bestBrandScore})`);
+
+    // 2. Match brand
+    const { brand: bestBrand, score: bestBrandScore } = bestBrandMatch(brands, brandSearch);
+    console.log(`Matched brand: ${bestBrand.name} (score ${bestBrandScore})`);
 
     if (bestBrandScore < 0.3) {
       return new Response(
-        JSON.stringify({ error: `Marca não encontrada: ${parts[0]}` }),
+        JSON.stringify({ error: `Marca não encontrada: "${parts[0]}". Tente o formato "Marca/Modelo" (ex: Honda/CG 160).` }),
         { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
-    // 2. Get models
+    // 3. Get models for the matched brand
     const models: { code: string; name: string }[] = await fetchJson(
       `${FIPE_BASE}/motorcycles/brands/${bestBrand.code}/models`
     );
 
-    // Score all models and take top candidates
     const scored = models
       .map(m => ({ ...m, score: similarity(m.name, modelSearch) }))
       .filter(m => m.score >= 0.2)
@@ -86,12 +123,12 @@ serve(async (req) => {
 
     if (scored.length === 0) {
       return new Response(
-        JSON.stringify({ error: `Modelo não encontrado: ${modelSearch}` }),
+        JSON.stringify({ error: `Modelo não encontrado para "${modelSearch}" na marca ${bestBrand.name}.` }),
         { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
-    // 3. For each candidate, check if the target year is available
+    // 4. For each candidate, check if the target year is available
     const targetYear = String(anoModelo);
     for (const candidate of scored) {
       try {
@@ -102,27 +139,27 @@ serve(async (req) => {
         const yearMatch = years.find(y => y.code.startsWith(targetYear + "-"));
         if (!yearMatch) continue;
 
-        // 4. Get price
         const priceData = await fetchJson(
           `${FIPE_BASE}/motorcycles/brands/${bestBrand.code}/models/${candidate.code}/years/${yearMatch.code}`
         );
 
         console.log("FIPE result:", JSON.stringify(priceData));
 
-        const priceStr = priceData.price || "";
+        // Handle both English (v2) and Portuguese (v1) field names
+        const priceStr = priceData.price || priceData.valor || priceData.Valor || "";
         const valor = Number(priceStr.replace(/[R$\s.]/g, "").replace(",", "."));
 
         return new Response(
           JSON.stringify({
             success: true,
             data: {
-              valor: isNaN(valor) ? null : valor,
-              referencia: priceData.referenceMonth || null,
-              codigoFipe: priceData.codeFipe || null,
+              valor: isNaN(valor) || valor <= 0 ? null : valor,
+              referencia: priceData.referenceMonth || priceData.mesReferencia || null,
+              codigoFipe: priceData.codeFipe || priceData.codigoFipe || null,
               marca: bestBrand.name,
               modelo: candidate.name,
-              anoModelo: priceData.modelYear || anoModelo,
-              combustivel: priceData.fuel || null,
+              anoModelo: priceData.modelYear || priceData.anoModelo || anoModelo,
+              combustivel: priceData.fuel || priceData.combustivel || null,
             },
           }),
           { headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -142,20 +179,20 @@ serve(async (req) => {
       const priceData = await fetchJson(
         `${FIPE_BASE}/motorcycles/brands/${bestBrand.code}/models/${fallback.code}/years/${fallbackYears[0].code}`
       );
-      const priceStr = priceData.price || "";
+      const priceStr = priceData.price || priceData.valor || priceData.Valor || "";
       const valor = Number(priceStr.replace(/[R$\s.]/g, "").replace(",", "."));
 
       return new Response(
         JSON.stringify({
           success: true,
           data: {
-            valor: isNaN(valor) ? null : valor,
-            referencia: priceData.referenceMonth || null,
-            codigoFipe: priceData.codeFipe || null,
+            valor: isNaN(valor) || valor <= 0 ? null : valor,
+            referencia: priceData.referenceMonth || priceData.mesReferencia || null,
+            codigoFipe: priceData.codeFipe || priceData.codigoFipe || null,
             marca: bestBrand.name,
             modelo: fallback.name,
-            anoModelo: priceData.modelYear || anoModelo,
-            combustivel: priceData.fuel || null,
+            anoModelo: priceData.modelYear || priceData.anoModelo || anoModelo,
+            combustivel: priceData.fuel || priceData.combustivel || null,
             aviso: `Ano ${anoModelo} não encontrado. Usando ano mais recente disponível.`,
           },
         }),
