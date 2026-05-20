@@ -7,7 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Progress } from "@/components/ui/progress";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Motorcycle } from "@/lib/types";
-import { loadRastreadores, saveRastreadores, loadFinancial, saveFinancial } from "@/lib/store";
+import { loadRastreadores, saveRastreadores, loadFinancial, saveFinancial, loadMotos } from "@/lib/store";
 import { getDataCache } from "@/lib/data-cache";
 import { InfoTooltip } from "@/components/InfoTooltip";
 import { FileText, Upload, Bike, DollarSign, Check, ChevronLeft, ChevronRight, AlertCircle, Settings2, Plus, Pencil, Trash2, CheckCircle2, Circle, Loader2, AlertTriangle, Download, TrendingUp, Wallet, Target, Sparkles, Calendar, Repeat } from "lucide-react";
