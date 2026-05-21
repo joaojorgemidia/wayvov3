@@ -97,7 +97,6 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
   const cid = activeCompany?.id;
   const queryKey = useMemo(() => ["all-data", user?.id, cid], [user?.id, cid]);
   const mutationQueueRef = useRef<Record<string, Promise<unknown>>>({});
-  const latestSaveVersionRef = useRef<Record<string, number>>({});
 
   const authReady = !authLoading && !!user;
 
@@ -133,9 +132,6 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const saveFn = useCallback((table: string, items: any[]) => {
-    const nextVersion = (latestSaveVersionRef.current[table] || 0) + 1;
-    latestSaveVersionRef.current[table] = nextVersion;
-
     return runQueuedMutation(table, async () => {
     if (!cid) throw new Error("No active company selected");
 
@@ -220,27 +216,12 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
       if (error) throw error;
     }
 
-    // ─── Phase 2: version gate — skip updates if a newer save is queued ───────
-    // Updates represent field edits; only the latest snapshot should win to
-    // prevent stale values from overwriting newer ones. Soft-deletes and
-    // inserts are already done above and are always correct regardless of version.
-    if (latestSaveVersionRef.current[table] !== nextVersion) {
-      // Still record deletes to action history even when stale.
-      if (deletedSnapshots.length) {
-        (async () => {
-          try {
-            await recordAction({ ...userInfo, actionType: "delete", entityType: table as EntityTable, snapshotBefore: deletedSnapshots, snapshotAfter: [] });
-          } catch (e) {
-            console.warn("[action-history] stale delete hook failed", e);
-          }
-        })();
-      }
-      return;
-    }
-
-    // Upsert ONLY changed (existing) rows — new rows were already inserted above
+    // Upsert ONLY changed (existing) rows — new rows were already inserted above.
+    // No version gate here: the mutation queue already serialises saves, so every
+    // save runs in order. A version gate that skips updates causes user-initiated
+    // changes (e.g. pago: true) to be silently dropped when a background effect
+    // (auto-materialize, reconcile) bumps the version before the DB write runs.
     for (let b = 0; b < changedRows.length; b += 100) {
-      if (latestSaveVersionRef.current[table] !== nextVersion) return;
       const batch = changedRows.slice(b, b + 100);
       const { error } = await db.from(table).upsert(batch, { onConflict: "id" });
       if (error) throw error;
