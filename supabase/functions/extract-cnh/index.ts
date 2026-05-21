@@ -1,19 +1,19 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { extractWithFallback, corsHeaders } from "../_shared/extract-ai.ts";
 
-function parseJsonFromText(text: string): Record<string, unknown> {
-  const cleaned = text.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
-  try { return JSON.parse(cleaned); } catch {}
-  const start = cleaned.indexOf("{");
-  const end = cleaned.lastIndexOf("}");
-  if (start !== -1 && end > start) return JSON.parse(cleaned.slice(start, end + 1));
-  throw new Error("No JSON object found in response");
+const systemPrompt = `Você é um especialista em extrair dados de documentos CNH (Carteira Nacional de Habilitação) digitais brasileiras.
+Analise o documento fornecido e extraia TODOS os campos disponíveis.
+Retorne APENAS um JSON válido com os campos encontrados. Se um campo não for encontrado, use null.`;
+
+const userPrompt = `Extraia os dados desta CNH digital e retorne um JSON com exatamente estes campos:
+{
+  "nome": "string ou null (nome completo do condutor)",
+  "cpf": "string ou null (CPF do condutor)",
+  "numeroCnh": "string ou null (número de registro da CNH)",
+  "categoria": "string ou null (categoria da CNH: A, B, AB, etc)",
+  "validade": "string ou null (data de validade no formato YYYY-MM-DD)"
 }
-
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
-};
+Retorne SOMENTE o JSON, sem markdown, sem explicação.`;
 
 function ok(data: unknown) {
   return new Response(JSON.stringify({ success: true, data }),

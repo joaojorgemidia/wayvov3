@@ -1,4 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { extractWithFallback, corsHeaders } from "../_shared/extract-ai.ts";
 
 function parseJsonFromText(text: string): Record<string, unknown> {
   const cleaned = text.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
@@ -39,7 +40,7 @@ serve(async (req) => {
 
     console.log("Sending PDF to Claude for CRLV extraction...");
 
-    const userPrompt = `Extraia os dados deste CRLV e retorne um JSON com exatamente estes campos:
+const userPrompt = `Extraia os dados deste CRLV e retorne um JSON com exatamente estes campos:
 {
   "placa": "string ou null",
   "modelo": "string ou null (marca/modelo completo)",
