@@ -612,9 +612,36 @@ export function buildLocacoesPreview(
     const valorSemanal = valorSemanalRaw ? parseNumber(valorSemanalRaw) : 0;
     const clienteId = client?.id || pendingClient?.id || "";
 
-    const conflict = existing.find(r =>
-      moto && clienteId && r.motoId === moto.id && r.clienteId === clienteId && r.status === "ativa",
+    // Determine rental status from explicit Status column and dataFim
+    const today = new Date().toISOString().slice(0, 10);
+    const statusRaw = getCell(row, "Status");
+    const statusNorm = statusRaw.toLowerCase().replace(/[^a-z]/g, "");
+    let rentalStatus: Rental["status"] = "ativa";
+    if (["encerrado", "encerrada", "finalizado", "finalizada"].includes(statusNorm)) {
+      rentalStatus = "finalizada";
+    } else if (["cancelado", "cancelada"].includes(statusNorm)) {
+      rentalStatus = "cancelada";
+    } else if (dataFim && dataFim < today) {
+      rentalStatus = "finalizada";
+    }
+
+    // Find any active rental for this moto (regardless of client)
+    const existingActiveForMoto = moto
+      ? existing.find(r => r.motoId === moto.id && r.status === "ativa")
+      : undefined;
+
+    // Same moto + same client active → update that rental
+    const isSameClientConflict = !!(
+      existingActiveForMoto && clienteId && existingActiveForMoto.clienteId === clienteId
     );
+    const conflict = isSameClientConflict ? existingActiveForMoto : undefined;
+
+    // Different client holds an active rental for this moto and we'd also be ativa → warn
+    const isDuplicatePlaca =
+      rentalStatus === "ativa" && !!existingActiveForMoto && !isSameClientConflict;
+    if (isDuplicatePlaca) {
+      warnings.push("Já existe locação ativa para esta placa — deseja substituir?");
+    }
 
     const rental: Rental = {
       id: conflict?.id || crypto.randomUUID(),
@@ -645,7 +672,7 @@ export function buildLocacoesPreview(
       seguroTerceiros: false,
       gerarCobrancaCaucao: false,
       gerarCobrancaPagamento: false,
-      status: "ativa",
+      status: rentalStatus,
       checklistRetirada: [],
       checklistDevolucao: [],
       observacoes: "",
@@ -673,7 +700,7 @@ export function buildLocacoesPreview(
           : pendingClient
             ? "Novo locatário será criado"
             : "",
-      selected: !hasError,
+      selected: !hasError && !isDuplicatePlaca,
     };
   });
 }
