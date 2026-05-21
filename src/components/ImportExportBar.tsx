@@ -157,6 +157,7 @@ export function ImportExportBar({ kind, items, motos = [], clients = [], onImpor
   const stats = preview ? {
     create: preview.filter(r => r.status === "create").length,
     update: preview.filter(r => r.status === "update").length,
+    warning: preview.filter(r => r.status === "warning").length,
     error: preview.filter(r => r.status === "error").length,
   } : null;
 
@@ -224,12 +225,17 @@ export function ImportExportBar({ kind, items, motos = [], clients = [], onImpor
           {stats && (
             <div className="flex items-center gap-4 text-sm flex-wrap">
               <Badge variant="outline" className="gap-1.5"><CheckCircle2 className="h-3.5 w-3.5 text-success" /> Novos: {stats.create}</Badge>
-              <Badge variant="outline" className="gap-1.5"><RefreshCw className="h-3.5 w-3.5 text-warning" /> Atualizar: {stats.update}</Badge>
+              <Badge variant="outline" className="gap-1.5"><RefreshCw className="h-3.5 w-3.5 text-success" /> Atualizar: {stats.update}</Badge>
+              {stats.warning > 0 && <Badge variant="outline" className="gap-1.5"><AlertCircle className="h-3.5 w-3.5 text-warning" /> Avisos: {stats.warning}</Badge>}
               {stats.error > 0 && <Badge variant="outline" className="gap-1.5"><AlertCircle className="h-3.5 w-3.5 text-destructive" /> Erros: {stats.error}</Badge>}
               <div className="flex items-center gap-2 ml-auto text-xs">
                 <button className="underline text-muted-foreground" onClick={() => toggleAll("create", true)}>marcar novos</button>
                 <button className="underline text-muted-foreground" onClick={() => toggleAll("update", true)}>marcar updates</button>
                 <button className="underline text-muted-foreground" onClick={() => toggleAll("update", false)}>desmarcar updates</button>
+                {stats.warning > 0 && <>
+                  <button className="underline text-muted-foreground" onClick={() => toggleAll("warning", true)}>marcar avisos</button>
+                  <button className="underline text-muted-foreground" onClick={() => toggleAll("warning", false)}>desmarcar avisos</button>
+                </>}
               </div>
             </div>
           )}
@@ -247,7 +253,7 @@ export function ImportExportBar({ kind, items, motos = [], clients = [], onImpor
               </TableHeader>
               <TableBody>
                 {preview?.map((r, i) => (
-                  <TableRow key={i} className={r.status === "error" ? "bg-destructive/5" : ""}>
+                  <TableRow key={i} className={r.status === "error" ? "bg-destructive/5" : r.status === "warning" ? "bg-warning/5" : ""}>
                     <TableCell>
                       <Checkbox
                         checked={r.selected}
@@ -258,7 +264,8 @@ export function ImportExportBar({ kind, items, motos = [], clients = [], onImpor
                     <TableCell className="text-xs text-muted-foreground">{r.rowIndex}</TableCell>
                     <TableCell>
                       {r.status === "create" && <Badge className="bg-success/10 text-success hover:bg-success/10">Novo</Badge>}
-                      {r.status === "update" && <Badge className="bg-warning/10 text-warning hover:bg-warning/10">Atualizar</Badge>}
+                      {r.status === "update" && <Badge className="bg-success/10 text-success hover:bg-success/10">Atualizar</Badge>}
+                      {r.status === "warning" && <Badge className="bg-warning/10 text-warning hover:bg-warning/10">Aviso</Badge>}
                       {r.status === "error" && <Badge variant="destructive">Erro</Badge>}
                     </TableCell>
                     <TableCell className="text-sm">{summarize(kind, r.data)}</TableCell>
@@ -282,7 +289,9 @@ export function ImportExportBar({ kind, items, motos = [], clients = [], onImpor
 function summarize(kind: EntityKind, d: any): string {
   if (kind === "financeiro") return `${d.tipo === "receita" ? "+" : "-"} R$ ${Number(d.valor).toFixed(2)} · ${d.descricao} · ${d.data}`;
   if (kind === "motos") return `${d.placa} · ${d.modelo}${d.anoModelo ? ` (${d.anoModelo})` : ""}`;
+  const placa = d.__placa || "";
   const nome = d.__pendingClient?.nome || "";
   const tel = d.__pendingClient?.telefone || "";
-  return [nome, tel].filter(Boolean).join(" · ") || "Locatário existente";
+  const client = [nome, tel].filter(Boolean).join(" · ") || "Locatário existente";
+  return [placa, client].filter(Boolean).join(" — ");
 }

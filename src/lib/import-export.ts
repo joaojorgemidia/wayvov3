@@ -398,7 +398,7 @@ function parseBool(s: string): boolean {
 export interface PreviewRow<T> {
   rowIndex: number; // 1-based, matching spreadsheet line
   data: T;
-  status: "create" | "update" | "skip" | "error";
+  status: "create" | "update" | "warning" | "skip" | "error";
   conflictWith?: string; // existing id
   message?: string;
   selected: boolean;
@@ -493,7 +493,6 @@ export function buildMotosPreview(
     const conflict = byPlaca.get(placa);
     const errors: string[] = [];
     if (!placa) errors.push("Placa obrigatória");
-    else if (!conflict && !modelo) errors.push("Modelo obrigatório");
     const moto: Motorcycle = {
       id: conflict?.id || crypto.randomUUID(),
       placa,
@@ -549,45 +548,60 @@ export function buildLocacoesPreview(
       .filter(c => (c.telefone || "").replace(/\D/g, ""))
       .map(c => [c.telefone.replace(/\D/g, ""), c]),
   );
-  const clientByName = new Map(
-    clients.map(c => [normalizeText(c.nome), c]),
+  const clientByName = new Map(clients.map(c => [normalizeText(c.nome), c]));
+  const clientByCpf = new Map(
+    clients
+      .filter(c => (c.cpf || "").replace(/\D/g, ""))
+      .map(c => [c.cpf.replace(/\D/g, ""), c]),
   );
+
   return rows.map((row, idx) => {
     const placa = getCell(row, "Placa").toUpperCase().trim();
-    const nomeCliente = getCell(row, "Nome") || getCell(row, "Nome Cliente");
+    const nomeCliente = getCell(row, "Nome") || getCell(row, "Nome Cliente") || getCell(row, "Locatário");
     const telefoneRaw = getCell(row, "Telefone") || getCell(row, "Telefone Cliente");
     const telefoneDigits = telefoneRaw.replace(/\D/g, "");
+    const cpfRaw = getCell(row, "CPF");
+    const cpfDigits = cpfRaw.replace(/\D/g, "");
 
     const errors: string[] = [];
-    const moto = motoByPlaca.get(placa);
-    if (!placa) errors.push("Placa obrigatória");
-    else if (!moto) errors.push(`Moto ${placa} não encontrada`);
-    if (!nomeCliente) errors.push("Nome obrigatório");
-    if (!telefoneDigits) errors.push("Telefone obrigatório");
+    const warnings: string[] = [];
 
-    // Try to match an existing client by phone, then by name
-    let client = telefoneDigits ? clientByPhone.get(telefoneDigits) : undefined;
+    if (!placa) errors.push("Placa obrigatória");
+
+    const moto = placa ? motoByPlaca.get(placa) : undefined;
+    if (placa && !moto) {
+      warnings.push("Moto não encontrada — vincule manualmente após a importação");
+    }
+
+    // Try to match client by CPF → phone → name
+    let client = cpfDigits ? clientByCpf.get(cpfDigits) : undefined;
+    if (!client && telefoneDigits) client = clientByPhone.get(telefoneDigits);
     if (!client && nomeCliente) client = clientByName.get(normalizeText(nomeCliente));
+
     let pendingClient: Client | undefined;
-    if (!client && nomeCliente && telefoneDigits) {
-      pendingClient = {
-        id: crypto.randomUUID(),
-        nome: nomeCliente,
-        cpf: "",
-        cnh: "",
-        cnhCategoria: "",
-        cnhValidade: null,
-        cnhPdfName: null,
-        cnhPdfData: null,
-        telefone: telefoneRaw,
-        email: "",
-        cep: "", rua: "", numero: "", complemento: "", bairro: "", cidade: "", estado: "",
-        comprovanteEnderecoName: null,
-        comprovanteEnderecoData: null,
-        emergenciaNome1: "", emergenciaTel1: "", emergenciaNome2: "", emergenciaTel2: "",
-        observacoes: "",
-        createdAt: new Date().toISOString().slice(0, 10),
-      };
+    if (!client) {
+      if (nomeCliente) {
+        pendingClient = {
+          id: crypto.randomUUID(),
+          nome: nomeCliente,
+          cpf: cpfRaw || "",
+          cnh: "",
+          cnhCategoria: "",
+          cnhValidade: null,
+          cnhPdfName: null,
+          cnhPdfData: null,
+          telefone: telefoneRaw,
+          email: "",
+          cep: "", rua: "", numero: "", complemento: "", bairro: "", cidade: "", estado: "",
+          comprovanteEnderecoName: null,
+          comprovanteEnderecoData: null,
+          emergenciaNome1: "", emergenciaTel1: "", emergenciaNome2: "", emergenciaTel2: "",
+          observacoes: "",
+          createdAt: new Date().toISOString().slice(0, 10),
+        };
+      } else {
+        warnings.push("Locatário não encontrado — vincule manualmente após a importação");
+      }
     }
 
     const dataInicio = new Date().toISOString().slice(0, 10);
@@ -632,21 +646,25 @@ export function buildLocacoesPreview(
       observacoes: "",
       createdAt: new Date().toISOString().slice(0, 10),
     };
-    if (pendingClient) {
-      (rental as any).__pendingClient = pendingClient;
-    }
+    if (pendingClient) (rental as any).__pendingClient = pendingClient;
+    if (placa) (rental as any).__placa = placa;
+
+    const hasError = errors.length > 0;
+    const hasWarning = warnings.length > 0;
 
     return {
       rowIndex: idx + 2,
       data: rental,
-      status: errors.length ? "error" : conflict ? "update" : "create",
+      status: hasError ? "error" : hasWarning ? "warning" : conflict ? "update" : "create",
       conflictWith: conflict?.id,
-      message: errors.length
+      message: hasError
         ? errors.join("; ")
-        : pendingClient
-          ? "Novo locatário será criado"
-          : "",
-      selected: errors.length === 0,
+        : hasWarning
+          ? warnings.join("; ")
+          : pendingClient
+            ? "Novo locatário será criado"
+            : "",
+      selected: !hasError,
     };
   });
 }
