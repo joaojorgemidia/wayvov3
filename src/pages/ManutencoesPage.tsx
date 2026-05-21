@@ -111,7 +111,7 @@ function buildReceitaLocatarioEntries(os: Maintenance, motos: Motorcycle[], rent
   if (!rental) return [];
 
   const valor = (os.valorLocatario != null && os.valorLocatario > 0) ? os.valorLocatario : (os.itens.length > 0 ? computeCusto(os.itens) : os.custo);
-  const baseData = os.dataFim || os.data;
+  const baseData = os.dataFim || new Date().toISOString().split("T")[0];
   const descBase = [
     os.numeroOS,
     getTipoLabel(os.tipo),
@@ -294,55 +294,32 @@ export default function ManutencoesPage() {
   const syncFinancial = async (os: Maintenance) => {
     const custo = os.itens.length > 0 ? computeCusto(os.itens) : os.custo;
 
-    // Lê o snapshot atual do cache (mesma fonte que o FinanceiroPage usa)
-    const snapshot = () => loadFinancial();
+    // Leitura única — evita condição de corrida entre múltiplas gravações
+    const all = loadFinancial();
+    const linkedDespesa = all.find((e) => e.fixedOriginId === os.id && e.categoria === "manutencao_despesa");
+    const linkedReceitas = all.filter((e) => e.fixedOriginId === os.id && e.categoria === "manutencao_receita");
 
-    const findLinked = (categoria: string) =>
-      snapshot().find((e) => e.fixedOriginId === os.id && e.categoria === categoria);
-    const findAllLinked = (categoria: string) =>
-      snapshot().filter((e) => e.fixedOriginId === os.id && e.categoria === categoria);
-
-    const upsertEntry = async (entry: FinancialEntry) => {
-      const all = snapshot();
-      const idx = all.findIndex((e) => e.id === entry.id);
-      const next = idx >= 0 ? all.map((e, i) => (i === idx ? entry : e)) : [...all, entry];
-      await storeFinancialAll(next);
-    };
-
-    const removeEntry = async (id: string) => {
-      const all = snapshot();
-      const next = all.filter((e) => e.id !== id);
-      if (next.length !== all.length) await storeFinancialAll(next);
-    };
+    // Remove todas as entradas vinculadas a esta OS
+    let next = all.filter((e) => e.fixedOriginId !== os.id);
 
     if (os.status === "concluida" && custo > 0 && os.conta) {
-      const existingDespesa = findLinked("manutencao_despesa");
-      await upsertEntry({
+      // Despesa da oficina — preserva ID existente
+      next.push({
         ...buildFinancialEntry(os, motos, rentals),
-        id: existingDespesa?.id || crypto.randomUUID(),
+        id: linkedDespesa?.id || crypto.randomUUID(),
       });
 
+      // Receitas do locatário
       if (os.quemPaga === "locatario") {
         const novas = buildReceitaLocatarioEntries(os, motos, rentals);
-        const existentes = findAllLinked("manutencao_receita");
-        // Remove entradas que não existem mais
-        for (const e of existentes) {
-          if (!novas.some((n) => n.id === e.id)) await removeEntry(e.id);
-        }
-        // Upsert novas (preserva IDs existentes na ordem)
-        for (let i = 0; i < novas.length; i++) {
-          const id = existentes[i]?.id || novas[i].id;
-          await upsertEntry({ ...novas[i], id });
-        }
-      } else {
-        for (const e of findAllLinked("manutencao_receita")) await removeEntry(e.id);
+        novas.forEach((n, i) => {
+          next.push({ ...n, id: linkedReceitas[i]?.id || n.id });
+        });
       }
-    } else {
-      const existingDespesa = findLinked("manutencao_despesa");
-      if (existingDespesa) await removeEntry(existingDespesa.id);
-      const existingReceita = findLinked("manutencao_receita");
-      if (existingReceita) await removeEntry(existingReceita.id);
     }
+
+    // Gravação única
+    await storeFinancialAll(next);
   };
 
   const handleSave = async () => {
