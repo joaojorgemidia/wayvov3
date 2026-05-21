@@ -169,6 +169,10 @@ export interface Maintenance {
   dataPagamentoPrevisto?: string | null; // ISO date — previsão de pagamento à oficina
   pagamentoRealizado?: boolean; // se o pagamento à oficina já foi efetuado
   quemPaga: "locadora" | "locatario";
+  valorLocatario?: number | null;
+  cobrarParcelado?: boolean;
+  entradaLocatario?: number | null;
+  numeroParcelas?: number | null;
   status: "agendada" | "em_andamento" | "concluida";
   itens: MaintenanceItem[];
 }

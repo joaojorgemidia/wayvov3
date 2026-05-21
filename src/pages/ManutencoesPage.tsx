@@ -1,4 +1,5 @@
 import React, { useState, useMemo } from "react";
+import { addDays, format } from "date-fns";
 import { Maintenance, MaintenanceItem, Motorcycle, FinancialEntry, Rental, Client } from "@/lib/types";
 import { useDataCacheSnapshot } from "@/lib/data-cache";
 import { useMaintenance, useBankAccounts, useMotos } from "@/hooks/useSupabaseData";
@@ -86,6 +87,10 @@ function emptyForm(): Maintenance {
     dataPagamentoPrevisto: null,
     pagamentoRealizado: false,
     quemPaga: "locadora",
+    valorLocatario: null,
+    cobrarParcelado: false,
+    entradaLocatario: null,
+    numeroParcelas: null,
     status: "agendada",
     itens: [],
   };
@@ -100,28 +105,24 @@ function findRentalAtDate(rentals: Rental[], motoId: string, date: string): Rent
   );
 }
 
-function buildReceitaLocatarioEntry(os: Maintenance, motos: Motorcycle[], rentals: Rental[]): FinancialEntry | null {
+function buildReceitaLocatarioEntries(os: Maintenance, motos: Motorcycle[], rentals: Rental[]): FinancialEntry[] {
   const moto = motos.find((m) => m.id === os.motoId);
   const rental = findRentalAtDate(rentals, os.motoId, os.data);
-  if (!rental) return null;
-  const custo = os.itens.length > 0 ? computeCusto(os.itens) : os.custo;
-  const data = os.dataFim || os.data;
-  const dataPrevista = os.dataPagamentoPrevisto || data;
-  const descricao = [
+  if (!rental) return [];
+
+  const valor = (os.valorLocatario != null && os.valorLocatario > 0) ? os.valorLocatario : (os.itens.length > 0 ? computeCusto(os.itens) : os.custo);
+  const baseData = os.dataFim || os.data;
+  const descBase = [
     os.numeroOS,
     getTipoLabel(os.tipo),
     os.natureza === "preventiva" ? "Preventiva" : "Corretiva",
     os.descricao || undefined,
   ].filter(Boolean).join(" – ");
-  return {
-    id: crypto.randomUUID(),
+
+  const base: Omit<FinancialEntry, "id" | "descricao" | "valor" | "data" | "dataPrevista"> = {
     tipo: "receita",
     categoria: "manutencao_receita",
     subcategoria: os.natureza === "preventiva" ? "Preventiva" : "Corretiva",
-    descricao,
-    valor: custo,
-    data: dataPrevista,
-    dataPrevista,
     motoId: os.motoId,
     rentalId: rental.id,
     clienteId: rental.clienteId,
@@ -132,6 +133,49 @@ function buildReceitaLocatarioEntry(os: Maintenance, motos: Motorcycle[], rental
     tags: ["OS", ...(os.numeroOS ? [os.numeroOS] : [])],
     fixedOriginId: os.id,
   };
+
+  if (!os.cobrarParcelado) {
+    return [{
+      ...base,
+      id: crypto.randomUUID(),
+      descricao: descBase,
+      valor,
+      data: baseData,
+      dataPrevista: baseData,
+    }];
+  }
+
+  const entrada = os.entradaLocatario ?? 0;
+  const nParcelas = os.numeroParcelas ?? 0;
+  const totalParcelas = nParcelas > 0 ? nParcelas : 0;
+  const valorParcela = totalParcelas > 0 ? parseFloat(((valor - entrada) / totalParcelas).toFixed(2)) : 0;
+
+  const entries: FinancialEntry[] = [];
+
+  if (entrada > 0) {
+    entries.push({
+      ...base,
+      id: crypto.randomUUID(),
+      descricao: `${descBase} – Entrada`,
+      valor: entrada,
+      data: baseData,
+      dataPrevista: baseData,
+    });
+  }
+
+  for (let i = 0; i < totalParcelas; i++) {
+    const data = format(addDays(new Date(baseData + "T00:00:00"), (i + 1) * 7), "yyyy-MM-dd");
+    entries.push({
+      ...base,
+      id: crypto.randomUUID(),
+      descricao: `${descBase} – Parcela ${i + 1}/${totalParcelas}`,
+      valor: valorParcela,
+      data,
+      dataPrevista: data,
+    });
+  }
+
+  return entries;
 }
 
 function buildFinancialEntry(os: Maintenance, motos: Motorcycle[], rentals: Rental[]): FinancialEntry {
@@ -255,6 +299,8 @@ export default function ManutencoesPage() {
 
     const findLinked = (categoria: string) =>
       snapshot().find((e) => e.fixedOriginId === os.id && e.categoria === categoria);
+    const findAllLinked = (categoria: string) =>
+      snapshot().filter((e) => e.fixedOriginId === os.id && e.categoria === categoria);
 
     const upsertEntry = async (entry: FinancialEntry) => {
       const all = snapshot();
@@ -277,17 +323,19 @@ export default function ManutencoesPage() {
       });
 
       if (os.quemPaga === "locatario") {
-        const receita = buildReceitaLocatarioEntry(os, motos, rentals);
-        if (receita) {
-          const existingReceita = findLinked("manutencao_receita");
-          await upsertEntry({ ...receita, id: existingReceita?.id || crypto.randomUUID() });
-        } else {
-          const existingReceita = findLinked("manutencao_receita");
-          if (existingReceita) await removeEntry(existingReceita.id);
+        const novas = buildReceitaLocatarioEntries(os, motos, rentals);
+        const existentes = findAllLinked("manutencao_receita");
+        // Remove entradas que não existem mais
+        for (const e of existentes) {
+          if (!novas.some((n) => n.id === e.id)) await removeEntry(e.id);
+        }
+        // Upsert novas (preserva IDs existentes na ordem)
+        for (let i = 0; i < novas.length; i++) {
+          const id = existentes[i]?.id || novas[i].id;
+          await upsertEntry({ ...novas[i], id });
         }
       } else {
-        const existingReceita = findLinked("manutencao_receita");
-        if (existingReceita) await removeEntry(existingReceita.id);
+        for (const e of findAllLinked("manutencao_receita")) await removeEntry(e.id);
       }
     } else {
       const existingDespesa = findLinked("manutencao_despesa");
@@ -627,7 +675,61 @@ export default function ManutencoesPage() {
                   <p className="text-[11px] text-amber-600 leading-tight">Nenhum locatário ativo nessa data.</p>
                 )}
                 {form.quemPaga === "locatario" && form.motoId && findRentalAtDate(rentals, form.motoId, form.data) && (
-                  <p className="text-[11px] text-emerald-600 leading-tight">Cobrança gerada ao concluir.</p>
+                  <div className="space-y-2.5 rounded-lg border border-orange-200 bg-orange-50/60 p-3 dark:border-orange-900/40 dark:bg-orange-950/20">
+                    <div className="grid gap-1">
+                      <Label className="text-xs">Valor a cobrar (R$)</Label>
+                      <Input
+                        type="number" min={0} step={0.01}
+                        placeholder={`${(form.itens.length > 0 ? computeCusto(form.itens) : form.custo).toFixed(2)} (custo OS)`}
+                        value={form.valorLocatario ?? ""}
+                        onChange={(e) => setForm((f) => ({ ...f, valorLocatario: e.target.value ? Number(e.target.value) : null }))}
+                        className="h-8 text-sm"
+                      />
+                    </div>
+                    <div className={`flex items-center justify-between rounded-md border px-3 py-2 transition-colors ${form.cobrarParcelado ? "border-orange-400 bg-orange-100/60 dark:border-orange-700 dark:bg-orange-900/30" : "border-border bg-background"}`}>
+                      <span className="text-xs font-medium">Parcelado</span>
+                      <Switch checked={!!form.cobrarParcelado} onCheckedChange={(v) => setForm((f) => ({ ...f, cobrarParcelado: v }))} />
+                    </div>
+                    {form.cobrarParcelado && (
+                      <div className="grid grid-cols-2 gap-2">
+                        <div className="grid gap-1">
+                          <Label className="text-xs">Entrada (R$)</Label>
+                          <Input
+                            type="number" min={0} step={0.01}
+                            value={form.entradaLocatario ?? ""}
+                            onChange={(e) => setForm((f) => ({ ...f, entradaLocatario: e.target.value ? Number(e.target.value) : null }))}
+                            className="h-8 text-sm" placeholder="0,00"
+                          />
+                        </div>
+                        <div className="grid gap-1">
+                          <Label className="text-xs">Nº de parcelas</Label>
+                          <Input
+                            type="number" min={1} max={52} step={1}
+                            value={form.numeroParcelas ?? ""}
+                            onChange={(e) => setForm((f) => ({ ...f, numeroParcelas: e.target.value ? Number(e.target.value) : null }))}
+                            className="h-8 text-sm" placeholder="ex: 4"
+                          />
+                        </div>
+                        {(form.numeroParcelas ?? 0) > 0 && (() => {
+                          const total = form.valorLocatario ?? (form.itens.length > 0 ? computeCusto(form.itens) : form.custo);
+                          const entrada = form.entradaLocatario ?? 0;
+                          const n = form.numeroParcelas!;
+                          const parcela = ((total - entrada) / n).toFixed(2);
+                          const baseData = form.dataFim || form.data;
+                          return (
+                            <div className="col-span-2 rounded-md bg-muted/60 p-2 text-xs text-muted-foreground space-y-0.5">
+                              {entrada > 0 && <div>• Entrada R$ {entrada.toFixed(2)} na conclusão</div>}
+                              {Array.from({ length: n }).map((_, i) => {
+                                const d = format(addDays(new Date(baseData + "T00:00:00"), (i + 1) * 7), "dd/MM/yyyy");
+                                return <div key={i}>• Parcela {i + 1}/{n} — R$ {parcela} em {d}</div>;
+                              })}
+                            </div>
+                          );
+                        })()}
+                      </div>
+                    )}
+                    {!form.cobrarParcelado && <p className="text-[11px] text-emerald-600 leading-tight">Cobrança à vista gerada ao concluir.</p>}
+                  </div>
                 )}
               </div>
             </div>
