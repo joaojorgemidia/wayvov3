@@ -185,10 +185,13 @@ export default function LocacoesPage() {
 
     const newFinancialEntries: FinancialEntry[] = [];
 
+    const numContrato = rental.numero ? `#${String(rental.numero).padStart(5, "0")}` : `#${rental.id.slice(0, 6).toUpperCase()}`;
+    const obsExtra = rental.observacoes ? ` - ${rental.observacoes}` : "";
+
     if (rental.gerarCobrancaCaucao && rental.valorCaucao > 0 && !rental.caucaoParcelado) {
       newFinancialEntries.push(resolveAssociations({
         id: crypto.randomUUID(), tipo: "receita", categoria: "caucao",
-        descricao: `Caução - ${motoPlaca} - ${client.nome}`,
+        descricao: `Caução - ${numContrato} - ${motoPlaca}${obsExtra}`,
         valor: rental.valorCaucao, data: rental.dataInicio, pago: true,
         motoId: rental.motoId, rentalId: rental.id, clienteId: client.id,
         placa: motoPlaca, clienteNome: client.nome, natureza: "operacional",
@@ -202,7 +205,7 @@ export default function LocacoesPage() {
           id: crypto.randomUUID(), tipo: "receita" as const, categoria: "caucao",
           subcategoria: "Parcela",
           serieId: caucaoSerieId,
-          descricao: `Caução Parcela - ${motoPlaca} - ${client.nome}`,
+          descricao: `Caução Parcela - ${numContrato} - ${motoPlaca}${obsExtra}`,
           valor: p.valor, data: p.data, pago: p.status === "recebido",
           dataPrevista: p.data,
           motoId: rental.motoId, rentalId: rental.id, clienteId: client.id,
