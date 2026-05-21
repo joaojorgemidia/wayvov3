@@ -200,12 +200,13 @@ export default function LocacoesPage() {
 
     if (rental.gerarCobrancaCaucao && rental.caucaoParcelado) {
       const caucaoSerieId = `caucao-${rental.id}`;
-      rental.parcelasCaucao.forEach(p => {
+      const totalParcelas = rental.parcelasCaucao.length;
+      rental.parcelasCaucao.forEach((p, pIdx) => {
         newFinancialEntries.push(resolveAssociations({
           id: crypto.randomUUID(), tipo: "receita" as const, categoria: "caucao",
           subcategoria: "Parcela",
           serieId: caucaoSerieId,
-          descricao: `Caução Parcela - ${numContrato} - ${motoPlaca}${obsExtra}`,
+          descricao: `Caução - Parcela ${pIdx + 1}/${totalParcelas} - ${numContrato} - ${motoPlaca}${obsExtra}`,
           valor: p.valor, data: p.data, pago: p.status === "recebido",
           dataPrevista: p.data,
           motoId: rental.motoId, rentalId: rental.id, clienteId: client.id,
