@@ -133,12 +133,9 @@ export default function LocacoesPage() {
 
     const isEditing = !!rentals.find(r => r.id === rental.id);
 
-    // Load financial entries ONCE — multiple loadFinancial()/saveFinancial() calls
-    // in the same synchronous block would race: the DataContext save queue uses a
-    // version-gate that silently skips all but the last save to the same table, and
-    // the optimistic cache update only fires inside the async closure, so subsequent
-    // loadFinancial() calls would still see the stale snapshot. Accumulate all
-    // changes in memory and issue a single saveFinancial() at the end.
+    // Load financial entries ONCE and accumulate all changes before a single save.
+    // saveFn now updates the cache synchronously at call time, but a single
+    // consolidated save is still safer and produces a cleaner diff.
     const currentFinancial = loadFinancial();
 
     // On edit: preserve past entries (paid or unpaid) — only future unpaid entries

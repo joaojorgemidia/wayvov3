@@ -132,24 +132,33 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const saveFn = useCallback((table: string, items: any[]) => {
+    const cacheKey = TABLE_TO_CACHE_KEY[table];
+
+    // Snapshot BEFORE the optimistic update (used by the async diff below).
+    // Captured here — synchronously, at call time — so that each queued mutation
+    // knows exactly what the cache looked like before its own items were applied,
+    // even when multiple saveFn calls happen in the same event-loop turn.
+    const existingSnapshot = cacheKey ? [...(getDataCache()[cacheKey] as any[])] : [];
+
+    // Optimistically update the cache synchronously (before the mutation runs in
+    // the queue). This ensures that subsequent loadXxx() calls in the same
+    // event-loop turn — e.g. a second saveFinancial() in the same handler, or a
+    // loadFinancial() in LocacoesPage right after saveRental() — see the fresh
+    // data instead of the stale snapshot and accidentally soft-deleting entries
+    // that were just added by the previous save.
+    if (cacheKey) {
+      setDataCache({ [cacheKey]: items } as any);
+    }
+
     return runQueuedMutation(table, async () => {
     if (!cid) throw new Error("No active company selected");
 
     const mapper = TABLE_MAP[table];
     if (!mapper) throw new Error(`Unknown table: ${table}`);
 
-    // ─── Phase 1: always execute (even if a newer version is queued) ──────────
-    // Optimistically update the cache and soft-delete removed rows regardless of
-    // version. This prevents deletions from being silently swallowed when a
-    // concurrent auto-materialize or reconcile effect bumps the version counter
-    // before our mutation body runs.
-    const cacheKey = TABLE_TO_CACHE_KEY[table];
-    // Snapshot existing cache BEFORE updating it (needed for the diff below).
-    const existingItems = cacheKey ? [...(getDataCache()[cacheKey] as any[])] : [];
-
-    if (cacheKey) {
-      setDataCache({ [cacheKey]: items } as any);
-    }
+    // Use the pre-update snapshot captured at saveFn call time (not the current
+    // cache, which may have been updated by later saveFn calls in the meantime).
+    const existingItems = existingSnapshot;
 
     // ─── INCREMENTAL DIFF ────────────────────────────────────────
     const existingById = new Map<string, any>(existingItems.map((item: any) => [item.id, item]));
