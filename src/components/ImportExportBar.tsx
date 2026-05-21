@@ -137,6 +137,56 @@ export function ImportExportBar({ kind, items, motos = [], clients = [], onImpor
     setPreview(preview.map(r => r.status === status ? { ...r, selected: val } : r));
   };
 
+  const revalidateWithPlaca = (idx: number, placa: string) => {
+    if (!preview) return;
+    const placaNorm = placa.toUpperCase().trim();
+
+    setPreview(prev => prev!.map((r, i) => {
+      if (i !== idx) return r;
+
+      if (!placaNorm) {
+        return { ...r, status: "error", message: "Placa obrigatória", selected: false };
+      }
+
+      if (kind === "motos") {
+        const byPlaca = new Map((items as Motorcycle[]).map(m => [m.placa.toUpperCase().trim(), m]));
+        const conflict = byPlaca.get(placaNorm);
+        return {
+          ...r,
+          data: { ...r.data, placa: placaNorm, id: conflict?.id || r.data.id },
+          status: conflict ? "update" : "create",
+          conflictWith: conflict?.id,
+          message: "",
+          selected: true,
+        };
+      }
+
+      // locacoes
+      const motoByPlaca = new Map(motos.map(m => [m.placa.toUpperCase().trim(), m]));
+      const moto = motoByPlaca.get(placaNorm);
+      if (!moto) {
+        return {
+          ...r,
+          data: { ...r.data, motoId: "", __placa: placaNorm } as any,
+          status: "warning",
+          message: "Moto não encontrada — vincule manualmente após a importação",
+          selected: true,
+        };
+      }
+      const conflict = (items as Rental[]).find(
+        rental => rental.motoId === moto.id && rental.clienteId === r.data.clienteId && rental.status === "ativa",
+      );
+      return {
+        ...r,
+        data: { ...r.data, motoId: moto.id, __placa: placaNorm } as any,
+        status: conflict ? "update" : "create",
+        conflictWith: conflict?.id,
+        message: "",
+        selected: true,
+      };
+    }));
+  };
+
   const confirmImport = async () => {
     if (!preview) return;
     const selected = preview.filter(r => r.selected && r.status !== "error");
@@ -268,8 +318,22 @@ export function ImportExportBar({ kind, items, motos = [], clients = [], onImpor
                       {r.status === "warning" && <Badge className="bg-warning/10 text-warning hover:bg-warning/10">Aviso</Badge>}
                       {r.status === "error" && <Badge variant="destructive">Erro</Badge>}
                     </TableCell>
-                    <TableCell className="text-sm">{summarize(kind, r.data)}</TableCell>
-                    <TableCell className="text-xs text-muted-foreground">{r.message}</TableCell>
+                    <TableCell className="text-sm">
+                      {r.status === "error" && r.message === "Placa obrigatória"
+                        ? (
+                          <input
+                            type="text"
+                            placeholder="ABC1D23"
+                            className="border border-input rounded px-2 py-1 text-xs w-28 uppercase bg-background focus:outline-none focus:ring-1 focus:ring-ring"
+                            onChange={e => revalidateWithPlaca(i, e.target.value)}
+                          />
+                        )
+                        : summarize(kind, r.data)
+                      }
+                    </TableCell>
+                    <TableCell className="text-xs text-muted-foreground">
+                      {r.status === "error" && r.message === "Placa obrigatória" ? "Digite a placa para corrigir" : r.message}
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
