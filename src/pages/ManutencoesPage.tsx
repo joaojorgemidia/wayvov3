@@ -236,6 +236,8 @@ export default function ManutencoesPage() {
   const [detailOS, setDetailOS] = useState<Maintenance | null>(null);
   const [formOpen, setFormOpen] = useState(false);
   const [form, setForm] = useState<Maintenance>(emptyForm());
+  const [valorLocatarioTipo, setValorLocatarioTipo] = useState<"reais" | "percentual">("reais");
+  const [valorLocatarioPercent, setValorLocatarioPercent] = useState<string>("");
 
   const getMoto = (id: string) => motos.find((m) => m.id === id);
   const getMotoLabel = (id: string) => {
@@ -282,11 +284,15 @@ export default function ManutencoesPage() {
 
   const openNew = () => {
     setForm({ ...emptyForm(), numeroOS: generateOSNumber(items || []) });
+    setValorLocatarioTipo("reais");
+    setValorLocatarioPercent("");
     setFormOpen(true);
   };
 
   const openEdit = (os: Maintenance) => {
     setForm({ ...os });
+    setValorLocatarioTipo("reais");
+    setValorLocatarioPercent("");
     setDetailOS(null);
     setFormOpen(true);
   };
@@ -312,9 +318,37 @@ export default function ManutencoesPage() {
       // Receitas do locatário
       if (os.quemPaga === "locatario") {
         const novas = buildReceitaLocatarioEntries(os, motos, rentals);
-        novas.forEach((n, i) => {
-          next.push({ ...n, id: linkedReceitas[i]?.id || n.id });
-        });
+
+        if (linkedReceitas.length === 0) {
+          // Primeira sincronização: cria todas as entradas
+          novas.forEach(n => next.push(n));
+        } else {
+          // Re-sincronização: preserva exclusões manuais usando correspondência por data
+          // Build de-duplicated map (keeps first entry per date)
+          const existingByDate = new Map<string, FinancialEntry>();
+          linkedReceitas.forEach(e => {
+            const d = e.dataPrevista || e.data;
+            if (!existingByDate.has(d)) existingByDate.set(d, e);
+          });
+
+          const matchCount = novas.filter(n => existingByDate.has(n.dataPrevista || n.data)).length;
+
+          if (matchCount === 0) {
+            // Datas mudaram (ex.: dataFim alterada) → regenera por índice
+            const sortedExisting = [...linkedReceitas].sort((a, b) =>
+              (a.dataPrevista || a.data).localeCompare(b.dataPrevista || b.data)
+            );
+            novas.forEach((n, i) => next.push({ ...n, id: sortedExisting[i]?.id || n.id }));
+          } else {
+            // Atualiza entradas existentes; pula datas excluídas pelo usuário
+            novas.forEach(n => {
+              const nDate = n.dataPrevista || n.data;
+              const existing = existingByDate.get(nDate);
+              if (existing) next.push({ ...n, id: existing.id });
+              // Data sem correspondência = excluída pelo usuário → não recriar
+            });
+          }
+        }
       }
     }
 
@@ -625,89 +659,16 @@ export default function ManutencoesPage() {
               </div>
             </div>
 
-            {/* Linha 3: Natureza + Quem paga */}
-            <div className="grid grid-cols-2 gap-4">
-              <div className="grid gap-1.5">
-                <Label className="text-xs">Natureza</Label>
-                <div className="grid grid-cols-2 gap-2">
-                  {(["corretiva", "preventiva"] as const).map((n) => (
-                    <button key={n} type="button" onClick={() => setForm((f) => ({ ...f, natureza: n }))}
-                      className={`rounded-lg border-2 py-2 text-sm font-medium transition-colors ${form.natureza === n ? (n === "corretiva" ? "border-red-500 bg-red-500/10 text-red-600" : "border-violet-500 bg-violet-500/10 text-violet-600") : "border-border text-muted-foreground hover:border-muted-foreground/40"}`}>
-                      {NATUREZA_CONFIG[n].label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              <div className="grid gap-1.5">
-                <Label className="text-xs">Quem paga</Label>
-                <div className="grid grid-cols-2 gap-2">
-                  {(["locadora", "locatario"] as const).map((p) => (
-                    <button key={p} type="button" onClick={() => setForm((f) => ({ ...f, quemPaga: p }))}
-                      className={`rounded-lg border-2 py-2 text-sm font-medium transition-colors ${form.quemPaga === p ? (p === "locadora" ? "border-blue-500 bg-blue-500/10 text-blue-600" : "border-orange-500 bg-orange-500/10 text-orange-600") : "border-border text-muted-foreground hover:border-muted-foreground/40"}`}>
-                      {p === "locadora" ? "Locadora" : "Locatário"}
-                    </button>
-                  ))}
-                </div>
-                {form.quemPaga === "locatario" && form.motoId && !findRentalAtDate(rentals, form.motoId, form.data) && (
-                  <p className="text-[11px] text-amber-600 leading-tight">Nenhum locatário ativo nessa data.</p>
-                )}
-                {form.quemPaga === "locatario" && form.motoId && findRentalAtDate(rentals, form.motoId, form.data) && (
-                  <div className="space-y-2.5 rounded-lg border border-orange-200 bg-orange-50/60 p-3 dark:border-orange-900/40 dark:bg-orange-950/20">
-                    <div className="grid gap-1">
-                      <Label className="text-xs">Valor a cobrar (R$)</Label>
-                      <Input
-                        type="number" min={0} step={0.01}
-                        placeholder={`${(form.itens.length > 0 ? computeCusto(form.itens) : form.custo).toFixed(2)} (custo OS)`}
-                        value={form.valorLocatario ?? ""}
-                        onChange={(e) => setForm((f) => ({ ...f, valorLocatario: e.target.value ? Number(e.target.value) : null }))}
-                        className="h-8 text-sm"
-                      />
-                    </div>
-                    <div className={`flex items-center justify-between rounded-md border px-3 py-2 transition-colors ${form.cobrarParcelado ? "border-orange-400 bg-orange-100/60 dark:border-orange-700 dark:bg-orange-900/30" : "border-border bg-background"}`}>
-                      <span className="text-xs font-medium">Parcelado</span>
-                      <Switch checked={!!form.cobrarParcelado} onCheckedChange={(v) => setForm((f) => ({ ...f, cobrarParcelado: v }))} />
-                    </div>
-                    {form.cobrarParcelado && (
-                      <div className="grid grid-cols-2 gap-2">
-                        <div className="grid gap-1">
-                          <Label className="text-xs">Entrada (R$)</Label>
-                          <Input
-                            type="number" min={0} step={0.01}
-                            value={form.entradaLocatario ?? ""}
-                            onChange={(e) => setForm((f) => ({ ...f, entradaLocatario: e.target.value ? Number(e.target.value) : null }))}
-                            className="h-8 text-sm" placeholder="0,00"
-                          />
-                        </div>
-                        <div className="grid gap-1">
-                          <Label className="text-xs">Nº de parcelas</Label>
-                          <Input
-                            type="number" min={1} max={52} step={1}
-                            value={form.numeroParcelas ?? ""}
-                            onChange={(e) => setForm((f) => ({ ...f, numeroParcelas: e.target.value ? Number(e.target.value) : null }))}
-                            className="h-8 text-sm" placeholder="ex: 4"
-                          />
-                        </div>
-                        {(form.numeroParcelas ?? 0) > 0 && (() => {
-                          const total = form.valorLocatario ?? (form.itens.length > 0 ? computeCusto(form.itens) : form.custo);
-                          const entrada = form.entradaLocatario ?? 0;
-                          const n = form.numeroParcelas!;
-                          const parcela = ((total - entrada) / n).toFixed(2);
-                          const baseData = form.dataFim || form.data;
-                          return (
-                            <div className="col-span-2 rounded-md bg-muted/60 p-2 text-xs text-muted-foreground space-y-0.5">
-                              {entrada > 0 && <div>• Entrada R$ {entrada.toFixed(2)} na conclusão</div>}
-                              {Array.from({ length: n }).map((_, i) => {
-                                const d = format(addDays(new Date(baseData + "T00:00:00"), (i + 1) * 7), "dd/MM/yyyy");
-                                return <div key={i}>• Parcela {i + 1}/{n} — R$ {parcela} em {d}</div>;
-                              })}
-                            </div>
-                          );
-                        })()}
-                      </div>
-                    )}
-                    {!form.cobrarParcelado && <p className="text-[11px] text-emerald-600 leading-tight">Cobrança à vista gerada ao concluir.</p>}
-                  </div>
-                )}
+            {/* Natureza */}
+            <div className="grid gap-1.5">
+              <Label className="text-xs">Natureza</Label>
+              <div className="grid grid-cols-2 gap-2 max-w-xs">
+                {(["corretiva", "preventiva"] as const).map((n) => (
+                  <button key={n} type="button" onClick={() => setForm((f) => ({ ...f, natureza: n }))}
+                    className={`rounded-lg border-2 py-2 text-sm font-medium transition-colors ${form.natureza === n ? (n === "corretiva" ? "border-red-500 bg-red-500/10 text-red-600" : "border-violet-500 bg-violet-500/10 text-violet-600") : "border-border text-muted-foreground hover:border-muted-foreground/40"}`}>
+                    {NATUREZA_CONFIG[n].label}
+                  </button>
+                ))}
               </div>
             </div>
 
@@ -941,6 +902,141 @@ export default function ManutencoesPage() {
                 onChange={(e) => setForm((f) => ({ ...f, descricao: e.target.value }))}
                 placeholder="Descreva o problema ou serviço..." />
             </div>
+
+            <Separator />
+
+            {/* Cobrança */}
+            {(() => {
+              const custo = form.itens.length > 0 ? computeCusto(form.itens) : form.custo;
+              const rentalNaData = form.motoId ? findRentalAtDate(rentals, form.motoId, form.data) : undefined;
+              return (
+                <div className="space-y-3">
+                  <div className="grid gap-1.5">
+                    <Label className="text-xs font-semibold">Quem paga</Label>
+                    <div className="grid grid-cols-2 gap-2 max-w-xs">
+                      {(["locadora", "locatario"] as const).map((p) => (
+                        <button key={p} type="button"
+                          onClick={() => setForm((f) => ({ ...f, quemPaga: p, cobrarParcelado: false, valorLocatario: null, entradaLocatario: null, numeroParcelas: null }))}
+                          className={`rounded-lg border-2 py-2 text-sm font-medium transition-colors ${form.quemPaga === p ? (p === "locadora" ? "border-blue-500 bg-blue-500/10 text-blue-600" : "border-orange-500 bg-orange-500/10 text-orange-600") : "border-border text-muted-foreground hover:border-muted-foreground/40"}`}>
+                          {p === "locadora" ? "Locadora" : "Locatário"}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {form.quemPaga === "locatario" && (
+                    <div className="rounded-lg border border-orange-200 bg-orange-50/60 p-3 space-y-3 dark:border-orange-900/40 dark:bg-orange-950/20">
+                      {form.motoId && !rentalNaData && (
+                        <p className="text-[11px] text-amber-600 leading-tight">Nenhum locatário ativo nessa data.</p>
+                      )}
+
+                      {/* Valor a cobrar com toggle R$/% */}
+                      <div className="grid gap-1">
+                        <div className="flex items-center justify-between">
+                          <Label className="text-xs">Valor a cobrar</Label>
+                          <div className="flex rounded-md border text-xs overflow-hidden">
+                            <button type="button"
+                              onClick={() => setValorLocatarioTipo("reais")}
+                              className={`px-2.5 py-0.5 transition-colors ${valorLocatarioTipo === "reais" ? "bg-orange-500 text-white font-medium" : "text-muted-foreground hover:bg-muted"}`}>
+                              R$
+                            </button>
+                            <button type="button"
+                              onClick={() => {
+                                setValorLocatarioTipo("percentual");
+                                if (custo > 0 && form.valorLocatario) {
+                                  setValorLocatarioPercent(((form.valorLocatario / custo) * 100).toFixed(1));
+                                }
+                              }}
+                              className={`px-2.5 py-0.5 transition-colors ${valorLocatarioTipo === "percentual" ? "bg-orange-500 text-white font-medium" : "text-muted-foreground hover:bg-muted"}`}>
+                              %
+                            </button>
+                          </div>
+                        </div>
+
+                        {valorLocatarioTipo === "reais" ? (
+                          <Input
+                            type="number" min={0} step={0.01}
+                            placeholder={custo > 0 ? `${custo.toFixed(2)} (custo OS)` : "0,00"}
+                            value={form.valorLocatario ?? ""}
+                            onChange={(e) => setForm((f) => ({ ...f, valorLocatario: e.target.value ? Number(e.target.value) : null }))}
+                            className="h-8 text-sm"
+                          />
+                        ) : (
+                          <div className="space-y-1">
+                            <div className="relative">
+                              <Input
+                                type="number" min={0} max={200} step={0.1}
+                                value={valorLocatarioPercent}
+                                onChange={(e) => {
+                                  setValorLocatarioPercent(e.target.value);
+                                  const pct = parseFloat(e.target.value);
+                                  setForm((f) => ({ ...f, valorLocatario: !isNaN(pct) && custo > 0 ? parseFloat((custo * pct / 100).toFixed(2)) : null }));
+                                }}
+                                className="h-8 text-sm pr-7"
+                                placeholder="ex: 50"
+                              />
+                              <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs text-muted-foreground pointer-events-none">%</span>
+                            </div>
+                            {form.valorLocatario != null && custo > 0 && (
+                              <p className="text-[11px] text-muted-foreground">= R$ {form.valorLocatario.toFixed(2)} sobre custo de R$ {custo.toFixed(2)}</p>
+                            )}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Parcelamento */}
+                      <div className={`flex items-center justify-between rounded-md border px-3 py-2 transition-colors ${form.cobrarParcelado ? "border-orange-400 bg-orange-100/60 dark:border-orange-700 dark:bg-orange-900/30" : "border-border bg-background"}`}>
+                        <span className="text-xs font-medium">Parcelado</span>
+                        <Switch checked={!!form.cobrarParcelado} onCheckedChange={(v) => setForm((f) => ({ ...f, cobrarParcelado: v }))} />
+                      </div>
+
+                      {form.cobrarParcelado && (
+                        <div className="grid grid-cols-2 gap-2">
+                          <div className="grid gap-1">
+                            <Label className="text-xs">Entrada (R$)</Label>
+                            <Input
+                              type="number" min={0} step={0.01}
+                              value={form.entradaLocatario ?? ""}
+                              onChange={(e) => setForm((f) => ({ ...f, entradaLocatario: e.target.value ? Number(e.target.value) : null }))}
+                              className="h-8 text-sm" placeholder="0,00"
+                            />
+                          </div>
+                          <div className="grid gap-1">
+                            <Label className="text-xs">Nº de parcelas</Label>
+                            <Input
+                              type="number" min={1} max={52} step={1}
+                              value={form.numeroParcelas ?? ""}
+                              onChange={(e) => setForm((f) => ({ ...f, numeroParcelas: e.target.value ? Number(e.target.value) : null }))}
+                              className="h-8 text-sm" placeholder="ex: 4"
+                            />
+                          </div>
+                          {(form.numeroParcelas ?? 0) > 0 && (() => {
+                            const total = form.valorLocatario ?? custo;
+                            const entrada = form.entradaLocatario ?? 0;
+                            const n = form.numeroParcelas!;
+                            const parcela = ((total - entrada) / n).toFixed(2);
+                            const baseData = form.dataFim || form.data;
+                            return (
+                              <div className="col-span-2 rounded-md bg-muted/60 p-2 text-xs text-muted-foreground space-y-0.5">
+                                {entrada > 0 && <div>• Entrada R$ {entrada.toFixed(2)} na conclusão</div>}
+                                {Array.from({ length: n }).map((_, i) => {
+                                  const d = format(addDays(new Date(baseData + "T00:00:00"), (i + 1) * 7), "dd/MM/yyyy");
+                                  return <div key={i}>• Parcela {i + 1}/{n} — R$ {parcela} em {d}</div>;
+                                })}
+                              </div>
+                            );
+                          })()}
+                        </div>
+                      )}
+
+                      {!form.cobrarParcelado && rentalNaData && (
+                        <p className="text-[11px] text-emerald-600 leading-tight">Cobrança à vista gerada ao concluir.</p>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
           </div>
 
           <DialogFooter>

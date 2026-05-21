@@ -1658,20 +1658,12 @@ export default function FinanceiroPage() {
     if (isSaving) return;
     const groupId = editScopeTarget.recurringGroupId;
     const seriesId = editScopeTarget.serieId || editScopeTarget.fixedOriginId;
+    // Propaga apenas campos não-data: datas são por ocorrência.
+    // Propagar dayDelta junto faz o auto-materialize gerar duplicatas nas datas
+    // originais (a base não muda, logo o efeito recria entradas nos slots antigos).
     const scopeFields = { valor: editScopeTarget.valor, categoria: editScopeTarget.categoria, subcategoria: editScopeTarget.subcategoria, conta: editScopeTarget.conta, natureza: editScopeTarget.natureza, placa: editScopeTarget.placa, motoId: editScopeTarget.motoId, clienteNome: editScopeTarget.clienteNome, clienteId: editScopeTarget.clienteId, tags: editScopeTarget.tags, observacao: editScopeTarget.observacao, ignorada: editScopeTarget.ignorada };
 
-    // Calcula delta de dias para propagar mudança de dia da semana
     const original = entries.find(e => e.id === editScopeTarget.id);
-    const dayDelta = original?.data
-      ? Math.round((new Date(editScopeTarget.data).getTime() - new Date(original.data + "T12:00:00").getTime()) / 86400000)
-      : 0;
-    const shiftDate = (d: string | null | undefined) => {
-      if (!d || dayDelta === 0) return d;
-      const dt = new Date(d + "T12:00:00");
-      dt.setDate(dt.getDate() + dayDelta);
-      return dt.toISOString().split("T")[0];
-    };
-
     const originalDate = original?.data ?? "";
     const updated = entries.map(e => {
       if (e.id === editScopeTarget.id) return editScopeTarget;
@@ -1681,7 +1673,7 @@ export default function FinanceiroPage() {
       const inSeries = groupId
         ? e.recurringGroupId === groupId
         : !!(seriesId && (e.serieId === seriesId || e.fixedOriginId === seriesId || e.id === seriesId));
-      if (inSeries) return { ...e, ...scopeFields, data: shiftDate(e.data) ?? e.data, dataPrevista: shiftDate(e.dataPrevista) };
+      if (inSeries) return { ...e, ...scopeFields };
       return e;
     });
     const saved = await persistWithFeedback(updated, { successMessage: "Pendências atualizadas." });
