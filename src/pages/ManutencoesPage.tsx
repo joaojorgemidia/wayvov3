@@ -107,10 +107,13 @@ function buildReceitaLocatarioEntry(os: Maintenance, motos: Motorcycle[], rental
   const custo = os.itens.length > 0 ? computeCusto(os.itens) : os.custo;
   const data = os.dataFim || os.data;
   const dataPrevista = os.dataPagamentoPrevisto || data;
+  const numContrato = rental.numero ? `#${String(rental.numero).padStart(5, "0")}` : `#${rental.id.slice(0, 6).toUpperCase()}`;
   const descricao = [
     os.numeroOS,
     getTipoLabel(os.tipo),
     os.natureza === "preventiva" ? "Preventiva" : "Corretiva",
+    numContrato,
+    moto?.placa || undefined,
     os.descricao || undefined,
   ].filter(Boolean).join(" – ");
   return {
