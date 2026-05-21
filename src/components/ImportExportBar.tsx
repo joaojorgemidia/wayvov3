@@ -12,6 +12,66 @@ import {
   buildFinanceiroPreview, buildMotosPreview, buildLocacoesPreview, PreviewRow,
 } from "@/lib/import-export";
 import { Motorcycle, Rental, FinancialEntry, Client } from "@/lib/types";
+import { ColumnMapper, SystemField } from "./ColumnMapper";
+
+// ── System fields shown in the mapping step ──────────────────────────────────
+
+const MOTOS_FIELDS: SystemField[] = [
+  { key: "Placa",      label: "Placa",   required: true  },
+  { key: "Modelo",     label: "Modelo",  required: false },
+  { key: "Ano Modelo", label: "Ano",     required: false },
+  { key: "Cor",        label: "Cor",     required: false },
+  { key: "Chassi",     label: "Chassi",  required: false },
+  { key: "Renavam",    label: "Renavam", required: false },
+];
+
+const LOCACOES_FIELDS: SystemField[] = [
+  { key: "Placa",          label: "Placa",        required: true  },
+  { key: "Nome",           label: "Locatário",    required: false },
+  { key: "CPF",            label: "CPF",          required: false },
+  { key: "Data Início",    label: "Data Início",  required: false },
+  { key: "Data Fim",       label: "Data Fim",     required: false },
+  { key: "Status",         label: "Status",       required: false },
+  { key: "Valor Semanal",  label: "Valor Semanal",required: false },
+];
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+function extractSamples(rows: Record<string, any>[], max = 3): Record<string, string[]> {
+  const samples: Record<string, string[]> = {};
+  for (const row of rows.slice(0, 20)) {
+    for (const [col, val] of Object.entries(row)) {
+      if (!samples[col]) samples[col] = [];
+      const s = String(val ?? "").trim();
+      if (s && !samples[col].includes(s) && samples[col].length < max) {
+        samples[col].push(s);
+      }
+    }
+  }
+  return samples;
+}
+
+function applyMapping(
+  rows: Record<string, any>[],
+  mapping: Record<string, string | null>,
+): Record<string, any>[] {
+  const mappedFileCols = new Set(Object.keys(mapping));
+  return rows.map(row => {
+    const newRow: Record<string, any> = {};
+    // keep unmapped columns unchanged
+    for (const [col, val] of Object.entries(row)) {
+      if (!mappedFileCols.has(col)) newRow[col] = val;
+    }
+    // rename mapped columns to system keys
+    for (const [fileCol, systemKey] of Object.entries(mapping)) {
+      if (systemKey) newRow[systemKey] = row[fileCol];
+      // null = ignore: column is dropped
+    }
+    return newRow;
+  });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 interface Props {
   kind: EntityKind;
@@ -21,25 +81,51 @@ interface Props {
   onImport: (rows: PreviewRow<any>[]) => Promise<void> | void;
 }
 
+interface MappingStage {
+  rows: Record<string, any>[];
+  columns: string[];
+  samples: Record<string, string[]>;
+}
+
 export function ImportExportBar({ kind, items, motos = [], clients = [], onImport }: Props) {
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [mappingStage, setMappingStage] = useState<MappingStage | null>(null);
   const [preview, setPreview] = useState<PreviewRow<any>[] | null>(null);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [importing, setImporting] = useState(false);
+
+  const buildPreview = (rows: Record<string, any>[]) => {
+    let result: PreviewRow<any>[];
+    if (kind === "financeiro") result = buildFinanceiroPreview(rows, items as FinancialEntry[]);
+    else if (kind === "motos") result = buildMotosPreview(rows, items as Motorcycle[]);
+    else result = buildLocacoesPreview(rows, items as Rental[], motos, clients);
+    setPreview(result);
+    setPreviewOpen(true);
+  };
 
   const handleFile = async (file: File) => {
     try {
       const rows = await parseFile(file);
       if (!rows.length) { toast.error("Arquivo vazio."); return; }
-      let result: PreviewRow<any>[];
-      if (kind === "financeiro") result = buildFinanceiroPreview(rows, items as FinancialEntry[]);
-      else if (kind === "motos") result = buildMotosPreview(rows, items as Motorcycle[]);
-      else result = buildLocacoesPreview(rows, items as Rental[], motos, clients);
-      setPreview(result);
-      setPreviewOpen(true);
+
+      // financeiro goes straight to preview (no column mapping step)
+      if (kind === "financeiro") {
+        buildPreview(rows);
+        return;
+      }
+
+      const columns = Object.keys(rows[0] ?? {});
+      const samples = extractSamples(rows);
+      setMappingStage({ rows, columns, samples });
     } catch (e: any) {
       toast.error("Erro ao ler arquivo: " + (e.message || e));
     }
+  };
+
+  const handleMappingConfirm = (mapping: Record<string, string | null>) => {
+    if (!mappingStage) return;
+    setMappingStage(null);
+    buildPreview(applyMapping(mappingStage.rows, mapping));
   };
 
   const toggleRow = (i: number) => {
@@ -73,6 +159,8 @@ export function ImportExportBar({ kind, items, motos = [], clients = [], onImpor
     update: preview.filter(r => r.status === "update").length,
     error: preview.filter(r => r.status === "error").length,
   } : null;
+
+  const mappingFields = kind === "motos" ? MOTOS_FIELDS : LOCACOES_FIELDS;
 
   return (
     <>
@@ -114,6 +202,19 @@ export function ImportExportBar({ kind, items, motos = [], clients = [], onImpor
         />
       </div>
 
+      {/* Column mapping step */}
+      {mappingStage && (
+        <ColumnMapper
+          open
+          columns={mappingStage.columns}
+          samples={mappingStage.samples}
+          fields={mappingFields}
+          onConfirm={handleMappingConfirm}
+          onCancel={() => setMappingStage(null)}
+        />
+      )}
+
+      {/* Preview step */}
       <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
         <DialogContent className="max-w-5xl max-h-[85vh] flex flex-col">
           <DialogHeader>
