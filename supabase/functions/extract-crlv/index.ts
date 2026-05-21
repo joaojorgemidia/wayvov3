@@ -15,6 +15,16 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
+function ok(data: unknown) {
+  return new Response(JSON.stringify({ success: true, data }),
+    { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+}
+
+function fail(error: string, status = 200) {
+  return new Response(JSON.stringify({ success: false, error }),
+    { status, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -22,26 +32,12 @@ serve(async (req) => {
 
   try {
     const { pdfBase64 } = await req.json();
-    if (!pdfBase64) {
-      return new Response(
-        JSON.stringify({ error: "pdfBase64 is required" }),
-        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
+    if (!pdfBase64) return fail("pdfBase64 is required", 400);
 
-    const GOOGLE_AI_API_KEY = Deno.env.get("GOOGLE_AI_API_KEY");
-    if (!GOOGLE_AI_API_KEY) {
-      return new Response(
-        JSON.stringify({ error: "GOOGLE_AI_API_KEY not configured" }),
-        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
+    const ANTHROPIC_API_KEY = Deno.env.get("ANTHROPIC_API_KEY");
+    if (!ANTHROPIC_API_KEY) return fail("ANTHROPIC_API_KEY not configured", 500);
 
-    console.log("Sending PDF to Gemini for CRLV extraction...");
-
-    const systemPrompt = `Você é um especialista em extrair dados de documentos CRLV (Certificado de Registro e Licenciamento de Veículo) brasileiros.
-Analise o documento PDF fornecido e extraia TODOS os campos disponíveis.
-Retorne APENAS um JSON válido com os campos encontrados. Se um campo não for encontrado, use null.`;
+    console.log("Sending PDF to Claude for CRLV extraction...");
 
     const userPrompt = `Extraia os dados deste CRLV e retorne um JSON com exatamente estes campos:
 {
@@ -57,78 +53,49 @@ Retorne APENAS um JSON válido com os campos encontrados. Se um campo não for e
 }
 Retorne SOMENTE o JSON, sem markdown, sem explicação.`;
 
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GOOGLE_AI_API_KEY}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          systemInstruction: { parts: [{ text: systemPrompt }] },
-          contents: [{
-            role: "user",
-            parts: [
-              { text: userPrompt },
-              { inlineData: { mimeType: "application/pdf", data: pdfBase64 } },
-            ],
-          }],
-          generationConfig: { responseMimeType: "text/plain" },
-        }),
-      }
-    );
+    const response = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "x-api-key": ANTHROPIC_API_KEY,
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "claude-haiku-4-5-20251001",
+        max_tokens: 1024,
+        system: "Você é um especialista em extrair dados de documentos CRLV (Certificado de Registro e Licenciamento de Veículo) brasileiros. Analise o documento fornecido e extraia TODOS os campos disponíveis. Retorne APENAS um JSON válido com os campos encontrados. Se um campo não for encontrado, use null.",
+        messages: [{
+          role: "user",
+          content: [
+            { type: "document", source: { type: "base64", media_type: "application/pdf", data: pdfBase64 } },
+            { type: "text", text: userPrompt },
+          ],
+        }],
+      }),
+    });
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error("Gemini API error:", response.status, errorText);
-
-      if (response.status === 429) {
-        return new Response(
-          JSON.stringify({ error: "Limite de requisições excedido. Tente novamente em alguns segundos." }),
-          { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
-      }
-
-      return new Response(
-        JSON.stringify({ error: "Erro ao processar documento com IA" }),
-        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
+      console.error("Anthropic API error:", response.status, errorText);
+      return fail("Erro ao processar documento com IA. Tente novamente.");
     }
 
     const aiResult = await response.json();
-
-    if (!aiResult.candidates || aiResult.candidates.length === 0) {
-      const blockReason = aiResult.promptFeedback?.blockReason ?? "sem candidatos";
-      console.error("Gemini blocked:", blockReason);
-      return new Response(
-        JSON.stringify({ error: "Documento não pôde ser processado. Tente outro arquivo." }),
-        { status: 422, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
-
-    const content = aiResult.candidates[0]?.content?.parts?.[0]?.text ?? "";
-    console.log("Gemini raw response:", content);
+    const content = aiResult.content?.[0]?.text ?? "";
+    console.log("Claude raw response:", content);
 
     let extracted: Record<string, unknown>;
     try {
       extracted = parseJsonFromText(content);
     } catch (parseError) {
-      console.error("Failed to parse Gemini response as JSON:", parseError, "raw:", content);
-      return new Response(
-        JSON.stringify({ error: "Não foi possível interpretar os dados do documento. Tente novamente." }),
-        { status: 422, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
+      console.error("Failed to parse Claude response as JSON:", parseError, "raw:", content);
+      return fail("Não foi possível interpretar os dados do documento. Tente novamente.");
     }
 
     console.log("Extracted CRLV data:", JSON.stringify(extracted));
-
-    return new Response(
-      JSON.stringify({ success: true, data: extracted }),
-      { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    );
+    return ok(extracted);
   } catch (error) {
     console.error("extract-crlv error:", error);
-    return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : "Erro desconhecido" }),
-      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    );
+    return fail(error instanceof Error ? error.message : "Erro desconhecido", 500);
   }
 });

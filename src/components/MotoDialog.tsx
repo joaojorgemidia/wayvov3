@@ -780,7 +780,7 @@ export function MotoDialog({ open, onOpenChange, moto, onSave, mode }: MotoDialo
         }));
         toast.success("Dados extraídos com sucesso! Revise os campos preenchidos.", { duration: 5000 });
       } else {
-        toast.warning("Não foi possível extrair os dados. Preencha manualmente.", { duration: 5000 });
+        toast.warning(data?.error || "Não foi possível extrair os dados. Preencha manualmente.", { duration: 5000 });
       }
     } catch (err: unknown) {
       console.error("CRLV extraction error:", err);

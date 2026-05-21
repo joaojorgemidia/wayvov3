@@ -490,11 +490,10 @@ export function buildMotosPreview(
   return rows.map((row, idx) => {
     const placa = getCell(row, "Placa").toUpperCase().trim();
     const modelo = getCell(row, "Modelo");
+    const conflict = byPlaca.get(placa);
     const errors: string[] = [];
     if (!placa) errors.push("Placa obrigatória");
-    if (!modelo) errors.push("Modelo obrigatório");
-
-    const conflict = byPlaca.get(placa);
+    else if (!conflict && !modelo) errors.push("Modelo obrigatório");
     const moto: Motorcycle = {
       id: conflict?.id || crypto.randomUUID(),
       placa,
