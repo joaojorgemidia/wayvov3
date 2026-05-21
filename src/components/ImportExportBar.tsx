@@ -291,53 +291,95 @@ export function ImportExportBar({ kind, items, motos = [], clients = [], onImpor
           )}
 
           <div className="overflow-auto flex-1 border rounded-md">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="w-10"></TableHead>
-                  <TableHead className="w-16">Linha</TableHead>
-                  <TableHead className="w-28">Status</TableHead>
-                  <TableHead>Resumo</TableHead>
-                  <TableHead>Mensagem</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {preview?.map((r, i) => (
-                  <TableRow key={i} className={r.status === "error" ? "bg-destructive/5" : r.status === "warning" ? "bg-warning/5" : ""}>
-                    <TableCell>
-                      <Checkbox
-                        checked={r.selected}
-                        disabled={r.status === "error"}
-                        onCheckedChange={() => toggleRow(i)}
-                      />
-                    </TableCell>
-                    <TableCell className="text-xs text-muted-foreground">{r.rowIndex}</TableCell>
-                    <TableCell>
-                      {r.status === "create" && <Badge className="bg-success/10 text-success hover:bg-success/10">Novo</Badge>}
-                      {r.status === "update" && <Badge className="bg-success/10 text-success hover:bg-success/10">Atualizar</Badge>}
-                      {r.status === "warning" && <Badge className="bg-warning/10 text-warning hover:bg-warning/10">Aviso</Badge>}
-                      {r.status === "error" && <Badge variant="destructive">Erro</Badge>}
-                    </TableCell>
-                    <TableCell className="text-sm">
-                      {r.status === "error" && r.message === "Placa obrigatória"
-                        ? (
-                          <input
-                            type="text"
-                            placeholder="ABC1D23"
-                            className="border border-input rounded px-2 py-1 text-xs w-28 uppercase bg-background focus:outline-none focus:ring-1 focus:ring-ring"
-                            onChange={e => revalidateWithPlaca(i, e.target.value)}
-                          />
-                        )
-                        : summarize(kind, r.data)
-                      }
-                    </TableCell>
-                    <TableCell className="text-xs text-muted-foreground">
-                      {r.status === "error" && r.message === "Placa obrigatória" ? "Digite a placa para corrigir" : r.message}
-                    </TableCell>
+            {kind === "locacoes" ? (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="w-10"></TableHead>
+                    <TableHead className="w-28">Status</TableHead>
+                    <TableHead>Locatário</TableHead>
+                    <TableHead className="w-28">Placa</TableHead>
+                    <TableHead className="w-24">Data Início</TableHead>
+                    <TableHead className="w-24">Data Fim</TableHead>
+                    <TableHead className="w-32 text-right">Valor Semanal</TableHead>
+                    <TableHead className="w-32">Telefone</TableHead>
                   </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+                </TableHeader>
+                <TableBody>
+                  {preview?.map((r, i) => {
+                    const d = r.data as any;
+                    return (
+                      <TableRow key={i} className={r.status === "error" ? "bg-destructive/5" : r.status === "warning" ? "bg-warning/5" : ""}>
+                        <TableCell>
+                          <Checkbox checked={r.selected} disabled={r.status === "error"} onCheckedChange={() => toggleRow(i)} />
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex items-center gap-1.5">
+                            {r.status === "create" && <Badge className="bg-success/10 text-success hover:bg-success/10 text-[10px] px-1.5 py-0">Novo</Badge>}
+                            {r.status === "update" && <Badge className="bg-success/10 text-success hover:bg-success/10 text-[10px] px-1.5 py-0">Atualizar</Badge>}
+                            {r.status === "warning" && <Badge className="bg-warning/10 text-warning hover:bg-warning/10 text-[10px] px-1.5 py-0">Aviso</Badge>}
+                            {r.status === "error" && <Badge variant="destructive" className="text-[10px] px-1.5 py-0">Erro</Badge>}
+                            {r.message && (
+                              <span title={r.message} className="cursor-help">
+                                <AlertCircle className={`h-3.5 w-3.5 shrink-0 ${r.status === "error" ? "text-destructive" : "text-warning"}`} />
+                              </span>
+                            )}
+                          </div>
+                        </TableCell>
+                        <TableCell className="text-xs">{d.__clienteNome || "—"}</TableCell>
+                        <TableCell>
+                          {r.status === "error" && r.message === "Placa obrigatória"
+                            ? <input type="text" placeholder="ABC1D23" className="border border-input rounded px-2 py-1 text-xs w-24 uppercase bg-background focus:outline-none focus:ring-1 focus:ring-ring" onChange={e => revalidateWithPlaca(i, e.target.value)} />
+                            : <span className="font-mono text-xs font-bold">{d.__placa || "—"}</span>
+                          }
+                        </TableCell>
+                        <TableCell className="text-xs">{d.dataInicio ? new Date(d.dataInicio + "T00:00:00").toLocaleDateString("pt-BR") : "—"}</TableCell>
+                        <TableCell className="text-xs">{d.dataFim ? new Date(d.dataFim + "T00:00:00").toLocaleDateString("pt-BR") : "—"}</TableCell>
+                        <TableCell className="text-xs text-right">{d.valorDiario ? `R$ ${Number(d.valorDiario).toFixed(2)}` : "—"}</TableCell>
+                        <TableCell className="text-xs">{d.__telefone || "—"}</TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="w-10"></TableHead>
+                    <TableHead className="w-16">Linha</TableHead>
+                    <TableHead className="w-28">Status</TableHead>
+                    <TableHead>Resumo</TableHead>
+                    <TableHead>Mensagem</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {preview?.map((r, i) => (
+                    <TableRow key={i} className={r.status === "error" ? "bg-destructive/5" : r.status === "warning" ? "bg-warning/5" : ""}>
+                      <TableCell>
+                        <Checkbox checked={r.selected} disabled={r.status === "error"} onCheckedChange={() => toggleRow(i)} />
+                      </TableCell>
+                      <TableCell className="text-xs text-muted-foreground">{r.rowIndex}</TableCell>
+                      <TableCell>
+                        {r.status === "create" && <Badge className="bg-success/10 text-success hover:bg-success/10">Novo</Badge>}
+                        {r.status === "update" && <Badge className="bg-success/10 text-success hover:bg-success/10">Atualizar</Badge>}
+                        {r.status === "warning" && <Badge className="bg-warning/10 text-warning hover:bg-warning/10">Aviso</Badge>}
+                        {r.status === "error" && <Badge variant="destructive">Erro</Badge>}
+                      </TableCell>
+                      <TableCell className="text-sm">
+                        {r.status === "error" && r.message === "Placa obrigatória"
+                          ? <input type="text" placeholder="ABC1D23" className="border border-input rounded px-2 py-1 text-xs w-28 uppercase bg-background focus:outline-none focus:ring-1 focus:ring-ring" onChange={e => revalidateWithPlaca(i, e.target.value)} />
+                          : summarize(kind, r.data)
+                        }
+                      </TableCell>
+                      <TableCell className="text-xs text-muted-foreground">
+                        {r.status === "error" && r.message === "Placa obrigatória" ? "Digite a placa para corrigir" : r.message}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            )}
           </div>
 
           <DialogFooter>

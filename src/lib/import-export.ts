@@ -604,7 +604,12 @@ export function buildLocacoesPreview(
       }
     }
 
-    const dataInicio = new Date().toISOString().slice(0, 10);
+    const dataInicioRaw = getCell(row, "Data Início") || getCell(row, "Data Inicio");
+    const dataFimRaw = getCell(row, "Data Fim");
+    const valorSemanalRaw = getCell(row, "Valor Semanal");
+    const dataInicio = (dataInicioRaw ? parseDate(dataInicioRaw) : null) || new Date().toISOString().slice(0, 10);
+    const dataFim = dataFimRaw ? parseDate(dataFimRaw) : null;
+    const valorSemanal = valorSemanalRaw ? parseNumber(valorSemanalRaw) : 0;
     const clienteId = client?.id || pendingClient?.id || "";
 
     const conflict = existing.find(r =>
@@ -618,12 +623,12 @@ export function buildLocacoesPreview(
       vendedor: "",
       dataInicio,
       horaInicio: "08:00",
-      dataFim: null,
+      dataFim: dataFim,
       dataFimContrato: null,
       proximoPagamento: null,
       tempoMinimoContrato: null,
       frequenciaPagamento: "",
-      valorDiario: 0,
+      valorDiario: valorSemanal,
       valorCaucao: 0,
       caucaoPendente: false,
       caucaoParcelado: false,
@@ -648,6 +653,10 @@ export function buildLocacoesPreview(
     };
     if (pendingClient) (rental as any).__pendingClient = pendingClient;
     if (placa) (rental as any).__placa = placa;
+    const clienteNome = client?.nome || pendingClient?.nome || "";
+    const clienteTelefone = client?.telefone || pendingClient?.telefone || "";
+    if (clienteNome) (rental as any).__clienteNome = clienteNome;
+    if (clienteTelefone) (rental as any).__telefone = clienteTelefone;
 
     const hasError = errors.length > 0;
     const hasWarning = warnings.length > 0;
