@@ -471,12 +471,11 @@ export default function LocacoesPage() {
               </TableHead>
               <TableHead className="w-[90px]">Nº</TableHead>
               <TableHead className="w-[90px]">Placa</TableHead>
-              <TableHead>Modelo</TableHead>
               <TableHead>Cliente</TableHead>
+              <TableHead>Plano</TableHead>
               <TableHead>Início</TableHead>
               <TableHead>Fim Contrato</TableHead>
               <TableHead className="text-right">Valor</TableHead>
-              <TableHead>Plano</TableHead>
               <TableHead>Status</TableHead>
               <TableHead className="text-right">Ações</TableHead>
             </TableRow>
@@ -484,7 +483,7 @@ export default function LocacoesPage() {
           <TableBody>
             {data.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={11} className="text-center py-8 text-muted-foreground">
+                <TableCell colSpan={10} className="text-center py-8 text-muted-foreground">
                   <FileText className="h-8 w-8 mx-auto mb-2 opacity-50" />
                   Nenhuma locação encontrada
                 </TableCell>
@@ -496,12 +495,11 @@ export default function LocacoesPage() {
                 </TableCell>
                 <TableCell className="font-mono text-xs text-muted-foreground">{getNumero(r)}</TableCell>
                 <TableCell className="font-mono font-bold text-xs">{getMotoPlaca(r.motoId)}</TableCell>
-                <TableCell className="text-xs">{getMotoModelo(r.motoId)}</TableCell>
                 <TableCell className="text-xs">{getRentalClientLabel(r)}</TableCell>
-                <TableCell className="text-xs">{new Date(r.dataInicio + "T00:00:00").toLocaleDateString("pt-BR")}</TableCell>
+                <TableCell className="text-xs">{planoLabel[r.plano] || r.plano || "—"}</TableCell>
+                <TableCell className="text-xs">{(() => { const d = new Date(r.dataInicio + "T00:00:00"); const dias = ["Dom","Seg","Ter","Qua","Qui","Sex","Sáb"]; return `${dias[d.getDay()]} ${d.toLocaleDateString("pt-BR")}`; })()}</TableCell>
                 <TableCell className="text-xs">{(() => { const d = r.status === "ativa" ? r.dataFimContrato : r.dataFim; return d ? new Date(d + "T00:00:00").toLocaleDateString("pt-BR") : "—"; })()}</TableCell>
                 <TableCell className="text-xs text-right font-medium">R$ {r.valorDiario.toFixed(2)}</TableCell>
-                <TableCell className="text-xs">{planoLabel[r.plano] || r.plano || "—"}</TableCell>
                 <TableCell>
                   <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium ${statusColor[r.status]}`}>
                     {statusLabel[r.status]}
