@@ -632,39 +632,59 @@ export default function ManutencoesPage() {
               </div>
             </div>
 
-            {/* Linha 4: Moto + Oficina */}
-            <div className="grid grid-cols-2 gap-3">
-              <div className="grid gap-1.5">
-                <Label className="text-xs">Moto</Label>
-                <SearchableSelect
-                  options={motos.map((m) => ({ value: m.id, label: `${m.placa}${m.modelo ? ` · ${m.modelo}` : ""}` }))}
-                  value={form.motoId}
-                  onValueChange={(v) => setForm((f) => ({ ...f, motoId: v }))}
-                  placeholder="Selecione..."
-                  searchPlaceholder="Buscar placa..."
-                />
-              </div>
-              <div className="grid gap-1.5">
-                <div className="flex items-center justify-between">
-                  <Label className="text-xs">Oficina</Label>
-                  <button
-                    type="button"
-                    onClick={() => window.open("/manutencoes/config", "_blank")}
-                    className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
-                  >
-                    <SlidersHorizontal className="h-3 w-3" /> Gerenciar
-                  </button>
+            {/* Linha 4: Moto + Locatário + Oficina */}
+            {(() => {
+              const rentalNaData = form.motoId ? findRentalAtDate(rentals, form.motoId, form.data) : undefined;
+              const locatarioId = rentalNaData?.clienteId || "";
+              const handleLocatarioChange = (clienteId: string) => {
+                const rental = rentals.find((r) => r.clienteId === clienteId && r.status === "ativa");
+                if (rental) setForm((f) => ({ ...f, motoId: rental.motoId }));
+              };
+              return (
+                <div className="grid grid-cols-3 gap-3">
+                  <div className="grid gap-1.5">
+                    <Label className="text-xs">Moto</Label>
+                    <SearchableSelect
+                      options={motos.map((m) => ({ value: m.id, label: `${m.placa}${m.modelo ? ` · ${m.modelo}` : ""}` }))}
+                      value={form.motoId}
+                      onValueChange={(v) => setForm((f) => ({ ...f, motoId: v }))}
+                      placeholder="Selecione..."
+                      searchPlaceholder="Buscar placa..."
+                    />
+                  </div>
+                  <div className="grid gap-1.5">
+                    <Label className="text-xs">Locatário</Label>
+                    <SearchableSelect
+                      options={clients.map((c) => ({ value: c.id, label: c.nome }))}
+                      value={locatarioId}
+                      onValueChange={handleLocatarioChange}
+                      placeholder="—"
+                      searchPlaceholder="Buscar locatário..."
+                    />
+                  </div>
+                  <div className="grid gap-1.5">
+                    <div className="flex items-center justify-between">
+                      <Label className="text-xs">Oficina</Label>
+                      <button
+                        type="button"
+                        onClick={() => window.open("/manutencoes/config", "_blank")}
+                        className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+                      >
+                        <SlidersHorizontal className="h-3 w-3" /> Gerenciar
+                      </button>
+                    </div>
+                    <SearchableSelect
+                      options={maintConfig.oficinas.map((o) => ({ value: o.nome, label: o.nome }))}
+                      value={form.oficina}
+                      onValueChange={(v) => setForm((f) => ({ ...f, oficina: v }))}
+                      placeholder="Buscar oficina..."
+                      searchPlaceholder="Buscar oficina..."
+                      emptyText="Nenhuma oficina cadastrada. Use o link Gerenciar acima."
+                    />
+                  </div>
                 </div>
-                <SearchableSelect
-                  options={maintConfig.oficinas.map((o) => ({ value: o.nome, label: o.nome }))}
-                  value={form.oficina}
-                  onValueChange={(v) => setForm((f) => ({ ...f, oficina: v }))}
-                  placeholder="Buscar oficina..."
-                  searchPlaceholder="Buscar oficina..."
-                  emptyText="Nenhuma oficina cadastrada. Use o link Gerenciar acima."
-                />
-              </div>
-            </div>
+              );
+            })()}
 
             {/* Linha 5: Entrada | Retorno | KM */}
             <div className="grid grid-cols-3 gap-3">
