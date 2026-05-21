@@ -29,6 +29,7 @@ const LOCACOES_FIELDS: SystemField[] = [
   { key: "Placa",          label: "Placa",        required: true  },
   { key: "Nome",           label: "Locatário",    required: false },
   { key: "CPF",            label: "CPF",          required: false },
+  { key: "Telefone",       label: "Telefone",     required: false },
   { key: "Data Início",    label: "Data Início",  required: false },
   { key: "Data Fim",       label: "Data Fim",     required: false },
   { key: "Status",         label: "Status",       required: false },
