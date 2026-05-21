@@ -13,7 +13,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Table, TableHeader, TableBody, TableHead, TableRow, TableCell } from "@/components/ui/table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Plus, Search, FileText, Eye, Trash2, Pencil, XCircle, History } from "lucide-react";
+import { Plus, Search, FileText, Eye, Trash2, Pencil, XCircle, History, CheckCircle2 } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import RentalWizard from "@/components/locacoes/RentalWizard";
 import HistoricalRentalDialog from "@/components/locacoes/HistoricalRentalDialog";
@@ -79,6 +79,23 @@ export default function LocacoesPage() {
 
   const { canCreate, canEdit, canDelete } = usePermissions();
   const persist = (d: Rental[]) => { setRentals(d); saveRentals(d); };
+
+  // Seleção múltipla
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const toggleSelection = (id: string) =>
+    setSelectedIds(prev => { const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next; });
+
+  // Finalizar individual (simples)
+  const [finalizarTarget, setFinalizarTarget] = useState<Rental | null>(null);
+  const [finalizarData, setFinalizarData] = useState(new Date().toISOString().split("T")[0]);
+
+  // Excluir individual (com modal)
+  const [deleteTarget, setDeleteTarget] = useState<Rental | null>(null);
+
+  // Ações em massa
+  const [bulkFinalizarOpen, setBulkFinalizarOpen] = useState(false);
+  const [bulkFinalizarData, setBulkFinalizarData] = useState(new Date().toISOString().split("T")[0]);
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
 
   const getMotoPlaca = (id: string) => motos.find(m => m.id === id)?.placa || "—";
   const getMotoModelo = (id: string) => motos.find(m => m.id === id)?.modelo || "—";
@@ -369,10 +386,61 @@ export default function LocacoesPage() {
     setEncerrarSelectedIds(new Set());
   };
 
-  const deleteRental = (r: Rental) => {
-    if (confirm("Tem certeza que deseja excluir esta locação?")) {
-      persist(rentals.filter(x => x.id !== r.id));
+  const handleFinalizar = (rental: Rental, date: string) => {
+    persist(rentals.map(r => r.id === rental.id ? { ...r, status: "finalizada" as const, dataFim: date } : r));
+    if (rental.motoId) {
+      const allMotos = loadMotos();
+      saveMotos(allMotos.map(m => m.id === rental.motoId ? { ...m, status: "disponivel" as const } : m));
     }
+    setSelectedIds(prev => { const next = new Set(prev); next.delete(rental.id); return next; });
+    setFinalizarTarget(null);
+    toast.success("Locação finalizada.");
+  };
+
+  const handleDelete = (rental: Rental) => {
+    persist(rentals.filter(r => r.id !== rental.id));
+    const allEntries = loadFinancial();
+    const remaining = allEntries.filter(e => e.rentalId !== rental.id);
+    if (remaining.length !== allEntries.length) saveFinancial(remaining);
+    if (rental.status === "ativa" && rental.motoId) {
+      const allMotos = loadMotos();
+      saveMotos(allMotos.map(m => m.id === rental.motoId ? { ...m, status: "disponivel" as const } : m));
+    }
+    setSelectedIds(prev => { const next = new Set(prev); next.delete(rental.id); return next; });
+    setDeleteTarget(null);
+    toast.success("Locação excluída.");
+  };
+
+  const handleBulkFinalizar = () => {
+    const toFinalize = rentals.filter(r => selectedIds.has(r.id) && r.status === "ativa");
+    if (!toFinalize.length) { toast.error("Nenhuma locação ativa selecionada."); return; }
+    const motoIds = toFinalize.map(r => r.motoId).filter(Boolean);
+    persist(rentals.map(r => selectedIds.has(r.id) && r.status === "ativa"
+      ? { ...r, status: "finalizada" as const, dataFim: bulkFinalizarData } : r));
+    if (motoIds.length > 0) {
+      const allMotos = loadMotos();
+      saveMotos(allMotos.map(m => motoIds.includes(m.id) ? { ...m, status: "disponivel" as const } : m));
+    }
+    setSelectedIds(new Set());
+    setBulkFinalizarOpen(false);
+    toast.success(`${toFinalize.length} locação(ões) finalizada(s).`);
+  };
+
+  const handleBulkDelete = () => {
+    const toDelete = rentals.filter(r => selectedIds.has(r.id));
+    const activeMotoIds = toDelete.filter(r => r.status === "ativa").map(r => r.motoId).filter(Boolean);
+    const deleteIds = new Set(toDelete.map(r => r.id));
+    persist(rentals.filter(r => !deleteIds.has(r.id)));
+    const allEntries = loadFinancial();
+    const remaining = allEntries.filter(e => !deleteIds.has(e.rentalId || ""));
+    if (remaining.length !== allEntries.length) saveFinancial(remaining);
+    if (activeMotoIds.length > 0) {
+      const allMotos = loadMotos();
+      saveMotos(allMotos.map(m => activeMotoIds.includes(m.id) ? { ...m, status: "disponivel" as const } : m));
+    }
+    setSelectedIds(new Set());
+    setBulkDeleteOpen(false);
+    toast.success(`${toDelete.length} locação(ões) excluída(s).`);
   };
 
   const openEdit = (r: Rental) => {
@@ -380,84 +448,114 @@ export default function LocacoesPage() {
     setDialogOpen(true);
   };
 
-  const RentalTable = ({ data, showActions }: { data: Rental[]; showActions: "ativa" | "finalizada" }) => (
-    <div className="rounded-md border">
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead className="w-[90px]">Nº</TableHead>
-            <TableHead className="w-[90px]">Placa</TableHead>
-            <TableHead>Modelo</TableHead>
-            <TableHead>Cliente</TableHead>
-            <TableHead>Início</TableHead>
-            <TableHead>Fim Contrato</TableHead>
-            <TableHead className="text-right">Valor</TableHead>
-            <TableHead>Plano</TableHead>
-            <TableHead>Status</TableHead>
-            <TableHead className="text-right">Ações</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {data.length === 0 ? (
+  const RentalTable = ({ data, showActions }: { data: Rental[]; showActions: "ativa" | "finalizada" }) => {
+    const allSelected = data.length > 0 && data.every(r => selectedIds.has(r.id));
+    const someSelected = data.some(r => selectedIds.has(r.id));
+    const toggleAll = () => {
+      if (allSelected) {
+        setSelectedIds(prev => { const next = new Set(prev); data.forEach(r => next.delete(r.id)); return next; });
+      } else {
+        setSelectedIds(prev => { const next = new Set(prev); data.forEach(r => next.add(r.id)); return next; });
+      }
+    };
+    return (
+      <div className="rounded-md border">
+        <Table>
+          <TableHeader>
             <TableRow>
-              <TableCell colSpan={10} className="text-center py-8 text-muted-foreground">
-                <FileText className="h-8 w-8 mx-auto mb-2 opacity-50" />
-                Nenhuma locação encontrada
-              </TableCell>
+              <TableHead className="w-10">
+                <Checkbox
+                  checked={allSelected ? true : someSelected ? "indeterminate" : false}
+                  onCheckedChange={toggleAll}
+                />
+              </TableHead>
+              <TableHead className="w-[90px]">Nº</TableHead>
+              <TableHead className="w-[90px]">Placa</TableHead>
+              <TableHead>Modelo</TableHead>
+              <TableHead>Cliente</TableHead>
+              <TableHead>Início</TableHead>
+              <TableHead>Fim Contrato</TableHead>
+              <TableHead className="text-right">Valor</TableHead>
+              <TableHead>Plano</TableHead>
+              <TableHead>Status</TableHead>
+              <TableHead className="text-right">Ações</TableHead>
             </TableRow>
-          ) : data.map(r => (
-            <TableRow key={r.id} className="cursor-pointer" onClick={() => setViewRental(r)}>
-              <TableCell className="font-mono text-xs text-muted-foreground">{getNumero(r)}</TableCell>
-              <TableCell className="font-mono font-bold text-xs">{getMotoPlaca(r.motoId)}</TableCell>
-              <TableCell className="text-xs">{getMotoModelo(r.motoId)}</TableCell>
-              <TableCell className="text-xs">{getRentalClientLabel(r)}</TableCell>
-              <TableCell className="text-xs">{new Date(r.dataInicio + "T00:00:00").toLocaleDateString("pt-BR")}</TableCell>
-              <TableCell className="text-xs">{(() => { const d = r.status === "ativa" ? r.dataFimContrato : r.dataFim; return d ? new Date(d + "T00:00:00").toLocaleDateString("pt-BR") : "—"; })()}</TableCell>
-              <TableCell className="text-xs text-right font-medium">R$ {r.valorDiario.toFixed(2)}</TableCell>
-              <TableCell className="text-xs">{planoLabel[r.plano] || r.plano || "—"}</TableCell>
-              <TableCell>
-                <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium ${statusColor[r.status]}`}>
-                  {statusLabel[r.status]}
-                </span>
-              </TableCell>
-              <TableCell className="text-right" onClick={e => e.stopPropagation()}>
-                <div className="flex items-center justify-end gap-1">
-                  <Button variant="ghost" size="sm" className="h-7 w-7 p-0" title="Ver detalhes" onClick={() => setViewRental(r)}>
-                    <Eye className="h-3.5 w-3.5" />
-                  </Button>
-                  {showActions === "ativa" && (
-                    <>
-                      {canEdit && (
-                        <Button variant="ghost" size="sm" className="h-7 w-7 p-0" title="Editar locação" onClick={() => openEdit(r)}>
-                          <Pencil className="h-3.5 w-3.5" />
-                        </Button>
-                      )}
-                      {canEdit && (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-7 w-7 p-0 text-destructive hover:text-destructive"
-                          title="Encerrar locação"
-                          onClick={() => openEncerrar(r)}
-                        >
-                          <XCircle className="h-3.5 w-3.5" />
-                        </Button>
-                      )}
-                    </>
-                  )}
-                  {showActions === "finalizada" && canDelete && (
-                    <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-destructive hover:text-destructive" onClick={() => deleteRental(r)}>
-                      <Trash2 className="h-3.5 w-3.5" />
+          </TableHeader>
+          <TableBody>
+            {data.length === 0 ? (
+              <TableRow>
+                <TableCell colSpan={11} className="text-center py-8 text-muted-foreground">
+                  <FileText className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                  Nenhuma locação encontrada
+                </TableCell>
+              </TableRow>
+            ) : data.map(r => (
+              <TableRow key={r.id} className="cursor-pointer" onClick={() => setViewRental(r)}>
+                <TableCell onClick={e => e.stopPropagation()}>
+                  <Checkbox checked={selectedIds.has(r.id)} onCheckedChange={() => toggleSelection(r.id)} />
+                </TableCell>
+                <TableCell className="font-mono text-xs text-muted-foreground">{getNumero(r)}</TableCell>
+                <TableCell className="font-mono font-bold text-xs">{getMotoPlaca(r.motoId)}</TableCell>
+                <TableCell className="text-xs">{getMotoModelo(r.motoId)}</TableCell>
+                <TableCell className="text-xs">{getRentalClientLabel(r)}</TableCell>
+                <TableCell className="text-xs">{new Date(r.dataInicio + "T00:00:00").toLocaleDateString("pt-BR")}</TableCell>
+                <TableCell className="text-xs">{(() => { const d = r.status === "ativa" ? r.dataFimContrato : r.dataFim; return d ? new Date(d + "T00:00:00").toLocaleDateString("pt-BR") : "—"; })()}</TableCell>
+                <TableCell className="text-xs text-right font-medium">R$ {r.valorDiario.toFixed(2)}</TableCell>
+                <TableCell className="text-xs">{planoLabel[r.plano] || r.plano || "—"}</TableCell>
+                <TableCell>
+                  <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium ${statusColor[r.status]}`}>
+                    {statusLabel[r.status]}
+                  </span>
+                </TableCell>
+                <TableCell className="text-right" onClick={e => e.stopPropagation()}>
+                  <div className="flex items-center justify-end gap-1">
+                    <Button variant="ghost" size="sm" className="h-7 w-7 p-0" title="Ver detalhes" onClick={() => setViewRental(r)}>
+                      <Eye className="h-3.5 w-3.5" />
                     </Button>
-                  )}
-                </div>
-              </TableCell>
-            </TableRow>
-          ))}
-        </TableBody>
-      </Table>
-    </div>
-  );
+                    {showActions === "ativa" && canEdit && (
+                      <Button variant="ghost" size="sm" className="h-7 w-7 p-0" title="Editar locação" onClick={() => openEdit(r)}>
+                        <Pencil className="h-3.5 w-3.5" />
+                      </Button>
+                    )}
+                    {showActions === "ativa" && canEdit && (
+                      <Button
+                        variant="ghost" size="sm"
+                        className="h-7 w-7 p-0 text-success hover:text-success"
+                        title="Finalizar locação"
+                        onClick={() => { setFinalizarTarget(r); setFinalizarData(new Date().toISOString().split("T")[0]); }}
+                      >
+                        <CheckCircle2 className="h-3.5 w-3.5" />
+                      </Button>
+                    )}
+                    {showActions === "ativa" && canEdit && (
+                      <Button
+                        variant="ghost" size="sm"
+                        className="h-7 w-7 p-0 text-destructive hover:text-destructive"
+                        title="Encerrar locação (completo)"
+                        onClick={() => openEncerrar(r)}
+                      >
+                        <XCircle className="h-3.5 w-3.5" />
+                      </Button>
+                    )}
+                    {canDelete && (
+                      <Button
+                        variant="ghost" size="sm"
+                        className="h-7 w-7 p-0 text-destructive hover:text-destructive"
+                        title="Excluir locação"
+                        onClick={() => setDeleteTarget(r)}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    )}
+                  </div>
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </div>
+    );
+  };
 
   return (
     <div className="p-6 space-y-4">
@@ -506,6 +604,26 @@ export default function LocacoesPage() {
         <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
         <Input placeholder="Buscar nº, placa ou cliente..." value={search} onChange={e => setSearch(e.target.value)} className="pl-9" />
       </div>
+
+      {selectedIds.size > 0 && (
+        <div className="flex items-center gap-3 rounded-md border bg-muted/50 px-4 py-2.5">
+          <span className="text-sm font-medium">{selectedIds.size} locação(ões) selecionada(s)</span>
+          <div className="flex gap-2 ml-auto">
+            <Button
+              size="sm" variant="outline" className="gap-1.5"
+              onClick={() => { setBulkFinalizarData(new Date().toISOString().split("T")[0]); setBulkFinalizarOpen(true); }}
+            >
+              <CheckCircle2 className="h-3.5 w-3.5" /> Finalizar selecionadas
+            </Button>
+            <Button
+              size="sm" variant="destructive" className="gap-1.5"
+              onClick={() => setBulkDeleteOpen(true)}
+            >
+              <Trash2 className="h-3.5 w-3.5" /> Excluir selecionadas
+            </Button>
+          </div>
+        </div>
+      )}
 
       <Tabs defaultValue="ativas">
         <TabsList>
@@ -787,6 +905,112 @@ export default function LocacoesPage() {
               )}
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Finalizar Locação (simples) */}
+      <Dialog open={!!finalizarTarget} onOpenChange={o => { if (!o) setFinalizarTarget(null); }}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <CheckCircle2 className="h-5 w-5 text-success" />
+              Finalizar Locação {finalizarTarget ? getNumero(finalizarTarget) : ""}
+            </DialogTitle>
+          </DialogHeader>
+          {finalizarTarget && (
+            <div className="space-y-4">
+              <div className="rounded-md bg-muted/50 p-3 text-sm space-y-1">
+                <p><span className="text-muted-foreground">Placa:</span> <span className="font-mono font-bold">{getMotoPlaca(finalizarTarget.motoId)}</span></p>
+                <p><span className="text-muted-foreground">Cliente:</span> {getRentalClientLabel(finalizarTarget)}</p>
+              </div>
+              <div className="space-y-2">
+                <Label>Data de encerramento</Label>
+                <Input type="date" value={finalizarData} onChange={e => setFinalizarData(e.target.value)} />
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setFinalizarTarget(null)}>Cancelar</Button>
+            <Button
+              className="gap-2"
+              onClick={() => finalizarTarget && handleFinalizar(finalizarTarget, finalizarData)}
+            >
+              <CheckCircle2 className="h-4 w-4" /> Confirmar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Excluir Locação (individual) */}
+      <Dialog open={!!deleteTarget} onOpenChange={o => { if (!o) setDeleteTarget(null); }}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="text-destructive flex items-center gap-2">
+              <Trash2 className="h-5 w-5" />
+              Excluir Locação {deleteTarget ? getNumero(deleteTarget) : ""}
+            </DialogTitle>
+          </DialogHeader>
+          {deleteTarget && (
+            <div className="space-y-3">
+              <div className="rounded-md bg-muted/50 p-3 text-sm space-y-1">
+                <p><span className="text-muted-foreground">Placa:</span> <span className="font-mono font-bold">{getMotoPlaca(deleteTarget.motoId)}</span></p>
+                <p><span className="text-muted-foreground">Cliente:</span> {getRentalClientLabel(deleteTarget)}</p>
+              </div>
+              <p className="text-sm text-destructive font-medium">
+                Esta ação é irreversível. O registro e todos os lançamentos financeiros associados serão removidos permanentemente.
+              </p>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteTarget(null)}>Cancelar</Button>
+            <Button variant="destructive" className="gap-2" onClick={() => deleteTarget && handleDelete(deleteTarget)}>
+              <Trash2 className="h-4 w-4" /> Excluir permanentemente
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Finalizar selecionadas (em massa) */}
+      <Dialog open={bulkFinalizarOpen} onOpenChange={setBulkFinalizarOpen}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <CheckCircle2 className="h-5 w-5 text-success" />
+              Finalizar {selectedIds.size} locação(ões)
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label>Data de encerramento</Label>
+            <Input type="date" value={bulkFinalizarData} onChange={e => setBulkFinalizarData(e.target.value)} />
+            <p className="text-xs text-muted-foreground">Somente locações ativas serão finalizadas.</p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setBulkFinalizarOpen(false)}>Cancelar</Button>
+            <Button className="gap-2" onClick={handleBulkFinalizar}>
+              <CheckCircle2 className="h-4 w-4" /> Confirmar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Excluir selecionadas (em massa) */}
+      <Dialog open={bulkDeleteOpen} onOpenChange={setBulkDeleteOpen}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="text-destructive flex items-center gap-2">
+              <Trash2 className="h-5 w-5" />
+              Excluir {selectedIds.size} locação(ões)
+            </DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-destructive font-medium">
+            Esta ação é irreversível. Os {selectedIds.size} registro(s) e todos os lançamentos financeiros associados serão removidos permanentemente.
+          </p>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setBulkDeleteOpen(false)}>Cancelar</Button>
+            <Button variant="destructive" className="gap-2" onClick={handleBulkDelete}>
+              <Trash2 className="h-4 w-4" /> Excluir {selectedIds.size} registro(s)
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 
