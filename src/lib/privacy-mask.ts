@@ -90,16 +90,19 @@ export function maskEmail(seed: string): string {
   return `cliente${n}@exemplo.com`;
 }
 
+// Goiás plates commonly start with P, S, R, T or N
+const GO_INITIALS = ["P", "S", "R", "T", "N"];
+const LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+
 export function maskPlaca(seed: string): string {
   if (!seed) return seed;
-  const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
   const h = hash("pl:" + seed);
-  const a = letters[h % 26];
-  const b = letters[Math.floor(h / 26) % 26];
-  const c = letters[Math.floor(h / (26 * 26)) % 26];
+  const a = GO_INITIALS[h % GO_INITIALS.length];
+  const b = LETTERS[Math.floor(h / GO_INITIALS.length) % 26];
+  const c = LETTERS[Math.floor(h / (GO_INITIALS.length * 26)) % 26];
   const d = digits("pl2:" + seed, 4);
-  const letterMid = letters[hash("plm:" + seed) % 26];
-  return `${a}${b}${c}${d[0]}${letterMid}${d.slice(2,4)}`;
+  const letterMid = LETTERS[hash("plm:" + seed) % 26];
+  return `${a}${b}${c}${d[0]}${letterMid}${d.slice(2, 4)}`;
 }
 
 export function maskChassi(seed: string): string {
