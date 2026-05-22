@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { BankIcon } from "@/components/BankLogos";
 import { InfoTooltip } from "@/components/InfoTooltip";
-import { Check, CreditCard, Info, MoreVertical, Pencil, Plus, Search, Trash2, RefreshCw } from "lucide-react";
+import { Archive, ArchiveRestore, Check, CreditCard, Info, MoreVertical, Pencil, Plus, Search, RefreshCw } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { toast } from "sonner";
@@ -25,7 +25,7 @@ const bankOptions = [
 const bandeiraOptions = ["Visa", "Mastercard", "Elo", "American Express", "Hipercard", "Diners", "Outro"];
 
 export default function ContasPage() {
-  const { data: accounts, save: saveBankAccount, remove: removeBankAccount } = useBankAccounts();
+  const { data: accounts, save: saveBankAccount, remove: removeBankAccount, restore: restoreBankAccount, archivedAccounts } = useBankAccounts();
   const { save: saveFinancialEntry } = useFinancialEntries();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editAccount, setEditAccount] = useState<BankAccount | null>(null);
@@ -177,7 +177,12 @@ export default function ContasPage() {
 
   const handleDelete = async (id: string) => {
     await removeBankAccount(id);
-    toast.success("Conta removida");
+    toast.success("Conta arquivada");
+  };
+
+  const handleRestore = async (id: string) => {
+    await restoreBankAccount(id);
+    toast.success("Conta restaurada");
   };
 
   const handleAdjust = async () => {
@@ -331,7 +336,7 @@ export default function ContasPage() {
                           onClick={() => handleDelete(account.id)}
                           className="text-destructive"
                         >
-                          <Trash2 className="mr-2 h-3.5 w-3.5" /> Excluir
+                          <Archive className="mr-2 h-3.5 w-3.5" /> Arquivar
                         </DropdownMenuItem>
                       )}
                     </DropdownMenuContent>
@@ -411,7 +416,7 @@ export default function ContasPage() {
                         )}
                         {canDelete && (
                           <DropdownMenuItem onClick={() => handleDelete(account.id)} className="text-destructive">
-                            <Trash2 className="mr-2 h-3.5 w-3.5" /> Excluir
+                            <Archive className="mr-2 h-3.5 w-3.5" /> Arquivar
                           </DropdownMenuItem>
                         )}
                       </DropdownMenuContent>
@@ -460,6 +465,42 @@ export default function ContasPage() {
           )}
         </div>
       </section>
+
+      {/* Contas arquivadas */}
+      {archivedAccounts.length > 0 && (
+        <section className="space-y-3">
+          <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-2">
+            <Archive className="h-4 w-4" /> Arquivadas ({archivedAccounts.length})
+          </h2>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {archivedAccounts.map((account) => (
+              <Card key={account.id} className="relative border-dashed opacity-70">
+                <CardContent className="p-4">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <BankIcon conta={account.banco} size={28} />
+                      <div>
+                        <p className="text-sm font-medium text-foreground">{account.nome}</p>
+                        <p className="text-xs text-muted-foreground">{account.tipo === "cartao" ? "Cartão" : "Conta bancária"} · {account.banco}</p>
+                      </div>
+                    </div>
+                    {canDelete && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="gap-1.5 text-xs text-primary hover:text-primary"
+                        onClick={() => handleRestore(account.id)}
+                      >
+                        <ArchiveRestore className="h-3.5 w-3.5" /> Restaurar
+                      </Button>
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        </section>
+      )}
 
       {/* Dialog Nova/Editar conta */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>

@@ -538,6 +538,11 @@ function bankAccountToDb(a: BankAccount): any {
 }
 
 export function useBankAccounts() {
+  const qc = useQueryClient();
+  const db = supabase as any;
+  const activeKey = ["bank_accounts", companyId()];
+  const archiveKey = ["bank_accounts_archived", companyId()];
+
   const base = useTable<any, BankAccount>(
     "bank_accounts",
     "bank_accounts",
@@ -545,6 +550,20 @@ export function useBankAccounts() {
     bankAccountToDb,
     (query) => query.is("deleted_at", null),
   );
+
+  const archivedQuery = useQuery({
+    queryKey: archiveKey,
+    queryFn: async () => {
+      const { data, error } = await db
+        .from("bank_accounts")
+        .select("*")
+        .eq("company_id", companyId())
+        .not("deleted_at", "is", null)
+        .order("deleted_at", { ascending: false });
+      if (error) throw error;
+      return (data || []).map((r: any) => dbToBankAccount(r));
+    },
+  });
 
   // Bank accounts são lidas pelo Financeiro via dataCache global (DataContext).
   // Como ContasPage escreve por este hook (caminho paralelo), precisamos
@@ -578,10 +597,35 @@ export function useBankAccounts() {
     syncCacheFromList(next);
   };
 
+  // Soft delete: marca deleted_at em vez de remover fisicamente
   const remove = async (id: string) => {
-    await base.remove(id);
+    const { error } = await db
+      .from("bank_accounts")
+      .update({ deleted_at: new Date().toISOString() })
+      .eq("id", id)
+      .eq("company_id", companyId());
+    if (error) throw error;
+    qc.invalidateQueries({ queryKey: activeKey });
+    qc.invalidateQueries({ queryKey: archiveKey });
     const current = (getDataCache().bankAccounts || []) as BankAccount[];
     syncCacheFromList(current.filter((a) => a.id !== id));
+  };
+
+  const restore = async (id: string) => {
+    const { error } = await db
+      .from("bank_accounts")
+      .update({ deleted_at: null })
+      .eq("id", id)
+      .eq("company_id", companyId());
+    if (error) throw error;
+    qc.invalidateQueries({ queryKey: activeKey });
+    qc.invalidateQueries({ queryKey: archiveKey });
+    const archived = archivedQuery.data || [];
+    const account = archived.find((a) => a.id === id);
+    if (account) {
+      const current = (getDataCache().bankAccounts || []) as BankAccount[];
+      syncCacheFromList([...current, account]);
+    }
   };
 
   const bulkSave = async (items: (BankAccount & { id: string })[]) => {
@@ -592,7 +636,7 @@ export function useBankAccounts() {
     syncCacheFromList(Array.from(map.values()));
   };
 
-  return { ...base, save, remove, bulkSave };
+  return { ...base, save, remove, restore, bulkSave, archivedAccounts: archivedQuery.data || [] };
 }
 
 // ─── Bulk save (for full array replacement like the old save* pattern) ───
