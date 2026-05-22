@@ -28,15 +28,8 @@ const items: MenuItem[] = [
   { title: "Troca de Óleo", url: "/troca-oleo", icon: Droplets },
   { title: "Vistoria", url: "/vistoria", icon: Search },
   { title: "Locações", url: "/locacoes", icon: FileText },
-  { title: "Clientes", url: "/clientes", icon: Users },
   { title: "Finanças", url: "/financeiro", icon: DollarSign },
-  {
-    title: "Motos", url: "/motos", icon: Bike,
-    children: [
-      { title: "Frota", url: "/motos?tab=frota" },
-      { title: "Controle Patrimonial", url: "/motos?tab=patrimonio" },
-    ],
-  },
+  { title: "Rastreamento", url: "/rastreamento", icon: MapPin },
   {
     title: "Manutenções", url: "/manutencoes", icon: Wrench,
     children: [
@@ -44,7 +37,14 @@ const items: MenuItem[] = [
       { title: "Gerenciar", url: "/manutencoes/config" },
     ],
   },
-  { title: "Rastreamento", url: "/rastreamento", icon: MapPin },
+  { title: "Clientes", url: "/clientes", icon: Users },
+  {
+    title: "Motos", url: "/motos", icon: Bike,
+    children: [
+      { title: "Frota", url: "/motos?tab=frota" },
+      { title: "Controle Patrimonial", url: "/motos?tab=patrimonio" },
+    ],
+  },
 ];
 
 // Apenas os mais relevantes em breve — demais ficam em "Mais"
