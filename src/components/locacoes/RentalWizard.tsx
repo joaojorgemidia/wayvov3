@@ -11,6 +11,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Switch } from "@/components/ui/switch";
 import { Progress } from "@/components/ui/progress";
 import { InfoTooltip } from "@/components/InfoTooltip";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Plus, Upload, FileText, Loader2, Download, Trash2 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
@@ -18,6 +19,8 @@ import { maskCpf, maskPhone, maskCep, isValidCpf, isValidEmail, isValidPhone, is
 import { addMonths, format } from "date-fns";
 import { getCnhStatus } from "@/lib/cnh-status";
 import { AlertTriangle } from "lucide-react";
+import { useAuth } from "@/contexts/AuthContext";
+import { useCompany } from "@/contexts/CompanyContext";
 
 
 const TEMPO_MINIMO_OPTIONS = [3, 6, 12, 24, 26, 28, 30, 32, 34, 36];
@@ -75,12 +78,15 @@ export default function RentalWizard({ rental, onSave, onCancel, motos, activeRe
   const [form, setForm] = useState<Rental>({ ...rental });
   const isEdit = !!rental.createdAt;
   const { clients: existingClients } = useDataCacheSnapshot();
+  const { user } = useAuth();
+  const { activeCompany } = useCompany();
   const linkedClient = rental.clienteId ? existingClients.find(c => c.id === rental.clienteId) : undefined;
   const [clientForm, setClientForm] = useState<Client>(() => linkedClient ? { ...linkedClient } : emptyClient());
   const [clientMode, setClientMode] = useState<"new" | "existing">(linkedClient ? "existing" : "new");
   const [step, setStep] = useState(1);
   const [extracting, setExtracting] = useState(false);
   const [extractingComprovante, setExtractingComprovante] = useState(false);
+  const [bypassDialog, setBypassDialog] = useState<{ open: boolean; error: string; pendingAction: "next" | "save" | null }>({ open: false, error: "", pendingAction: null });
   const [cepLoading, setCepLoading] = useState(false);
   const [isCnhDragActive, setIsCnhDragActive] = useState(false);
   const [isComprovanteDragActive, setIsComprovanteDragActive] = useState(false);
@@ -273,9 +279,33 @@ export default function RentalWizard({ rental, onSave, onCancel, motos, activeRe
     return null;
   };
 
+  const logBypass = async (error: string) => {
+    try {
+      await supabase.from("audit_log").insert({
+        table_name: "rentals",
+        record_id: form.id,
+        action: "update",
+        payload: {
+          event: "validation_bypassed",
+          validation_error: error,
+          step,
+          bypassed_by: user?.email ?? user?.id ?? "desconhecido",
+          bypassed_at: new Date().toISOString(),
+        },
+        company_id: activeCompany.id,
+      });
+    } catch (e) {
+      console.error("Falha ao registrar bypass no audit_log:", e);
+    }
+  };
+
   const handleNext = () => {
     const err = validateStep(step);
-    if (err) { toast.error(err); return; }
+    if (err) {
+      if (isEdit) { setBypassDialog({ open: true, error: err, pendingAction: "next" }); return; }
+      toast.error(err);
+      return;
+    }
     setStep(s => s + 1);
   };
 
@@ -283,23 +313,35 @@ export default function RentalWizard({ rental, onSave, onCancel, motos, activeRe
     setStep(s => s - 1);
   };
 
-  const handleSave = () => {
-    const err = validateStep(step);
-    if (err) { toast.error(err); return; }
+  const handleBypassConfirm = async () => {
+    await logBypass(bypassDialog.error);
+    setBypassDialog({ open: false, error: "", pendingAction: null });
+    if (bypassDialog.pendingAction === "next") {
+      setStep(s => s + 1);
+    } else {
+      doSave();
+    }
+  };
 
+  const doSave = () => {
     const finalClient = clientForm;
-    // Save/update client to store
     const allClients = loadClients();
     const exists = allClients.find(c => c.id === clientForm.id);
     if (exists) saveClients(allClients.map(c => c.id === clientForm.id ? clientForm : c));
     else saveClients([...allClients, clientForm]);
 
-    const finalRental: Rental = {
-      ...form,
-      clienteId: finalClient.id,
-    };
-
+    const finalRental: Rental = { ...form, clienteId: finalClient.id };
     onSave(finalRental, finalClient);
+  };
+
+  const handleSave = () => {
+    const err = validateStep(step);
+    if (err) {
+      if (isEdit) { setBypassDialog({ open: true, error: err, pendingAction: "save" }); return; }
+      toast.error(err);
+      return;
+    }
+    doSave();
   };
 
   const selectExistingClient = (clientId: string) => {
@@ -739,6 +781,32 @@ export default function RentalWizard({ rental, onSave, onCancel, motos, activeRe
           )}
         </div>
       </div>
+
+      <AlertDialog open={bypassDialog.open} onOpenChange={open => !open && setBypassDialog(prev => ({ ...prev, open: false }))}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2 text-amber-600">
+              <AlertTriangle className="h-5 w-5" />
+              Campo obrigatório não preenchido
+            </AlertDialogTitle>
+            <AlertDialogDescription className="space-y-2">
+              <span className="block font-medium text-foreground">{bypassDialog.error}</span>
+              <span className="block text-sm text-muted-foreground">
+                Você pode ignorar esta validação por agora, mas a ação ficará registrada no log do sistema com seu usuário e a data/hora.
+              </span>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Corrigir</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-amber-600 hover:bg-amber-700 text-white"
+              onClick={handleBypassConfirm}
+            >
+              Ignorar por agora
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
