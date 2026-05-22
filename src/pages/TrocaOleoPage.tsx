@@ -512,11 +512,20 @@ export default function TrocaOleoPage() {
     const telefone = motoClientMap.get(moto.id)?.telefone ?? "";
     const dataFmt = formatDate(data);
 
+    // Excesso: quanto passou do limite (moto ainda tem histórico antigo aqui)
+    const ultimaTroca = lastOilChange(moto);
+    const limiteKm = ultimaTroca != null ? ultimaTroca.km + cfg.oilKm : null;
+    const excesoKm = limiteKm != null && km > limiteKm ? km - limiteKm : 0;
+
     const linhas: string[] = [];
     linhas.push(`Olá, ${cliente || "[NOME]"}! 👋`);
     linhas.push("");
     linhas.push(`Sua moto *${moto.placa}*${moto.modelo ? ` (${moto.modelo})` : ""} está com o óleo novo. ✅`);
     linhas.push("");
+    if (excesoKm > 0) {
+      linhas.push(`⚠️ _Troca realizada com *${excesoKm.toLocaleString("pt-BR")} km* além do limite recomendado_`);
+      linhas.push("");
+    }
     if (cfg.filterKm && trocouFiltro) {
       const proxFiltroKm = km + cfg.filterKm;
       linhas.push(`_(realizada em ${km.toLocaleString("pt-BR")} Km · ${dataFmt})_`);
@@ -537,6 +546,9 @@ export default function TrocaOleoPage() {
     const highlights: { label: string; value: string; tone: "primary" | "warning" | "danger" }[] = [
       { label: "Próxima troca de óleo", value: `${proxOleoKm.toLocaleString("pt-BR")} km`, tone: "primary" },
     ];
+    if (excesoKm > 0) {
+      highlights.push({ label: "Passou do limite", value: `+${excesoKm.toLocaleString("pt-BR")} km`, tone: "danger" });
+    }
     if (cfg.filterKm && trocouFiltro) {
       highlights.push({
         label: "Próxima troca de filtro",

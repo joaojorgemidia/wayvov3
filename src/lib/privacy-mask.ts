@@ -37,9 +37,9 @@ function digits(seed: string, len: number): string {
 }
 
 const FIRST_NAMES = [
-  "Lucas","Maria","João","Ana","Pedro","Camila","Rafael","Juliana","Bruno","Larissa",
-  "Felipe","Carolina","Gabriel","Beatriz","Thiago","Mariana","Diego","Fernanda","Gustavo","Natália",
-  "Marcelo","Patricia","Rodrigo","Aline","Eduardo","Renata","Vinícius","Tatiana","Daniel","Vanessa",
+  "Lucas","João","Pedro","Rafael","Bruno","Felipe","Gabriel","Thiago","Diego","Gustavo",
+  "Marcelo","Rodrigo","Eduardo","Vinícius","Daniel","Carlos","Matheus","Leonardo","André","Renato",
+  "Alexandre","Leandro","Fábio","Henrique","Ricardo","Paulo","Roberto","Sérgio","Márcio","Tiago",
 ];
 const LAST_NAMES = [
   "Silva","Santos","Oliveira","Souza","Pereira","Lima","Costa","Almeida","Rodrigues","Carvalho",
