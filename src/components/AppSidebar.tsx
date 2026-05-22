@@ -23,7 +23,10 @@ interface MenuItem {
 
 // Ordem por prioridade de uso no dia a dia
 const items: MenuItem[] = [
-  { title: "Dashboard", url: "/dashboard", icon: LayoutDashboard },
+  { title: "Visão Geral", url: "/dashboard", icon: LayoutDashboard },
+  { title: "Pagamentos", url: "/cobrancas/semana", icon: BellRing },
+  { title: "Troca de Óleo", url: "/troca-oleo", icon: Droplets },
+  { title: "Vistoria", url: "/vistoria", icon: Search },
   { title: "Locações", url: "/locacoes", icon: FileText },
   { title: "Clientes", url: "/clientes", icon: Users },
   { title: "Finanças", url: "/financeiro", icon: DollarSign },
@@ -35,21 +38,12 @@ const items: MenuItem[] = [
     ],
   },
   {
-    title: "Lista de tarefas", url: "/cobrancas", icon: BellRing,
-    children: [
-      { title: "Todas as tarefas", url: "/cobrancas" },
-      { title: "Cobranças da semana", url: "/cobrancas/semana" },
-    ],
-  },
-  {
     title: "Manutenções", url: "/manutencoes", icon: Wrench,
     children: [
       { title: "Ordens de Serviço", url: "/manutencoes" },
       { title: "Gerenciar", url: "/manutencoes/config" },
     ],
   },
-  { title: "Vistoria", url: "/vistoria", icon: Search },
-  { title: "Troca de Óleo", url: "/troca-oleo", icon: Droplets },
   { title: "Rastreamento", url: "/rastreamento", icon: MapPin },
 ];
 
