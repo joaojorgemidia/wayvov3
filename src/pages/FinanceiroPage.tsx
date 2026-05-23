@@ -1658,13 +1658,22 @@ export default function FinanceiroPage() {
     if (isSaving) return;
     const groupId = editScopeTarget.recurringGroupId;
     const seriesId = editScopeTarget.serieId || editScopeTarget.fixedOriginId;
-    // Propaga apenas campos não-data: datas são por ocorrência.
-    // Propagar dayDelta junto faz o auto-materialize gerar duplicatas nas datas
-    // originais (a base não muda, logo o efeito recria entradas nos slots antigos).
+    // Campos não-data propagados para toda a série.
+    // Para entradas auto-materializadas (fixedOriginId presente) as datas são mantidas
+    // por ocorrência para evitar duplicatas. Para entradas pré-geradas (wizard de locação,
+    // sem fixedOriginId) o delta de dias é aplicado para manter o dia da semana correto.
     const scopeFields = { valor: editScopeTarget.valor, categoria: editScopeTarget.categoria, subcategoria: editScopeTarget.subcategoria, conta: editScopeTarget.conta, natureza: editScopeTarget.natureza, placa: editScopeTarget.placa, motoId: editScopeTarget.motoId, clienteNome: editScopeTarget.clienteNome, clienteId: editScopeTarget.clienteId, tags: editScopeTarget.tags, observacao: editScopeTarget.observacao, ignorada: editScopeTarget.ignorada };
 
     const original = entries.find(e => e.id === editScopeTarget.id);
     const originalDate = original?.data ?? "";
+    const shiftDay = (d: string, delta: number) => {
+      const dt = new Date(d + "T00:00:00");
+      dt.setDate(dt.getDate() + delta);
+      return dt.toISOString().split("T")[0];
+    };
+    const dayDelta = originalDate && editScopeTarget.data
+      ? Math.round((new Date(editScopeTarget.data + "T00:00:00").getTime() - new Date(originalDate + "T00:00:00").getTime()) / 86400000)
+      : 0;
     const updated = entries.map(e => {
       if (e.id === editScopeTarget.id) return editScopeTarget;
       if (e.pago) return e;
@@ -1673,8 +1682,14 @@ export default function FinanceiroPage() {
       const inSeries = groupId
         ? e.recurringGroupId === groupId
         : !!(seriesId && (e.serieId === seriesId || e.fixedOriginId === seriesId || e.id === seriesId));
-      if (inSeries) return { ...e, ...scopeFields };
-      return e;
+      if (!inSeries) return e;
+      // Entradas pré-geradas (sem fixedOriginId): desloca a data pelo mesmo delta
+      // para manter o dia da semana do pagamento consistente.
+      const dateShift = (!e.fixedOriginId && dayDelta !== 0 && e.data) ? {
+        data: shiftDay(e.data, dayDelta),
+        dataPrevista: e.dataPrevista ? shiftDay(e.dataPrevista, dayDelta) : e.dataPrevista,
+      } : {};
+      return { ...e, ...scopeFields, ...dateShift };
     });
     const saved = await persistWithFeedback(updated, { successMessage: "Pendências atualizadas." });
     if (!saved) return;
@@ -1770,7 +1785,7 @@ export default function FinanceiroPage() {
       dataPrevista: invDueIso,
       pago: true,
       conta: advBank,
-      ignorada: true,
+      ignorada: false,
       tags: ["Adiantamento"],
       natureza: "administrativa",
       serieId: `adv_${card.id}`,
