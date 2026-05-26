@@ -53,37 +53,49 @@ const fontBody: React.CSSProperties = { fontFamily: "'Figtree', sans-serif" };
 const fontMono: React.CSSProperties = { fontFamily: "'DM Mono', monospace" };
 
 function WayvoMark({ size = 28, color = COLORS.ink }: { size?: number; color?: string }) {
-  // Símbolo oficial do brandbook WAYVO 2025:
-  // - chevron dominante apontando à direita (afunilado 4.5pt → 3pt)
-  // - ghost trail (rastro) 20% de opacidade
-  // - waypoint (círculo r=4.5) no vértice — o diferencial irreproduzível
+  // Símbolo oficial WAYVO Brandbook 2025
+  // viewBox 0 0 42 48 · ghost trail (20%) à esquerda · chevron dominante 45° · waypoint r=6 no vértice
   const symbolH = Math.round(size * (48 / 42));
+  const showGhost = size >= 22; // abaixo de 22px o ghost desaparece (regra do brandbook)
   return (
     <div className="flex items-center gap-2.5" aria-label="wayvo">
-      <svg width={size} height={symbolH} viewBox="0 0 42 48" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-        {/* Ghost trail */}
+      <svg
+        width={size}
+        height={symbolH}
+        viewBox="0 0 42 48"
+        fill="none"
+        xmlns="http://www.w3.org/2000/svg"
+        aria-hidden="true"
+      >
+        {/* Ghost trail — chevron menor com 20% de opacidade */}
+        {showGhost && (
+          <polyline
+            points="4,17 11,24 4,31"
+            stroke={COLORS.primary}
+            strokeWidth="1.8"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            opacity="0.25"
+          />
+        )}
+        {/* Chevron dominante — braços 45° afunilados, terminam no waypoint */}
         <polyline
-          points="4,16 12,23 4,30"
+          points="15,7 30,24 15,41"
           stroke={COLORS.primary}
-          strokeWidth="1.3"
+          strokeWidth="4.5"
           strokeLinecap="round"
           strokeLinejoin="round"
-          opacity="0.2"
         />
-        {/* Braço superior afunilado */}
-        <polygon points="17.6,3.4 32.1,18.9 29.9,21.1 14.4,6.6" fill={COLORS.primary} />
-        {/* Braço inferior afunilado */}
-        <polygon points="14.4,39.4 29.9,24.9 32.1,27.1 17.6,42.6" fill={COLORS.primary} />
-        {/* Waypoint */}
-        <circle cx="34" cy="23" r="4.5" fill={COLORS.primary} />
+        {/* Waypoint — círculo no vértice (o diferencial irreproduzível) */}
+        <circle cx="30" cy="24" r="6" fill={COLORS.primary} />
       </svg>
       <span
         style={{
           fontFamily: "'Syne', sans-serif",
           fontWeight: 700,
-          letterSpacing: "0.06em",
+          letterSpacing: "0.01em",
           color,
-          fontSize: 22,
+          fontSize: Math.round(size * 0.86),
           lineHeight: 1,
           textTransform: "lowercase",
         }}
@@ -93,6 +105,7 @@ function WayvoMark({ size = 28, color = COLORS.ink }: { size?: number; color?: s
     </div>
   );
 }
+
 
 const NavLinks = ({ onClick }: { onClick?: () => void }) => (
   <>
