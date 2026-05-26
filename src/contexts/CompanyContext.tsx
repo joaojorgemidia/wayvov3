@@ -51,9 +51,9 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
     if (!user) return;
     let cancelled = false;
     (async () => {
-      const { data, error } = await supabase.from("companies").select("id, nome, cnpj, asaas_config, detran_config");
+      const { data, error } = await supabase.from("companies").select("id, nome, cnpj, asaas_config, detran_config, cobranca_config");
       if (cancelled || error || !data) return;
-      const dbCompanies: Company[] = data.map((c: any) => ({ id: c.id, nome: c.nome, cnpj: c.cnpj, asaasConfig: c.asaas_config ?? null, detranConfig: c.detran_config ?? null }));
+      const dbCompanies: Company[] = data.map((c: any) => ({ id: c.id, nome: c.nome, cnpj: c.cnpj, asaasConfig: c.asaas_config ?? null, detranConfig: c.detran_config ?? null, cobrancaConfig: c.cobranca_config ?? null }));
 
       // One-time seed: if admin has local companies that aren't in DB yet, upload them
       if (isAdmin) {
