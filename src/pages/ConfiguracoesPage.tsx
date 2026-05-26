@@ -32,6 +32,16 @@ export default function ConfiguracoesPage() {
     else toast.success("Integração DETRAN removida.");
   };
 
+  const handleSaveCobranca = async () => {
+    const multa = parseFloat(multaValue.replace(',', '.'));
+    const juros = parseFloat(jurosValue.replace(',', '.'));
+    if (Number.isNaN(multa) || Number.isNaN(juros) || multa < 0 || juros < 0) {
+      toast.error("Valores inválidos. Insira números positivos.");
+      return;
+    }
+    await updateCobrancaConfig(activeCompany.id, { multaAtraso: multa, jurosDiario: juros });
+  };
+
   // Mascara o login para exibição: joao@email.com → j***@email.com
   const maskLogin = (login: string) => {
     const [user, domain] = login.split("@");
