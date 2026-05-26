@@ -96,6 +96,7 @@ export function dbToRental(r: any): Rental {
     dataFim: r.data_fim || null, dataFimContrato: r.data_fim_contrato || null,
     proximoPagamento: r.proximo_pagamento || null, tempoMinimoContrato: r.tempo_minimo_contrato ?? null,
     frequenciaPagamento: r.frequencia_pagamento || "",
+    cobrancaPrePaga: r.cobranca_pre_paga ?? false,
     valorDiario: Number(r.valor_diario) || 0, valorCaucao: Number(r.valor_caucao) || 0,
     caucaoPendente: r.caucao_pendente || false, caucaoParcelado: r.caucao_parcelado || false,
     parcelasCaucao: r.parcelas_caucao || [],
