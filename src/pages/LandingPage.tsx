@@ -596,7 +596,7 @@ export default function LandingPage() {
       <footer style={{ backgroundColor: COLORS.surface, borderTop: `1px solid ${COLORS.border}` }}>
         <div className="mx-auto max-w-7xl px-5 sm:px-8 py-12 grid sm:grid-cols-2 md:grid-cols-4 gap-8">
           <div>
-            <WayvoMark />
+            <WayvoMark size={40} />
             <p style={{ ...fontBody, color: COLORS.muted, fontSize: 13 }} className="mt-4 leading-relaxed max-w-xs">
               A plataforma de gestão para locadoras de motos que decidem com dado.
             </p>
