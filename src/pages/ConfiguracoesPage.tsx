@@ -2,20 +2,25 @@ import { useState } from "react";
 import { useCompany } from "@/contexts/CompanyContext";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
-import { Settings, CreditCard, CheckCircle2, XCircle, ShieldCheck, Car } from "lucide-react";
+import { Settings, CreditCard, CheckCircle2, XCircle, ShieldCheck, Car, Receipt } from "lucide-react";
 import AsaasConfigDialog from "@/components/AsaasConfigDialog";
 import DetranConfigDialog from "@/components/DetranConfigDialog";
-import { AsaasConfig, DetranConfig } from "@/lib/companies";
+import { AsaasConfig, DetranConfig, CobrancaConfig, DEFAULT_COBRANCA_CONFIG } from "@/lib/companies";
 import { toast } from "sonner";
 
 export default function ConfiguracoesPage() {
-  const { activeCompany, updateAsaasConfig, updateDetranConfig } = useCompany();
+  const { activeCompany, updateAsaasConfig, updateDetranConfig, updateCobrancaConfig } = useCompany();
   const [asaasOpen, setAsaasOpen] = useState(false);
   const [detranOpen, setDetranOpen] = useState(false);
 
   const asaasCfg = activeCompany?.asaasConfig;
   const detranCfg = activeCompany?.detranConfig;
+  const cobrancaCfg = activeCompany?.cobrancaConfig ?? DEFAULT_COBRANCA_CONFIG;
+  const [multaValue, setMultaValue] = useState(String(cobrancaCfg.multaAtraso));
+  const [jurosValue, setJurosValue] = useState(String(cobrancaCfg.jurosDiario));
 
   const handleSaveAsaas = async (config: AsaasConfig) => {
     await updateAsaasConfig(activeCompany.id, config);
@@ -25,6 +30,16 @@ export default function ConfiguracoesPage() {
     await updateDetranConfig(activeCompany.id, config);
     if (config) toast.success("DETRAN-GO conectado com sucesso.");
     else toast.success("Integração DETRAN removida.");
+  };
+
+  const handleSaveCobranca = async () => {
+    const multa = parseFloat(multaValue.replace(',', '.'));
+    const juros = parseFloat(jurosValue.replace(',', '.'));
+    if (Number.isNaN(multa) || Number.isNaN(juros) || multa < 0 || juros < 0) {
+      toast.error("Valores inválidos. Insira números positivos.");
+      return;
+    }
+    await updateCobrancaConfig(activeCompany.id, { multaAtraso: multa, jurosDiario: juros });
   };
 
   // Mascara o login para exibição: joao@email.com → j***@email.com
@@ -84,6 +99,50 @@ export default function ConfiguracoesPage() {
           )}
           <Button variant="outline" size="sm" onClick={() => setAsaasOpen(true)}>
             {asaasCfg ? "Editar configuração" : "Configurar"}
+          </Button>
+        </CardContent>
+      </Card>
+
+      {/* ── Regras de Juros e Multa ────────────────────────────────────── */}
+      <Card>
+        <CardHeader className="pb-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Receipt className="h-4 w-4 text-muted-foreground" />
+              <CardTitle className="text-base">Regras de Juros e Multa</CardTitle>
+            </div>
+          </div>
+          <CardDescription>
+            Configure os valores de multa fixa e juros diário aplicados nas cobranças de atraso.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-1.5">
+              <Label htmlFor="multa-atraso" className="text-xs">Multa por atraso (R$)</Label>
+              <Input
+                id="multa-atraso"
+                type="text"
+                inputMode="decimal"
+                value={multaValue}
+                onChange={(e) => setMultaValue(e.target.value)}
+                placeholder="15,00"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="juros-diario" className="text-xs">Juros por dia de atraso (R$)</Label>
+              <Input
+                id="juros-diario"
+                type="text"
+                inputMode="decimal"
+                value={jurosValue}
+                onChange={(e) => setJurosValue(e.target.value)}
+                placeholder="7,00"
+              />
+            </div>
+          </div>
+          <Button variant="outline" size="sm" onClick={handleSaveCobranca}>
+            Salvar regras
           </Button>
         </CardContent>
       </Card>
