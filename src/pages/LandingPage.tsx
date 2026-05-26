@@ -5,41 +5,80 @@ import {
   Menu,
   X,
   Shield,
-  Building2,
   Wrench,
   Wallet,
   FileSignature,
-  Lock,
-  CloudUpload,
   Activity,
-  Clock,
   TrendingUp,
-  Layers,
   Check,
-  Star,
+  MapPin,
+  Bell,
+  Users,
+  BarChart3,
 } from "lucide-react";
-import { Button } from "@/components/ui/button";
 import {
   Accordion,
   AccordionContent,
   AccordionItem,
   AccordionTrigger,
 } from "@/components/ui/accordion";
-import { WayvoLogo } from "@/components/WayvoLogo";
+
+/* ============================================================
+   Wayvo — Landing Page
+   Brand tokens locais (não afetam o app autenticado)
+   - Canvas: #F0FFF8 / #FFFFFF
+   - Primary: #00C86A
+   - Ink: #0A1810
+   - Muted: #687A6E
+   - Headings: Syne 700 (lowercase para marca)
+   - Body: Figtree 400/500
+   - Dados: DM Mono 400
+============================================================ */
+
+const COLORS = {
+  canvas: "#F0FFF8",
+  surface: "#FFFFFF",
+  primary: "#00C86A",
+  primaryDark: "#00A658",
+  ink: "#0A1810",
+  muted: "#687A6E",
+  border: "rgba(10, 24, 16, 0.08)",
+  borderStrong: "rgba(10, 24, 16, 0.14)",
+  alert: "#E5484D",
+  amber: "#D97706",
+};
+
+const fontHead: React.CSSProperties = { fontFamily: "'Syne', sans-serif", fontWeight: 700, letterSpacing: "-0.02em" };
+const fontBody: React.CSSProperties = { fontFamily: "'Figtree', sans-serif" };
+const fontMono: React.CSSProperties = { fontFamily: "'DM Mono', monospace" };
+
+function WayvoMark({ size = 28, color = COLORS.ink }: { size?: number; color?: string }) {
+  return (
+    <div className="flex items-center gap-2">
+      <svg width={size} height={size} viewBox="0 0 28 28" fill="none" aria-label="Wayvo">
+        <polyline points="3,2 14,14 3,26" stroke={COLORS.primary} strokeWidth="4.5" strokeLinecap="round" strokeLinejoin="round" />
+        <polyline points="18,6 25,14 18,22" stroke={color} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+      <span style={{ ...fontHead, color, fontSize: 22, lineHeight: 1, textTransform: "lowercase" }}>wayvo</span>
+    </div>
+  );
+}
 
 const NavLinks = ({ onClick }: { onClick?: () => void }) => (
   <>
     {[
+      ["Produto", "#produto"],
       ["Funcionalidades", "#features"],
-      ["Benefícios", "#benefits"],
+      ["Planos", "#planos"],
       ["Segurança", "#security"],
-      ["Planos", "#faq"],
+      ["Perguntas", "#faq"],
     ].map(([label, href]) => (
       <a
         key={href}
         href={href}
         onClick={onClick}
-        className="text-sm text-slate-300 hover:text-white transition-colors"
+        style={{ ...fontBody, color: COLORS.ink }}
+        className="text-sm font-medium opacity-80 hover:opacity-100 transition-opacity"
       >
         {label}
       </a>
@@ -52,377 +91,423 @@ export default function LandingPage() {
   const [scrolled, setScrolled] = useState(false);
 
   useEffect(() => {
+    const id = "wayvo-lp-fonts";
+    if (!document.getElementById(id)) {
+      const link = document.createElement("link");
+      link.id = id;
+      link.rel = "stylesheet";
+      link.href =
+        "https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=Figtree:wght@400;500;600;700&family=DM+Mono:wght@400;500&display=swap";
+      document.head.appendChild(link);
+    }
     const onScroll = () => setScrolled(window.scrollY > 8);
-    onScroll();
     window.addEventListener("scroll", onScroll);
     return () => window.removeEventListener("scroll", onScroll);
   }, []);
 
   return (
-    <div className="min-h-screen bg-[#0A0A0F] text-slate-100 antialiased selection:bg-primary/30">
-      {/* Background ornaments */}
-      <div className="pointer-events-none fixed inset-0 -z-10 overflow-hidden">
-        <div className="absolute -top-40 left-1/2 -translate-x-1/2 h-[600px] w-[1100px] rounded-full bg-primary/20 blur-[140px] opacity-60" />
-        <div className="absolute top-[40%] -right-40 h-[400px] w-[400px] rounded-full bg-indigo-500/10 blur-[120px]" />
-        <div
-          className="absolute inset-0 opacity-[0.04]"
-          style={{
-            backgroundImage:
-              "linear-gradient(to right, #fff 1px, transparent 1px), linear-gradient(to bottom, #fff 1px, transparent 1px)",
-            backgroundSize: "56px 56px",
-            maskImage:
-              "radial-gradient(ellipse at top, black 30%, transparent 75%)",
-          }}
-        />
-      </div>
-
-      {/* HEADER */}
+    <div style={{ ...fontBody, backgroundColor: COLORS.canvas, color: COLORS.ink }} className="min-h-screen w-full">
+      {/* ============ HEADER ============ */}
       <header
-        className={`fixed top-0 inset-x-0 z-50 transition-all ${
-          scrolled
-            ? "bg-[#0A0A0F]/80 backdrop-blur-xl border-b border-white/5"
-            : "bg-transparent"
-        }`}
+        className="sticky top-0 z-50 w-full transition-all"
+        style={{
+          backgroundColor: scrolled ? "rgba(255,255,255,0.85)" : "rgba(240,255,248,0.7)",
+          backdropFilter: "blur(12px)",
+          borderBottom: `1px solid ${scrolled ? COLORS.border : "transparent"}`,
+        }}
       >
-        <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
-          <Link to="/" className="flex items-center gap-2">
-            <WayvoLogo variant="dark" />
-          </Link>
+        <div className="mx-auto max-w-7xl px-5 sm:px-8 h-16 flex items-center justify-between">
+          <a href="#top" className="flex items-center">
+            <WayvoMark />
+          </a>
           <nav className="hidden md:flex items-center gap-8">
             <NavLinks />
           </nav>
           <div className="hidden md:flex items-center gap-3">
             <Link
               to="/login"
-              className="text-sm text-slate-300 hover:text-white transition-colors"
+              style={{ ...fontBody, color: COLORS.ink }}
+              className="text-sm font-medium px-4 py-2 hover:opacity-70 transition"
             >
               Entrar
             </Link>
-            <Button
-              asChild
-              className="bg-white text-slate-900 hover:bg-slate-200 rounded-full px-5"
+            <Link
+              to="/signup"
+              style={{ ...fontBody, backgroundColor: COLORS.ink, color: "#fff" }}
+              className="text-sm font-semibold px-4 py-2 rounded-md hover:opacity-90 transition inline-flex items-center gap-1.5"
             >
-              <Link to="/signup">
-                Testar grátis <ArrowRight className="h-4 w-4" />
-              </Link>
-            </Button>
+              Criar conta <ArrowRight size={14} />
+            </Link>
           </div>
           <button
-            className="md:hidden p-2 rounded-md hover:bg-white/5"
-            onClick={() => setOpen((v) => !v)}
-            aria-label="Abrir menu"
+            className="md:hidden p-2 rounded-md"
+            onClick={() => setOpen(!open)}
+            aria-label="Menu"
+            style={{ color: COLORS.ink }}
           >
-            {open ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+            {open ? <X size={22} /> : <Menu size={22} />}
           </button>
         </div>
         {open && (
-          <div className="md:hidden border-t border-white/5 bg-[#0A0A0F]/95 backdrop-blur-xl">
-            <div className="px-6 py-6 flex flex-col gap-5">
+          <div className="md:hidden border-t" style={{ borderColor: COLORS.border, backgroundColor: COLORS.surface }}>
+            <div className="px-5 py-5 flex flex-col gap-4">
               <NavLinks onClick={() => setOpen(false)} />
-              <div className="flex flex-col gap-3 pt-4 border-t border-white/5">
-                <Button asChild variant="outline" className="bg-transparent border-white/10 text-white hover:bg-white/5">
-                  <Link to="/login">Entrar</Link>
-                </Button>
-                <Button asChild className="bg-white text-slate-900 hover:bg-slate-200">
-                  <Link to="/signup">Testar grátis</Link>
-                </Button>
+              <div className="flex flex-col gap-2 pt-2 border-t" style={{ borderColor: COLORS.border }}>
+                <Link
+                  to="/login"
+                  className="text-sm font-medium px-4 py-2.5 rounded-md text-center"
+                  style={{ border: `1px solid ${COLORS.borderStrong}`, color: COLORS.ink }}
+                >
+                  Entrar
+                </Link>
+                <Link
+                  to="/signup"
+                  className="text-sm font-semibold px-4 py-2.5 rounded-md text-center"
+                  style={{ backgroundColor: COLORS.ink, color: "#fff" }}
+                >
+                  Criar conta grátis
+                </Link>
               </div>
             </div>
           </div>
         )}
       </header>
 
-      {/* HERO */}
-      <section className="relative pt-40 pb-24 px-6">
-        <div className="max-w-7xl mx-auto text-center">
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-white/10 bg-white/[0.03] text-xs text-slate-300 mb-8">
-            <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
-            Nova versão 2026 — agora com cobrança automática
-          </div>
-          <h1 className="text-5xl md:text-7xl font-extrabold tracking-tight leading-[1.05] max-w-4xl mx-auto">
-            A plataforma definitiva para{" "}
-            <span className="bg-gradient-to-r from-primary via-rose-400 to-orange-300 bg-clip-text text-transparent">
-              gerenciar e escalar
-            </span>{" "}
-            sua locadora.
-          </h1>
-          <p className="mt-6 text-lg md:text-xl text-slate-400 max-w-2xl mx-auto leading-relaxed">
-            Controle sua frota, automatize cobranças, gerencie contratos e escale sua
-            operação com segurança e previsibilidade. Tudo em um só lugar.
-          </p>
-          <div className="mt-10 flex flex-col sm:flex-row items-center justify-center gap-3">
-            <Button
-              asChild
-              size="lg"
-              className="bg-white text-slate-900 hover:bg-slate-200 rounded-full px-7 h-12 text-base"
-            >
-              <Link to="/signup">
-                Começar agora <ArrowRight className="h-4 w-4" />
-              </Link>
-            </Button>
-            <Button
-              asChild
-              size="lg"
-              variant="outline"
-              className="bg-transparent border-white/15 text-white hover:bg-white/5 rounded-full px-7 h-12 text-base"
-            >
-              <a href="#features">Ver demonstração</a>
-            </Button>
-          </div>
-          <div className="mt-8 flex items-center justify-center gap-2 text-sm text-slate-400">
-            <div className="flex">
-              {[...Array(5)].map((_, i) => (
-                <Star key={i} className="h-4 w-4 fill-amber-400 text-amber-400" />
-              ))}
-            </div>
-            <span>4.9/5 · +2.000 veículos gerenciados</span>
-          </div>
-
-          {/* Product mockup */}
-          <div className="mt-16 relative max-w-6xl mx-auto">
-            <div className="absolute -inset-x-20 -top-10 -bottom-10 bg-gradient-to-b from-primary/20 to-transparent blur-3xl -z-10" />
-            <div className="rounded-2xl border border-white/10 bg-gradient-to-b from-white/[0.08] to-white/[0.02] p-2 shadow-2xl shadow-black/60">
-              <div className="rounded-xl bg-[#0F0F18] overflow-hidden">
-                <div className="flex items-center gap-2 px-4 h-9 border-b border-white/5">
-                  <div className="flex gap-1.5">
-                    <span className="h-2.5 w-2.5 rounded-full bg-red-500/70" />
-                    <span className="h-2.5 w-2.5 rounded-full bg-amber-500/70" />
-                    <span className="h-2.5 w-2.5 rounded-full bg-emerald-500/70" />
-                  </div>
-                  <div className="text-xs text-slate-500 mx-auto">app.wayvo.com.br/dashboard</div>
-                </div>
-                <div className="grid grid-cols-12 gap-4 p-6">
-                  <div className="col-span-3 space-y-3">
-                    {["Dashboard", "Frota", "Locações", "Financeiro", "Cobranças", "Relatórios"].map((l, i) => (
-                      <div
-                        key={l}
-                        className={`text-xs px-3 py-2 rounded-md ${
-                          i === 0 ? "bg-white/10 text-white" : "text-slate-400 hover:bg-white/5"
-                        }`}
-                      >
-                        {l}
-                      </div>
-                    ))}
-                  </div>
-                  <div className="col-span-9 space-y-4">
-                    <div className="grid grid-cols-3 gap-4">
-                      {[
-                        ["Receita mensal", "R$ 184.520", "+12%"],
-                        ["Frota ativa", "127 motos", "+4"],
-                        ["Inadimplência", "2,1%", "-0,6%"],
-                      ].map(([l, v, d]) => (
-                        <div key={l} className="rounded-lg border border-white/5 bg-white/[0.02] p-4 text-left">
-                          <div className="text-[10px] uppercase tracking-wider text-slate-500">{l}</div>
-                          <div className="text-lg font-semibold text-white mt-1">{v}</div>
-                          <div className="text-xs text-emerald-400 mt-1">{d}</div>
-                        </div>
-                      ))}
-                    </div>
-                    <div className="rounded-lg border border-white/5 bg-white/[0.02] p-4 h-44 flex items-end gap-2">
-                      {[40, 65, 50, 78, 60, 90, 72, 85, 95, 80, 88, 100].map((h, i) => (
-                        <div
-                          key={i}
-                          className="flex-1 rounded-t bg-gradient-to-t from-primary/60 to-primary/20"
-                          style={{ height: `${h}%` }}
-                        />
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* SOCIAL PROOF */}
-      <section className="py-16 border-y border-white/5 bg-white/[0.01]">
-        <div className="max-w-7xl mx-auto px-6">
-          <p className="text-center text-xs uppercase tracking-[0.2em] text-slate-500 mb-10">
-            Marcas que confiam na Wayvo
-          </p>
-          <div className="grid grid-cols-2 md:grid-cols-6 gap-8 items-center opacity-60">
-            {["Velomotors", "RentBike", "MotoFrota", "UrbanRide", "DeliveryMax", "FrotaPlus"].map((b) => (
+      {/* ============ HERO ============ */}
+      <section id="top" className="relative overflow-hidden">
+        <div
+          aria-hidden
+          className="absolute inset-0 pointer-events-none"
+          style={{
+            background:
+              "radial-gradient(800px 400px at 80% -10%, rgba(0,200,106,0.12), transparent 60%), radial-gradient(600px 300px at 10% 10%, rgba(0,200,106,0.06), transparent 60%)",
+          }}
+        />
+        <div className="relative mx-auto max-w-7xl px-5 sm:px-8 pt-16 sm:pt-24 pb-16 sm:pb-24">
+          <div className="grid lg:grid-cols-[1.05fr_1fr] gap-12 lg:gap-16 items-center">
+            <div>
               <div
-                key={b}
-                className="text-center text-xl font-bold tracking-tight text-slate-300"
+                className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium mb-6"
+                style={{
+                  backgroundColor: "rgba(0,200,106,0.1)",
+                  color: COLORS.primaryDark,
+                  border: `1px solid rgba(0,200,106,0.25)`,
+                }}
               >
-                {b}
+                <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: COLORS.primary }} />
+                Plataforma de gestão de frota de motos
               </div>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      {/* FEATURES */}
-      <section id="features" className="py-28 px-6">
-        <div className="max-w-7xl mx-auto">
-          <div className="max-w-2xl mb-16">
-            <p className="text-sm font-medium text-primary mb-3">Funcionalidades</p>
-            <h2 className="text-4xl md:text-5xl font-extrabold tracking-tight">
-              Tudo o que sua locadora precisa, em uma só plataforma.
-            </h2>
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-            {[
-              {
-                icon: Building2,
-                title: "Multi-tenant avançado",
-                desc: "Separação de dados blindada para frotas parceiras, com isolamento total por empresa.",
-              },
-              {
-                icon: Wrench,
-                title: "Gestão de frota e manutenção",
-                desc: "Histórico completo, alertas de troca de óleo, pneus, revisões e vistorias.",
-              },
-              {
-                icon: Wallet,
-                title: "Financeiro automatizado",
-                desc: "Controle de inadimplência, recorrência e alertas automáticos via WhatsApp e e-mail.",
-              },
-              {
-                icon: FileSignature,
-                title: "Contratos digitais",
-                desc: "Emissão e assinatura eletrônica com validade jurídica e armazenamento seguro.",
-              },
-            ].map(({ icon: Icon, title, desc }) => (
-              <div
-                key={title}
-                className="group rounded-2xl border border-white/5 bg-white/[0.02] p-6 hover:bg-white/[0.04] hover:border-white/10 transition-all"
+              <h1
+                style={{ ...fontHead, color: COLORS.ink, fontSize: "clamp(2.4rem, 5.5vw, 4.2rem)", lineHeight: 1.02 }}
+                className="mb-6"
               >
-                <div className="h-10 w-10 rounded-lg bg-primary/10 border border-primary/20 flex items-center justify-center mb-5 group-hover:bg-primary/20 transition-colors">
-                  <Icon className="h-5 w-5 text-primary" />
-                </div>
-                <h3 className="font-semibold text-white mb-2">{title}</h3>
-                <p className="text-sm text-slate-400 leading-relaxed">{desc}</p>
+                O gestor que decide com dado{" "}
+                <span style={{ color: COLORS.primary }}>chega mais longe.</span>
+              </h1>
+              <p
+                style={{ ...fontBody, color: COLORS.muted, fontSize: "clamp(1.05rem, 1.6vw, 1.2rem)" }}
+                className="max-w-xl leading-relaxed mb-8"
+              >
+                Controle sua frota, automatize cobranças, gerencie contratos e escale sua operação de locação
+                com segurança e previsibilidade.
+              </p>
+              <div className="flex flex-col sm:flex-row gap-3">
+                <Link
+                  to="/signup"
+                  className="inline-flex items-center justify-center gap-2 px-6 py-3.5 rounded-md font-semibold transition hover:opacity-90"
+                  style={{ ...fontBody, backgroundColor: COLORS.primary, color: "#04200F", fontSize: 15 }}
+                >
+                  Começar agora <ArrowRight size={16} />
+                </Link>
+                <a
+                  href="#produto"
+                  className="inline-flex items-center justify-center gap-2 px-6 py-3.5 rounded-md font-semibold transition hover:bg-black/5"
+                  style={{ ...fontBody, color: COLORS.ink, border: `1px solid ${COLORS.borderStrong}`, fontSize: 15 }}
+                >
+                  Ver produto
+                </a>
               </div>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      {/* SECURITY */}
-      <section id="security" className="py-28 px-6 border-t border-white/5">
-        <div className="max-w-7xl mx-auto grid md:grid-cols-2 gap-16 items-center">
-          <div>
-            <p className="text-sm font-medium text-primary mb-3">Segurança</p>
-            <h2 className="text-4xl md:text-5xl font-extrabold tracking-tight leading-tight">
-              Sua operação protegida 24/7.
-            </h2>
-            <p className="mt-6 text-lg text-slate-400 leading-relaxed">
-              Infraestrutura empresarial com criptografia ponta a ponta, backups automáticos
-              e conformidade total com a LGPD. Sua frota e seus clientes em mãos seguras.
-            </p>
-            <div className="mt-8 grid grid-cols-2 gap-4">
-              {[
-                ["99.9%", "Uptime garantido"],
-                ["LGPD", "100% conforme"],
-                ["AES-256", "Criptografia"],
-                ["Daily", "Backups na nuvem"],
-              ].map(([k, v]) => (
-                <div key={k} className="rounded-lg border border-white/5 bg-white/[0.02] p-4">
-                  <div className="text-2xl font-bold text-white">{k}</div>
-                  <div className="text-sm text-slate-400">{v}</div>
-                </div>
-              ))}
-            </div>
-          </div>
-          <div className="relative">
-            <div className="absolute inset-0 bg-primary/10 blur-3xl rounded-full" />
-            <div className="relative rounded-2xl border border-white/10 bg-gradient-to-br from-white/[0.05] to-transparent p-10">
-              <Shield className="h-16 w-16 text-primary mb-6" />
-              <div className="space-y-4">
+              <div className="mt-10 flex flex-wrap gap-x-8 gap-y-3" style={fontBody}>
                 {[
-                  { icon: Lock, t: "Criptografia AES-256 em repouso e em trânsito" },
-                  { icon: CloudUpload, t: "Backups automáticos diários na nuvem" },
-                  { icon: Activity, t: "Monitoramento 24/7 com alertas em tempo real" },
-                  { icon: Shield, t: "Conformidade LGPD e auditoria de acessos" },
-                ].map(({ icon: Icon, t }) => (
-                  <div key={t} className="flex items-start gap-3">
-                    <Icon className="h-5 w-5 text-primary mt-0.5 shrink-0" />
-                    <span className="text-slate-300">{t}</span>
+                  ["Setup em 10 min", Activity],
+                  ["LGPD compliant", Shield],
+                  ["Suporte humano", Users],
+                ].map(([txt, Ico]: any) => (
+                  <div key={txt} className="flex items-center gap-2 text-sm" style={{ color: COLORS.muted }}>
+                    <Ico size={15} style={{ color: COLORS.primary }} />
+                    {txt}
                   </div>
                 ))}
               </div>
             </div>
+
+            {/* HERO MOCKUP — tabela do produto */}
+            <ProductMock />
           </div>
         </div>
       </section>
 
-      {/* BENEFITS */}
-      <section id="benefits" className="py-28 px-6 border-t border-white/5">
-        <div className="max-w-7xl mx-auto">
-          <div className="max-w-2xl mb-16">
-            <p className="text-sm font-medium text-primary mb-3">Benefícios</p>
-            <h2 className="text-4xl md:text-5xl font-extrabold tracking-tight">
-              Menos planilhas. Mais lucro. Mais tempo livre.
+      {/* ============ KPI BAR ============ */}
+      <section style={{ backgroundColor: COLORS.surface, borderTop: `1px solid ${COLORS.border}`, borderBottom: `1px solid ${COLORS.border}` }}>
+        <div className="mx-auto max-w-7xl px-5 sm:px-8 py-10 grid grid-cols-2 md:grid-cols-4 gap-6">
+          {[
+            ["-42%", "inadimplência média"],
+            ["+57%", "margem por ativo"],
+            ["10min", "setup inicial"],
+            ["24/7", "monitoramento de frota"],
+          ].map(([n, l]) => (
+            <div key={l} className="text-center md:text-left">
+              <div style={{ ...fontMono, color: COLORS.ink, fontSize: 30 }}>{n}</div>
+              <div style={{ ...fontBody, color: COLORS.muted, fontSize: 13 }} className="mt-1">{l}</div>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* ============ PRODUTO — 4 dores ============ */}
+      <section id="produto" className="py-20 sm:py-28">
+        <div className="mx-auto max-w-7xl px-5 sm:px-8">
+          <div className="max-w-2xl mb-14">
+            <p style={{ ...fontMono, color: COLORS.primary, fontSize: 13 }} className="mb-3">// O QUE A WAYVO RESOLVE</p>
+            <h2 style={{ ...fontHead, color: COLORS.ink, fontSize: "clamp(2rem, 3.5vw, 2.8rem)", lineHeight: 1.05 }}>
+              Quatro dores reais. Uma plataforma que entende a sua operação.
             </h2>
           </div>
-          <div className="grid md:grid-cols-3 gap-6">
+
+          <div className="grid md:grid-cols-2 gap-5">
             {[
               {
-                icon: Clock,
-                t: "+ Tempo livre",
-                d: "Automação que elimina trabalho manual, planilhas e processos repetitivos.",
+                icon: BarChart3,
+                title: "Visão Geral / Faturamento",
+                desc: "Monitoramento em tempo real do faturamento bruto, inadimplência e unit economics por veículo.",
+                metric: "R$ 84.320,00",
+                metricLabel: "faturamento do mês",
               },
               {
-                icon: TrendingUp,
-                t: "+ Lucratividade",
-                d: "Visão clara de unit economics: receita por veículo, custos e margem líquida.",
+                icon: MapPin,
+                title: "Localizações e Cobranças",
+                desc: "Redução drástica da inadimplência com régua de cobrança automatizada via WhatsApp.",
+                metric: "12 cobranças",
+                metricLabel: "enviadas automaticamente hoje",
               },
               {
-                icon: Layers,
-                t: "Escalabilidade",
-                d: "Pronto para suportar de 5 a centenas de veículos sem perder controle.",
+                icon: Wrench,
+                title: "Operações de Frota",
+                desc: "Controle rigoroso de vistorias, manutenções preventivas e rastreamento GPS em tempo real.",
+                metric: "3 alertas",
+                metricLabel: "troca de óleo 10w30 pendente",
               },
-            ].map(({ icon: Icon, t, d }) => (
-              <div key={t} className="rounded-2xl border border-white/5 bg-gradient-to-b from-white/[0.04] to-transparent p-8">
-                <Icon className="h-8 w-8 text-primary mb-5" />
-                <h3 className="text-xl font-bold text-white mb-2">{t}</h3>
-                <p className="text-slate-400 leading-relaxed">{d}</p>
+              {
+                icon: FileSignature,
+                title: "Clientes e Contratos",
+                desc: "Cadastro blindado com OCR de CNH/CRLV e contratos digitais com validade jurídica.",
+                metric: "127 contratos",
+                metricLabel: "ativos com assinatura digital",
+              },
+            ].map(({ icon: Icon, title, desc, metric, metricLabel }) => (
+              <div
+                key={title}
+                className="p-7 rounded-lg transition hover:-translate-y-0.5"
+                style={{ backgroundColor: COLORS.surface, border: `1px solid ${COLORS.border}` }}
+              >
+                <div
+                  className="w-10 h-10 rounded-md flex items-center justify-center mb-5"
+                  style={{ backgroundColor: "rgba(0,200,106,0.12)", color: COLORS.primaryDark }}
+                >
+                  <Icon size={18} />
+                </div>
+                <h3 style={{ ...fontHead, color: COLORS.ink, fontSize: 20 }} className="mb-2">{title}</h3>
+                <p style={{ ...fontBody, color: COLORS.muted, fontSize: 14.5 }} className="leading-relaxed mb-5">{desc}</p>
+                <div className="pt-4 border-t flex items-baseline gap-3" style={{ borderColor: COLORS.border }}>
+                  <span style={{ ...fontMono, color: COLORS.ink, fontSize: 18 }}>{metric}</span>
+                  <span style={{ ...fontBody, color: COLORS.muted, fontSize: 12 }}>{metricLabel}</span>
+                </div>
               </div>
             ))}
           </div>
         </div>
       </section>
 
-      {/* FAQ */}
-      <section id="faq" className="py-28 px-6 border-t border-white/5">
-        <div className="max-w-3xl mx-auto">
-          <div className="text-center mb-14">
-            <p className="text-sm font-medium text-primary mb-3">FAQ</p>
-            <h2 className="text-4xl md:text-5xl font-extrabold tracking-tight">
-              Perguntas frequentes
+      {/* ============ FEATURES DETALHADAS ============ */}
+      <section id="features" style={{ backgroundColor: COLORS.surface }} className="py-20 sm:py-28">
+        <div className="mx-auto max-w-7xl px-5 sm:px-8">
+          <div className="max-w-2xl mb-14">
+            <p style={{ ...fontMono, color: COLORS.primary, fontSize: 13 }} className="mb-3">// FUNCIONALIDADES</p>
+            <h2 style={{ ...fontHead, color: COLORS.ink, fontSize: "clamp(2rem, 3.5vw, 2.8rem)", lineHeight: 1.05 }}>
+              Dado, decisão, destino — em um só lugar.
             </h2>
           </div>
-          <Accordion type="single" collapsible className="space-y-3">
+
+          <div className="grid md:grid-cols-3 gap-px" style={{ backgroundColor: COLORS.border }}>
             {[
-              {
-                q: "O sistema serve para qualquer tamanho de locadora?",
-                a: "Sim. A Wayvo foi desenhada para escalar de 5 a centenas de veículos, com planos que acompanham o crescimento da sua operação.",
-              },
-              {
-                q: "Meus dados e os dos meus clientes estão seguros?",
-                a: "Totalmente. Usamos criptografia AES-256, backups automáticos diários, monitoramento 24/7 e estamos em conformidade com a LGPD.",
-              },
-              {
-                q: "Como funciona a migração de dados das minhas planilhas antigas?",
-                a: "Nossa equipe faz a importação dos seus dados gratuitamente no onboarding, em até 48h, com validação completa antes do go-live.",
-              },
-              {
-                q: "Existe suporte técnico disponível?",
-                a: "Sim. Atendimento humano via WhatsApp e e-mail em horário comercial, com SLA garantido e base de conhecimento completa.",
-              },
-            ].map(({ q, a }) => (
-              <AccordionItem
-                key={q}
-                value={q}
-                className="border border-white/5 bg-white/[0.02] rounded-xl px-6 border-b"
-              >
-                <AccordionTrigger className="text-left text-white hover:no-underline">
+              [Wallet, "Régua de cobrança automática", "Avisos de atraso e segunda via via WhatsApp sem você levantar o dedo."],
+              [Activity, "Rastreamento GPS", "Localização em tempo real, cerca virtual e histórico de rotas por veículo."],
+              [Wrench, "Manutenção preventiva", "Alertas de troca de óleo 10w30, pneus 90/90-18, pastilhas e correntes."],
+              [FileSignature, "Contratos digitais", "Geração automática com assinatura eletrônica e validade jurídica."],
+              [TrendingUp, "Unit economics", "Receita por ativo, margem líquida por veículo e ponto de equilíbrio."],
+              [Bell, "Multas e antecedentes", "Consulta automática, notificação ao locatário e indicação de condutor."],
+            ].map(([Ico, title, desc]: any) => (
+              <div key={title} className="p-8" style={{ backgroundColor: COLORS.surface }}>
+                <Ico size={22} style={{ color: COLORS.primary }} className="mb-4" />
+                <h3 style={{ ...fontHead, color: COLORS.ink, fontSize: 17 }} className="mb-2">{title}</h3>
+                <p style={{ ...fontBody, color: COLORS.muted, fontSize: 14 }} className="leading-relaxed">{desc}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* ============ PRICING ============ */}
+      <section id="planos" className="py-20 sm:py-28">
+        <div className="mx-auto max-w-7xl px-5 sm:px-8">
+          <div className="text-center max-w-2xl mx-auto mb-14">
+            <p style={{ ...fontMono, color: COLORS.primary, fontSize: 13 }} className="mb-3">// PLANOS</p>
+            <h2 style={{ ...fontHead, color: COLORS.ink, fontSize: "clamp(2rem, 3.5vw, 2.8rem)", lineHeight: 1.05 }} className="mb-4">
+              Preço por unidade ativa. Você cresce, a gente acompanha.
+            </h2>
+            <p style={{ ...fontBody, color: COLORS.muted, fontSize: 16 }}>
+              Sem fidelidade. Sem setup fee. Sem surpresa na fatura.
+            </p>
+          </div>
+
+          <div className="grid md:grid-cols-3 gap-5">
+            {/* START */}
+            <PricingCard
+              name="Start"
+              tagline="Operação Inicial"
+              description="Para quem está validando a primeira frota."
+              price="R$ 97"
+              suffix="/mês"
+              unit="até 8 motos"
+              features={[
+                "Gestão de frota básica",
+                "Alertas essenciais",
+                "Emissão de contratos digitais",
+                "Cadastro de clientes com OCR",
+                "Suporte por e-mail",
+              ]}
+              cta="Começar grátis"
+              ctaHref="/signup"
+            />
+
+            {/* PRO */}
+            <PricingCard
+              highlight
+              name="Pro"
+              tagline="Frota Escala"
+              description="O mais vendido. Pague pelo que você opera."
+              price="R$ 1,90"
+              suffix="/moto/dia"
+              unit="frota recomendada: 10 a 30 motos"
+              features={[
+                "Tudo do Start",
+                "Cobrança recorrente automática (WhatsApp)",
+                "Unit economics por veículo",
+                "Manutenção preventiva (óleo, pneus, pastilhas)",
+                "Rastreamento GPS em tempo real",
+                "Multas e antecedentes",
+                "Suporte prioritário",
+              ]}
+              cta="Assinar Pro"
+              ctaHref="/signup"
+            />
+
+            {/* ENTERPRISE */}
+            <PricingCard
+              name="Enterprise"
+              tagline="Multi-Tenant"
+              description="Franqueadoras e frotas de elite."
+              price="Sob consulta"
+              suffix=""
+              unit="frotas acima de 50 motos"
+              features={[
+                "Tudo do Pro",
+                "Isolamento de dados por tenant",
+                "Suporte premium 24/7",
+                "Integrações via API sob demanda",
+                "Customização de regras de negócio",
+                "Onboarding dedicado",
+              ]}
+              cta="Falar com especialista"
+              ctaHref="/signup"
+            />
+          </div>
+        </div>
+      </section>
+
+      {/* ============ SECURITY ============ */}
+      <section id="security" style={{ backgroundColor: COLORS.ink, color: "#fff" }} className="py-20 sm:py-28">
+        <div className="mx-auto max-w-7xl px-5 sm:px-8 grid lg:grid-cols-2 gap-12 items-center">
+          <div>
+            <p style={{ ...fontMono, color: COLORS.primary, fontSize: 13 }} className="mb-3">// SEGURANÇA</p>
+            <h2 style={{ ...fontHead, fontSize: "clamp(2rem, 3.5vw, 2.8rem)", lineHeight: 1.05 }} className="mb-6">
+              Sua operação blindada. Seus dados, intocáveis.
+            </h2>
+            <p style={{ ...fontBody, color: "rgba(255,255,255,0.7)", fontSize: 16 }} className="leading-relaxed mb-8">
+              Infraestrutura corporativa com isolamento por empresa, criptografia em trânsito e em repouso, e
+              backups automáticos. Conformidade total com a LGPD.
+            </p>
+            <div className="grid grid-cols-2 gap-5">
+              {[
+                ["LGPD", "Conformidade total"],
+                ["TLS 1.3", "Criptografia em trânsito"],
+                ["AES-256", "Criptografia em repouso"],
+                ["RLS", "Isolamento por empresa"],
+              ].map(([k, v]) => (
+                <div key={k} className="p-4 rounded-md" style={{ border: `1px solid rgba(255,255,255,0.12)` }}>
+                  <div style={{ ...fontMono, fontSize: 15, color: COLORS.primary }}>{k}</div>
+                  <div style={{ ...fontBody, color: "rgba(255,255,255,0.65)", fontSize: 13 }} className="mt-1">{v}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+          <div className="p-8 rounded-lg" style={{ border: `1px solid rgba(255,255,255,0.12)`, backgroundColor: "rgba(255,255,255,0.03)" }}>
+            <div className="flex items-center gap-3 mb-6">
+              <Shield size={20} style={{ color: COLORS.primary }} />
+              <div style={{ ...fontMono, fontSize: 12, color: "rgba(255,255,255,0.6)" }}>SISTEMA DE PROTEÇÃO</div>
+            </div>
+            {[
+              ["Auditoria de ações", "Ativa"],
+              ["2FA obrigatório (admin)", "Ativa"],
+              ["Backup diário", "Última: 03:00"],
+              ["Monitoramento de acesso", "24/7"],
+              ["Política de retenção", "7 anos"],
+            ].map(([k, v]) => (
+              <div key={k} className="flex items-center justify-between py-3" style={{ borderBottom: `1px solid rgba(255,255,255,0.08)` }}>
+                <span style={{ ...fontBody, fontSize: 14, color: "rgba(255,255,255,0.8)" }}>{k}</span>
+                <span style={{ ...fontMono, fontSize: 12.5, color: COLORS.primary }}>{v}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* ============ FAQ ============ */}
+      <section id="faq" className="py-20 sm:py-28">
+        <div className="mx-auto max-w-3xl px-5 sm:px-8">
+          <div className="text-center mb-12">
+            <p style={{ ...fontMono, color: COLORS.primary, fontSize: 13 }} className="mb-3">// PERGUNTAS FREQUENTES</p>
+            <h2 style={{ ...fontHead, color: COLORS.ink, fontSize: "clamp(2rem, 3.5vw, 2.6rem)", lineHeight: 1.05 }}>
+              Tudo o que você precisa saber.
+            </h2>
+          </div>
+          <Accordion type="single" collapsible className="w-full">
+            {[
+              ["Em quanto tempo consigo colocar minha frota no ar?", "O setup leva em média 10 minutos. Você cadastra a empresa, importa suas motos (manual, planilha ou OCR do CRLV) e já começa a operar."],
+              ["Como funciona a cobrança automática?", "A régua de cobrança envia avisos via WhatsApp em D-1, D+0, D+3 e D+7. Tudo configurável. Sem ação manual."],
+              ["Vocês emitem contrato com validade jurídica?", "Sim. Contratos digitais com assinatura eletrônica conforme MP 2.200-2 e LGPD. Aceitos por cartórios e tribunais."],
+              ["Posso testar antes de pagar?", "Sim. O plano Start tem 14 dias grátis. Sem cartão de crédito."],
+              ["E se eu tiver mais de uma empresa/franquia?", "O plano Enterprise oferece arquitetura multi-tenant com isolamento total de dados por sub-empresa."],
+              ["Vocês integram com meu sistema atual?", "Sim, via API REST no plano Enterprise. Também aceitamos importação por planilha em todos os planos."],
+            ].map(([q, a], i) => (
+              <AccordionItem key={i} value={`q${i}`} style={{ borderColor: COLORS.border }}>
+                <AccordionTrigger
+                  style={{ ...fontBody, color: COLORS.ink, fontSize: 16, fontWeight: 600 }}
+                  className="text-left hover:no-underline"
+                >
                   {q}
                 </AccordionTrigger>
-                <AccordionContent className="text-slate-400 leading-relaxed">
+                <AccordionContent style={{ ...fontBody, color: COLORS.muted, fontSize: 14.5 }} className="leading-relaxed">
                   {a}
                 </AccordionContent>
               </AccordionItem>
@@ -431,68 +516,71 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* CTA */}
-      <section className="py-28 px-6 border-t border-white/5">
-        <div className="max-w-4xl mx-auto rounded-3xl border border-white/10 bg-gradient-to-br from-primary/20 via-rose-500/10 to-transparent p-12 md:p-16 text-center relative overflow-hidden">
-          <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(225,29,72,0.3),transparent_60%)]" />
-          <div className="relative">
-            <h2 className="text-4xl md:text-5xl font-extrabold tracking-tight">
-              Pronto para escalar sua locadora?
+      {/* ============ FINAL CTA ============ */}
+      <section className="pb-20 sm:pb-28">
+        <div className="mx-auto max-w-5xl px-5 sm:px-8">
+          <div
+            className="relative overflow-hidden rounded-2xl p-10 sm:p-16 text-center"
+            style={{
+              backgroundColor: COLORS.ink,
+              backgroundImage:
+                "radial-gradient(500px 250px at 80% 0%, rgba(0,200,106,0.22), transparent 60%), radial-gradient(400px 200px at 0% 100%, rgba(0,200,106,0.12), transparent 60%)",
+            }}
+          >
+            <h2 style={{ ...fontHead, color: "#fff", fontSize: "clamp(1.8rem, 3.5vw, 2.8rem)", lineHeight: 1.05 }} className="mb-4 max-w-2xl mx-auto">
+              Pare de gerenciar sua frota no improviso.
             </h2>
-            <p className="mt-5 text-lg text-slate-300 max-w-xl mx-auto">
-              Comece grátis em menos de 2 minutos. Sem cartão de crédito.
+            <p style={{ ...fontBody, color: "rgba(255,255,255,0.7)", fontSize: 16 }} className="mb-8 max-w-xl mx-auto">
+              Comece grátis hoje. Sem cartão de crédito. Sem fidelidade.
             </p>
-            <div className="mt-8 flex flex-col sm:flex-row gap-3 justify-center">
-              <Button
-                asChild
-                size="lg"
-                className="bg-white text-slate-900 hover:bg-slate-200 rounded-full px-7 h-12"
+            <div className="flex flex-col sm:flex-row gap-3 justify-center">
+              <Link
+                to="/signup"
+                className="inline-flex items-center justify-center gap-2 px-6 py-3.5 rounded-md font-semibold hover:opacity-90 transition"
+                style={{ ...fontBody, backgroundColor: COLORS.primary, color: "#04200F", fontSize: 15 }}
               >
-                <Link to="/signup">
-                  Começar grátis <ArrowRight className="h-4 w-4" />
-                </Link>
-              </Button>
-              <Button
-                asChild
-                size="lg"
-                variant="outline"
-                className="bg-transparent border-white/15 text-white hover:bg-white/5 rounded-full px-7 h-12"
+                Criar conta grátis <ArrowRight size={16} />
+              </Link>
+              <Link
+                to="/login"
+                className="inline-flex items-center justify-center gap-2 px-6 py-3.5 rounded-md font-semibold transition"
+                style={{
+                  ...fontBody,
+                  color: "#fff",
+                  border: `1px solid rgba(255,255,255,0.25)`,
+                  fontSize: 15,
+                }}
               >
-                <Link to="/login">Já tenho conta</Link>
-              </Button>
-            </div>
-            <div className="mt-8 flex items-center justify-center gap-6 text-sm text-slate-400">
-              {["14 dias grátis", "Sem cartão", "Suporte humano"].map((t) => (
-                <span key={t} className="inline-flex items-center gap-1.5">
-                  <Check className="h-4 w-4 text-emerald-400" /> {t}
-                </span>
-              ))}
+                Já sou cliente
+              </Link>
             </div>
           </div>
         </div>
       </section>
 
-      {/* FOOTER */}
-      <footer className="border-t border-white/5 py-14 px-6">
-        <div className="max-w-7xl mx-auto grid md:grid-cols-4 gap-10">
+      {/* ============ FOOTER ============ */}
+      <footer style={{ backgroundColor: COLORS.surface, borderTop: `1px solid ${COLORS.border}` }}>
+        <div className="mx-auto max-w-7xl px-5 sm:px-8 py-12 grid sm:grid-cols-2 md:grid-cols-4 gap-8">
           <div>
-            <WayvoLogo variant="dark" />
-            <p className="mt-4 text-sm text-slate-400 max-w-xs">
-              A plataforma definitiva para gerenciar e escalar sua locadora de veículos.
+            <WayvoMark />
+            <p style={{ ...fontBody, color: COLORS.muted, fontSize: 13 }} className="mt-4 leading-relaxed max-w-xs">
+              A plataforma de gestão para locadoras de motos que decidem com dado.
             </p>
           </div>
           {[
-            { title: "Produto", links: [["Funcionalidades", "#features"], ["Benefícios", "#benefits"], ["Segurança", "#security"]] },
-            { title: "Empresa", links: [["Sobre", "#"], ["Contato", "#"], ["Blog", "#"]] },
-            { title: "Legal", links: [["Privacidade", "#"], ["Termos", "#"], ["LGPD", "#"]] },
-          ].map((col) => (
-            <div key={col.title}>
-              <div className="text-sm font-semibold text-white mb-4">{col.title}</div>
-              <ul className="space-y-2">
-                {col.links.map(([l, h]) => (
-                  <li key={l}>
-                    <a href={h} className="text-sm text-slate-400 hover:text-white transition-colors">
-                      {l}
+            ["Produto", [["Funcionalidades", "#features"], ["Planos", "#planos"], ["Segurança", "#security"]]],
+            ["Empresa", [["Sobre", "#"], ["Contato", "#"], ["Blog", "#"]]],
+            ["Legal", [["Privacidade", "#"], ["Termos", "#"], ["LGPD", "#"]]],
+          ].map(([title, items]: any) => (
+            <div key={title}>
+              <div style={{ ...fontHead, color: COLORS.ink, fontSize: 13, textTransform: "uppercase", letterSpacing: "0.08em" }} className="mb-4">
+                {title}
+              </div>
+              <ul className="space-y-2.5">
+                {items.map(([label, href]: any) => (
+                  <li key={label}>
+                    <a href={href} style={{ ...fontBody, color: COLORS.muted, fontSize: 13.5 }} className="hover:opacity-70">
+                      {label}
                     </a>
                   </li>
                 ))}
@@ -500,15 +588,184 @@ export default function LandingPage() {
             </div>
           ))}
         </div>
-        <div className="max-w-7xl mx-auto mt-12 pt-8 border-t border-white/5 flex flex-col md:flex-row items-center justify-between gap-4 text-sm text-slate-500">
-          <div>© {new Date().getFullYear()} Wayvo. Todos os direitos reservados.</div>
-          <div className="flex gap-6">
-            <a href="#" className="hover:text-white transition-colors">Instagram</a>
-            <a href="#" className="hover:text-white transition-colors">LinkedIn</a>
-            <a href="#" className="hover:text-white transition-colors">YouTube</a>
+        <div className="border-t" style={{ borderColor: COLORS.border }}>
+          <div className="mx-auto max-w-7xl px-5 sm:px-8 py-6 flex flex-col sm:flex-row items-center justify-between gap-3">
+            <p style={{ ...fontBody, color: COLORS.muted, fontSize: 12.5 }}>
+              © {new Date().getFullYear()} Wayvo. Todos os direitos reservados.
+            </p>
+            <p style={{ ...fontMono, color: COLORS.muted, fontSize: 11.5 }}>
+              feito para quem opera de verdade.
+            </p>
           </div>
         </div>
       </footer>
+    </div>
+  );
+}
+
+/* =========================================================
+   ProductMock — tabela visual do sistema
+========================================================= */
+function ProductMock() {
+  const rows = [
+    ["ABC-1D23", "Honda CG 160 Fan", "Alugada", "57,3%", COLORS.primary],
+    ["DEF-4G56", "Yamaha Factor 150", "Alugada", "61,8%", COLORS.primary],
+    ["GHI-7J89", "Honda Biz 125", "Vistoria", "—", COLORS.amber],
+    ["JKL-0M12", "Yamaha YBR 150", "Alugada", "48,2%", COLORS.primary],
+    ["MNO-3P45", "Honda CG 160 Start", "Inadimplente", "12,4%", COLORS.alert],
+    ["PQR-6S78", "Honda Pop 110i", "Disponível", "—", COLORS.muted],
+  ];
+  return (
+    <div className="relative">
+      <div
+        className="absolute -inset-4 rounded-2xl pointer-events-none"
+        style={{ background: "radial-gradient(60% 60% at 50% 0%, rgba(0,200,106,0.18), transparent 70%)" }}
+        aria-hidden
+      />
+      <div
+        className="relative rounded-xl overflow-hidden"
+        style={{
+          backgroundColor: COLORS.surface,
+          border: `1px solid ${COLORS.borderStrong}`,
+          boxShadow: "0 20px 60px -20px rgba(10,24,16,0.18)",
+        }}
+      >
+        {/* Window bar */}
+        <div className="flex items-center justify-between px-4 py-3" style={{ borderBottom: `1px solid ${COLORS.border}` }}>
+          <div className="flex items-center gap-1.5">
+            <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: "#FF5F57" }} />
+            <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: "#FEBC2E" }} />
+            <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: "#28C840" }} />
+          </div>
+          <div style={{ ...fontMono, color: COLORS.muted, fontSize: 11 }}>app.wayvo.com.br / frota</div>
+          <div className="w-12" />
+        </div>
+
+        {/* Summary */}
+        <div className="grid grid-cols-3 gap-px" style={{ backgroundColor: COLORS.border }}>
+          {[
+            ["Frota total", "127", "motos"],
+            ["Faturamento mês", "R$ 84.320", "+12,4%"],
+            ["Inadimplência", "3,2%", "-1,8 pp"],
+          ].map(([l, v, s]) => (
+            <div key={l} className="p-4" style={{ backgroundColor: COLORS.surface }}>
+              <div style={{ ...fontBody, color: COLORS.muted, fontSize: 11 }} className="uppercase tracking-wider">{l}</div>
+              <div style={{ ...fontMono, color: COLORS.ink, fontSize: 20 }} className="mt-1">{v}</div>
+              <div style={{ ...fontBody, color: COLORS.primary, fontSize: 11.5 }} className="mt-0.5">{s}</div>
+            </div>
+          ))}
+        </div>
+
+        {/* Table header */}
+        <div className="grid grid-cols-[1fr_1.6fr_1fr_0.8fr] gap-3 px-5 py-2.5" style={{ borderTop: `1px solid ${COLORS.border}`, borderBottom: `1px solid ${COLORS.border}`, backgroundColor: "#FAFCFB" }}>
+          {["Placa", "Modelo", "Status", "Margem"].map(h => (
+            <div key={h} style={{ ...fontBody, color: COLORS.muted, fontSize: 11 }} className="uppercase tracking-wider">{h}</div>
+          ))}
+        </div>
+
+        {/* Rows */}
+        {rows.map(([placa, modelo, status, margem, c], i) => (
+          <div
+            key={i}
+            className="grid grid-cols-[1fr_1.6fr_1fr_0.8fr] gap-3 px-5 py-3 items-center"
+            style={{ borderBottom: i === rows.length - 1 ? "none" : `1px solid ${COLORS.border}` }}
+          >
+            <div style={{ ...fontMono, color: COLORS.ink, fontSize: 13 }}>{placa}</div>
+            <div style={{ ...fontBody, color: COLORS.ink, fontSize: 13.5 }}>{modelo}</div>
+            <div className="flex">
+              <span
+                style={{
+                  ...fontBody,
+                  fontSize: 11.5,
+                  color: c as string,
+                  backgroundColor: `${c}1A`,
+                  border: `0.5px solid ${c}40`,
+                }}
+                className="px-2 py-0.5 rounded-full font-medium"
+              >
+                {status}
+              </span>
+            </div>
+            <div style={{ ...fontMono, color: COLORS.ink, fontSize: 13 }}>{margem}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* =========================================================
+   PricingCard
+========================================================= */
+function PricingCard({
+  name, tagline, description, price, suffix, unit, features, cta, ctaHref, highlight,
+}: {
+  name: string;
+  tagline: string;
+  description: string;
+  price: string;
+  suffix: string;
+  unit: string;
+  features: string[];
+  cta: string;
+  ctaHref: string;
+  highlight?: boolean;
+}) {
+  return (
+    <div
+      className="relative p-8 rounded-xl flex flex-col"
+      style={{
+        backgroundColor: highlight ? COLORS.ink : COLORS.surface,
+        border: highlight ? `1px solid ${COLORS.primary}` : `1px solid ${COLORS.border}`,
+        boxShadow: highlight ? "0 20px 50px -20px rgba(0,200,106,0.35)" : "none",
+      }}
+    >
+      {highlight && (
+        <div
+          className="absolute -top-3 left-1/2 -translate-x-1/2 px-3 py-1 rounded-full"
+          style={{ ...fontMono, backgroundColor: COLORS.primary, color: "#04200F", fontSize: 11 }}
+        >
+          MAIS VENDIDO
+        </div>
+      )}
+      <div className="mb-1" style={{ ...fontMono, color: highlight ? COLORS.primary : COLORS.muted, fontSize: 11 }}>
+        {tagline.toUpperCase()}
+      </div>
+      <h3 style={{ ...fontHead, color: highlight ? "#fff" : COLORS.ink, fontSize: 26 }}>{name}</h3>
+      <p style={{ ...fontBody, color: highlight ? "rgba(255,255,255,0.65)" : COLORS.muted, fontSize: 13.5 }} className="mt-1.5 mb-6">
+        {description}
+      </p>
+
+      <div className="mb-1 flex items-baseline gap-1.5">
+        <span style={{ ...fontMono, color: highlight ? "#fff" : COLORS.ink, fontSize: 34, lineHeight: 1 }}>{price}</span>
+        {suffix && (
+          <span style={{ ...fontBody, color: highlight ? "rgba(255,255,255,0.6)" : COLORS.muted, fontSize: 14 }}>{suffix}</span>
+        )}
+      </div>
+      <div style={{ ...fontBody, color: highlight ? "rgba(255,255,255,0.5)" : COLORS.muted, fontSize: 12 }} className="mb-7">
+        {unit}
+      </div>
+
+      <ul className="space-y-3 mb-8 flex-1">
+        {features.map(f => (
+          <li key={f} className="flex items-start gap-2.5">
+            <Check size={15} style={{ color: COLORS.primary, marginTop: 3, flexShrink: 0 }} />
+            <span style={{ ...fontBody, color: highlight ? "rgba(255,255,255,0.85)" : COLORS.ink, fontSize: 14 }}>{f}</span>
+          </li>
+        ))}
+      </ul>
+
+      <Link
+        to={ctaHref}
+        className="w-full inline-flex items-center justify-center gap-2 px-5 py-3 rounded-md font-semibold transition hover:opacity-90"
+        style={
+          highlight
+            ? { ...fontBody, backgroundColor: COLORS.primary, color: "#04200F", fontSize: 14 }
+            : { ...fontBody, backgroundColor: COLORS.ink, color: "#fff", fontSize: 14 }
+        }
+      >
+        {cta} <ArrowRight size={14} />
+      </Link>
     </div>
   );
 }
