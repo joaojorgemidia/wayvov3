@@ -31,7 +31,7 @@ import { brandConfigFor, loadBrandConfig } from "@/lib/oil-kpis";
 import { MessagePopup } from "@/components/MessagePopup";
 import { buildAllTokens } from "@/lib/message-tokens";
 import { buildCobrancaEvent, computeSemanaPeriodo, computeSemanaNumero } from "@/lib/cobranca-week-stats";
-import { DEFAULT_MULTA_ATRASO, DEFAULT_JUROS_DIARIO } from "@/lib/cobranca-defaults";
+import { DEFAULT_COBRANCA_CONFIG } from "@/lib/companies";
 import { formatDate } from "@/lib/alerts";
 
 function moduleBadgeColor(m: CollectionModule) {

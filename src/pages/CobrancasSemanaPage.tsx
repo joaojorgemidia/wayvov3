@@ -28,7 +28,8 @@ import { FinancialEntry } from "@/lib/types";
 import { MessagePopup } from "@/components/MessagePopup";
 import { applyTokens, buildAllTokens } from "@/lib/message-tokens";
 import { buildCobrancaEvent, computeSemanaPeriodo, computeSemanaNumero } from "@/lib/cobranca-week-stats";
-import { DEFAULT_MULTA_ATRASO, DEFAULT_JUROS_DIARIO } from "@/lib/cobranca-defaults";
+import { useCompany } from "@/contexts/CompanyContext";
+import { DEFAULT_COBRANCA_CONFIG } from "@/lib/companies";
 import { buildWhatsAppUrl } from "@/lib/whatsapp";
 
 const WEEK_LONG = ["Domingo", "Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado"];
