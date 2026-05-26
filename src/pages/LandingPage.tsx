@@ -53,10 +53,12 @@ const fontBody: React.CSSProperties = { fontFamily: "'Figtree', sans-serif" };
 const fontMono: React.CSSProperties = { fontFamily: "'DM Mono', monospace" };
 
 function WayvoMark({ size = 28, color = COLORS.ink }: { size?: number; color?: string }) {
-  // Símbolo oficial WAYVO Brandbook 2025
-  // viewBox 0 0 42 48 · ghost trail (20%) à esquerda · chevron dominante 45° · waypoint r=6 no vértice
+  // Símbolo oficial WAYVO — Brandbook 2025
+  // viewBox 0 0 42 48 · ghost trail 20% à esquerda · chevron dominante 45° · waypoint r=4.5 no vértice
+  // Tipografia Syne 700 lowercase com tracking 0.06em (wordmark)
   const symbolH = Math.round(size * (48 / 42));
   const showGhost = size >= 22; // abaixo de 22px o ghost desaparece (regra do brandbook)
+  const wordSize = Math.round(size * 0.78);
   return (
     <div className="flex items-center gap-2.5" aria-label="wayvo">
       <svg
@@ -67,27 +69,27 @@ function WayvoMark({ size = 28, color = COLORS.ink }: { size?: number; color?: s
         xmlns="http://www.w3.org/2000/svg"
         aria-hidden="true"
       >
-        {/* Ghost trail — chevron menor com 20% de opacidade */}
+        {/* Ghost trail — chevron menor, 20% opacidade, à esquerda */}
         {showGhost && (
           <polyline
-            points="4,17 11,24 4,31"
+            points="3,18 9.5,24 3,30"
             stroke={COLORS.primary}
-            strokeWidth="1.8"
+            strokeWidth="2"
             strokeLinecap="round"
             strokeLinejoin="round"
-            opacity="0.25"
+            opacity="0.22"
           />
         )}
-        {/* Chevron dominante — braços 45° afunilados, terminam no waypoint */}
+        {/* Chevron dominante — braços 45°, terminam no waypoint */}
         <polyline
-          points="15,7 30,24 15,41"
+          points="14,6 30,24 14,42"
           stroke={COLORS.primary}
-          strokeWidth="4.5"
+          strokeWidth="5"
           strokeLinecap="round"
           strokeLinejoin="round"
         />
-        {/* Waypoint — círculo no vértice (o diferencial irreproduzível) */}
-        <circle cx="30" cy="24" r="6" fill={COLORS.primary} />
+        {/* Waypoint — círculo r=4.5 no vértice (diferencial irreproduzível) */}
+        <circle cx="30" cy="24" r="4.5" fill={COLORS.primary} />
       </svg>
       <span
         style={{
@@ -95,7 +97,7 @@ function WayvoMark({ size = 28, color = COLORS.ink }: { size?: number; color?: s
           fontWeight: 700,
           letterSpacing: "0.01em",
           color,
-          fontSize: Math.round(size * 0.86),
+          fontSize: wordSize,
           lineHeight: 1,
           textTransform: "lowercase",
         }}
@@ -105,6 +107,7 @@ function WayvoMark({ size = 28, color = COLORS.ink }: { size?: number; color?: s
     </div>
   );
 }
+
 
 
 const NavLinks = ({ onClick }: { onClick?: () => void }) => (
