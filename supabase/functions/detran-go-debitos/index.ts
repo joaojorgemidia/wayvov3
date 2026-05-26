@@ -36,10 +36,41 @@ async function consultarDebitos(
   // code 1 = sucesso, code 100 = sucesso com avisos
   if (json.code !== 1 && json.code !== 100) {
     const msg = json.errors?.[0] || json.code_message || `Código ${json.code}`;
-    return { data: [], error: String(msg) };
+    return { data: [], error: String(msg).slice(0, 300) };
   }
 
-  return { data: json.data || [], error: null };
+  const rawItems: unknown[] = Array.isArray(json.data) ? json.data : [];
+
+  // Limite de itens por moto para evitar payload excessivo
+  const MAX_ITEMS = 50;
+
+  // Extrai apenas campos conhecidos de cada item — nenhum campo extra entra no sistema
+  const safeItems = rawItems.slice(0, MAX_ITEMS)
+    .filter((item): item is Record<string, unknown> => !!item && typeof item === "object")
+    .filter((item) => {
+      // Aceita apenas multas de trânsito — descarta IPVA, DPVAT, LICENCIAMENTO, etc.
+      const tipo = String(item.tipo_debito ?? item.tipo ?? "").toUpperCase().trim();
+      return tipo === "MULTA" || tipo.includes("INFRACAO") || tipo.includes("INFRAÇÃO") || tipo.includes("AUTO");
+    })
+    .map((item) => ({
+      // Allowlist explícita — apenas estes campos chegam ao frontend
+      tipo: "MULTA",
+      data_infracao: typeof item.data_infracao === "string" ? item.data_infracao.slice(0, 20) : null,
+      vencimento: typeof item.vencimento === "string" ? item.vencimento.slice(0, 20) : null,
+      valor: typeof item.valor === "number" && isFinite(item.valor) && item.valor >= 0 && item.valor < 1_000_000
+        ? Math.round(item.valor * 100) / 100
+        : 0,
+      descricao: typeof item.descricao === "string"
+        ? item.descricao.replace(/[<>"']/g, "").slice(0, 200)
+        : typeof item.descricao_infracao === "string"
+        ? item.descricao_infracao.replace(/[<>"']/g, "").slice(0, 200)
+        : "MULTA DE TRÂNSITO",
+      situacao: typeof item.situacao === "string" ? item.situacao.slice(0, 30) : "PENDENTE",
+      auto_infracao: typeof item.auto_infracao === "string" ? item.auto_infracao.replace(/\W/g, "").slice(0, 50) : null,
+      codigo_infracao: typeof item.codigo_infracao === "string" ? item.codigo_infracao.replace(/\W/g, "").slice(0, 20) : null,
+    }));
+
+  return { data: safeItems, error: null };
 }
 
 serve(async (req) => {

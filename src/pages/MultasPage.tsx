@@ -236,8 +236,7 @@ export default function MultasPage() {
     );
   }, [motoResults, fines, rentals, clients]);
 
-  const multas = useMemo(() => allDebits.filter(d => d.tipo === "MULTA"), [allDebits]);
-  const taxas = useMemo(() => allDebits.filter(d => d.tipo !== "MULTA"), [allDebits]);
+  const multas = useMemo(() => allDebits, [allDebits]);
 
   const toggleDebit = (key: string) => {
     setSelected(prev => {
@@ -262,21 +261,37 @@ export default function MultasPage() {
     setImporting(true);
     try {
       const today = new Date().toISOString().split("T")[0];
-      const newFines: Fine[] = toImport.map(d => ({
-        id: crypto.randomUUID(),
-        motoId: d.motoId,
-        clienteId: d.suggestedClient?.id ?? null,
-        rentalId: d.suggestedRental?.id ?? null,
-        dataMulta: d.dataInfracao ?? d.vencimento ?? today,
-        dataNotificacao: null,
-        valor: d.valor,
-        descricao: d.descricao,
-        status: "pendente" as const,
-        responsavel: (d.tipo === "MULTA" && d.suggestedClient ? "cliente" : "locadora") as "locadora" | "cliente",
-        origem: "detran" as const,
-        autoInfracao: d.autoInfracao,
-        codigoInfracao: d.codigoInfracao,
-      }));
+    const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+    const newFines: Fine[] = toImport
+      .filter(d => {
+        // Segunda camada de validação — rejeita qualquer item suspeito
+        if (d.valor <= 0 || d.valor >= 1_000_000) return false;
+        if (!motos.find(m => m.id === d.motoId)) return false;
+        return true;
+      })
+      .map(d => {
+        const dataMulta = d.dataInfracao && ISO_DATE.test(d.dataInfracao)
+          ? d.dataInfracao
+          : d.vencimento && ISO_DATE.test(d.vencimento)
+          ? d.vencimento
+          : today;
+        return {
+          id: crypto.randomUUID(),
+          motoId: d.motoId,
+          clienteId: d.suggestedClient?.id ?? null,
+          rentalId: d.suggestedRental?.id ?? null,
+          dataMulta,
+          dataNotificacao: null,
+          valor: Math.round(d.valor * 100) / 100,
+          descricao: String(d.descricao || "MULTA DE TRÂNSITO").slice(0, 200),
+          status: "pendente" as const,
+          responsavel: (d.suggestedClient ? "cliente" : "locadora") as "locadora" | "cliente",
+          origem: "detran" as const,
+          autoInfracao: d.autoInfracao ? String(d.autoInfracao).slice(0, 50) : null,
+          codigoInfracao: d.codigoInfracao ? String(d.codigoInfracao).slice(0, 20) : null,
+        };
+      });
 
       persist([...fines, ...newFines]);
       toast.success(`${newFines.length} item(ns) importado(s) com sucesso.`);
@@ -587,25 +602,6 @@ export default function MultasPage() {
                 </div>
                 <div className="space-y-2">
                   {multas.map(d => (
-                    <DetranDebitCard
-                      key={d._key}
-                      debit={d}
-                      checked={selected.has(d._key)}
-                      onToggle={() => toggleDebit(d._key)}
-                      fmt={fmt}
-                      fmtDate={fmtDate}
-                    />
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* IPVA / taxas */}
-            {taxas.length > 0 && (
-              <div className="space-y-2">
-                <h3 className="font-semibold text-sm">IPVA / Taxas ({taxas.length})</h3>
-                <div className="space-y-2">
-                  {taxas.map(d => (
                     <DetranDebitCard
                       key={d._key}
                       debit={d}
