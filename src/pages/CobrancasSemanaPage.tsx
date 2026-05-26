@@ -419,11 +419,18 @@ export default function CobrancasSemanaPage() {
         : "—";
 
       // Semana paga (relativa ao início da locação)
+      // Pré-pago: vencimento = início do período → semana = floor(diff/7)+1
+      // Pós-pago: vencimento = fim do período → semana = ceil(diff/7), min 1
       let semanaTxt = "";
       if (rental?.dataInicio && dueDate) {
         const ini = new Date(rental.dataInicio + "T12:00:00").getTime();
-        const diff = Math.floor((dueDate.getTime() - ini) / (7 * 86400000));
-        if (diff >= 0) semanaTxt = `${diff + 1}ª semana`;
+        const diffDays = Math.floor((dueDate.getTime() - ini) / 86400000);
+        if (diffDays >= 0) {
+          const semana = rental.cobrancaPrePaga
+            ? Math.floor(diffDays / 7) + 1
+            : Math.max(1, Math.ceil(diffDays / 7));
+          semanaTxt = `${semana}ª semana`;
+        }
       }
 
       // Juros / multa por atraso
