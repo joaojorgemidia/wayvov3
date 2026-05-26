@@ -179,6 +179,7 @@ export const TOKEN_DESCRIPTIONS: Record<string, string> = {
   "{DATA_PAGAMENTO}": "Data em que o pagamento foi efetivado",
   "{DIAS_ATRASO}": "Dias em atraso (calculado pela data do pagamento)",
   "{ATRASO_TEXTO}": "Texto do atraso (ex.: 3 dias)",
+  "{BLOCO_ATRASO}": "Bloco multilinha com atraso + juros (vazio se em dia)",
   "{MULTA_ATRASO}": "Multa por atraso (R$)",
   "{JUROS_DEVIDO}": "Total de juros + multa devidos",
   "{JUROS_PAGOS}": "Juros/multa já pagos no recebimento",
