@@ -490,6 +490,17 @@ export default function LocacoesPage() {
         setSelectedIds(prev => { const next = new Set(prev); data.forEach(r => next.add(r.id)); return next; });
       }
     };
+    // Conta semanas de aluguel pagas vs pendentes por locação
+    const semanasPorRental = (() => {
+      const m = new Map<string, { pagas: number; pendentes: number }>();
+      for (const e of cache.financial) {
+        if (e.categoria !== "aluguel" || !e.rentalId) continue;
+        const cur = m.get(e.rentalId) || { pagas: 0, pendentes: 0 };
+        if (e.pago) cur.pagas += 1; else cur.pendentes += 1;
+        m.set(e.rentalId, cur);
+      }
+      return m;
+    })();
     return (
       <div className="rounded-md border">
         <Table>
@@ -508,6 +519,7 @@ export default function LocacoesPage() {
               <TableHead>Início</TableHead>
               <TableHead>Fim Contrato</TableHead>
               <TableHead className="text-right">Valor</TableHead>
+              <TableHead className="text-center" title="Semanas pagas / pendentes">Pagas/Pend.</TableHead>
               <TableHead>Status</TableHead>
               <TableHead className="text-right">Ações</TableHead>
             </TableRow>
@@ -515,7 +527,7 @@ export default function LocacoesPage() {
           <TableBody>
             {data.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={10} className="text-center py-8 text-muted-foreground">
+                <TableCell colSpan={11} className="text-center py-8 text-muted-foreground">
                   <FileText className="h-8 w-8 mx-auto mb-2 opacity-50" />
                   Nenhuma locação encontrada
                 </TableCell>
@@ -532,6 +544,18 @@ export default function LocacoesPage() {
                 <TableCell className="text-xs">{(() => { const d = new Date(r.dataInicio + "T00:00:00"); const dias = ["Dom","Seg","Ter","Qua","Qui","Sex","Sáb"]; return `${dias[d.getDay()]} ${d.toLocaleDateString("pt-BR")}`; })()}</TableCell>
                 <TableCell className="text-xs">{(() => { const d = r.status === "ativa" ? r.dataFimContrato : r.dataFim; return d ? new Date(d + "T00:00:00").toLocaleDateString("pt-BR") : "—"; })()}</TableCell>
                 <TableCell className="text-xs text-right font-medium">R$ {r.valorDiario.toFixed(2)}</TableCell>
+                <TableCell className="text-xs text-center">
+                  {(() => {
+                    const s = semanasPorRental.get(r.id) || { pagas: 0, pendentes: 0 };
+                    return (
+                      <span className="font-mono">
+                        <span className="text-success">{s.pagas}</span>
+                        <span className="text-muted-foreground">/</span>
+                        <span className={s.pendentes > 0 ? "text-warning" : "text-muted-foreground"}>{s.pendentes}</span>
+                      </span>
+                    );
+                  })()}
+                </TableCell>
                 <TableCell>
                   <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium ${statusColor[r.status]}`}>
                     {statusLabel[r.status]}
