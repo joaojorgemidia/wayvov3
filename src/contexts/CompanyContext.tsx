@@ -232,6 +232,18 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
     saveCompanies(next);
   }, [companies]);
 
+  const updateCobrancaConfig = useCallback(async (id: string, config: CobrancaConfig) => {
+    const { error } = await supabase.from("companies").update({ cobranca_config: config } as any).eq("id", id);
+    if (error) {
+      toast.error("Falha ao salvar configuração de cobrança: " + error.message);
+      return;
+    }
+    const next = companies.map(c => c.id === id ? { ...c, cobrancaConfig: config } : c);
+    setCompanies(next);
+    saveCompanies(next);
+    toast.success("Configuração de cobrança salva");
+  }, [companies]);
+
   return (
     <CompanyContext.Provider value={{ companies: visibleCompanies, activeCompany, switchCompany, addCompany, updateCompany, updateAsaasConfig, updateDetranConfig, removeCompany }}>
       {children}
