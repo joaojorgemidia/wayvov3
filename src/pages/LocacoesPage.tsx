@@ -45,7 +45,7 @@ function makeEmptyRental(): Rental {
     dataFim: null, dataFimContrato: null, proximoPagamento: null,
     tempoMinimoContrato: null, frequenciaPagamento: "", cobrancaPrePaga: false,
     valorDiario: 0, valorCaucao: 0, caucaoPendente: false, caucaoParcelado: false, parcelasCaucao: [],
-    multaAtraso: 0, jurosAtrasoMes: 0,
+    multaAtraso: 15, jurosAtrasoMes: 0,
     localRetirada: "", localDevolucao: "",
     kmInicio: 0, kmFim: null, nivelCombustivel: "", plano: "",
     raioCirculacao: "", seguroTerceiros: false,
