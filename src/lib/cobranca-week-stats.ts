@@ -28,11 +28,13 @@ export function computeSemanaNumero(
   if (!rental?.dataInicio || !due) return null;
   const ini = parseISODate(rental.dataInicio);
   if (!ini) return null;
-  const diffDays = Math.floor((due.getTime() - ini.getTime()) / MS_DAY);
+  const diffDays = Math.round((due.getTime() - ini.getTime()) / MS_DAY);
   if (diffDays < 0) return null;
+  // Usa Math.round nas divisões para tolerar desvios de 1-3 dias entre
+  // vencimentos criados antes de a locação virar pré/pós-paga.
   return rental.cobrancaPrePaga
-    ? Math.floor(diffDays / 7) + 1
-    : Math.max(1, Math.ceil(diffDays / 7));
+    ? Math.round(diffDays / 7) + 1
+    : Math.max(1, Math.round(diffDays / 7));
 }
 
 /** Janela [início, fim] da semana cobrada (datas ISO yyyy-mm-dd). */
