@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
+import wayvoLogoLight from "@/assets/wayvo-logo-light.png";
+import wayvoLogoDark from "@/assets/wayvo-logo-dark.png";
 import {
   ArrowRight,
   Menu,
@@ -52,59 +54,18 @@ const fontHead: React.CSSProperties = { fontFamily: "'Syne', sans-serif", fontWe
 const fontBody: React.CSSProperties = { fontFamily: "'Figtree', sans-serif" };
 const fontMono: React.CSSProperties = { fontFamily: "'DM Mono', monospace" };
 
-function WayvoMark({ size = 28, color = COLORS.ink }: { size?: number; color?: string }) {
-  // Símbolo oficial WAYVO — Brandbook 2025
-  // viewBox 0 0 42 48 · ghost trail 20% à esquerda · chevron dominante 45° · waypoint r=4.5 no vértice
-  // Tipografia Syne 700 lowercase com tracking 0.06em (wordmark)
-  const symbolH = Math.round(size * (48 / 42));
-  const showGhost = size >= 22; // abaixo de 22px o ghost desaparece (regra do brandbook)
-  const wordSize = Math.round(size * 0.78);
+function WayvoMark({ size = 28, variant = "light" }: { size?: number; variant?: "light" | "dark" }) {
+  // Logo oficial WAYVO — usa PNG do brandbook
+  // Proporção original ~1120x320 → ratio 3.5
+  const src = variant === "dark" ? wayvoLogoDark : wayvoLogoLight;
+  const height = size;
   return (
-    <div className="flex items-center gap-2.5" aria-label="wayvo">
-      <svg
-        width={size}
-        height={symbolH}
-        viewBox="0 0 42 48"
-        fill="none"
-        xmlns="http://www.w3.org/2000/svg"
-        aria-hidden="true"
-      >
-        {/* Ghost trail — chevron menor, 20% opacidade, à esquerda */}
-        {showGhost && (
-          <polyline
-            points="3,18 9.5,24 3,30"
-            stroke={COLORS.primary}
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            opacity="0.22"
-          />
-        )}
-        {/* Chevron dominante — braços 45°, terminam no waypoint */}
-        <polyline
-          points="14,6 30,24 14,42"
-          stroke={COLORS.primary}
-          strokeWidth="5"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
-        {/* Waypoint — círculo r=4.5 no vértice (diferencial irreproduzível) */}
-        <circle cx="30" cy="24" r="4.5" fill={COLORS.primary} />
-      </svg>
-      <span
-        style={{
-          fontFamily: "'Syne', sans-serif",
-          fontWeight: 700,
-          letterSpacing: "0.01em",
-          color,
-          fontSize: wordSize,
-          lineHeight: 1,
-          textTransform: "lowercase",
-        }}
-      >
-        wayvo
-      </span>
-    </div>
+    <img
+      src={src}
+      alt="wayvo"
+      height={height}
+      style={{ height, width: "auto", display: "block" }}
+    />
   );
 }
 
