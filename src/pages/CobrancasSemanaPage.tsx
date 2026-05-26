@@ -506,7 +506,12 @@ export default function CobrancasSemanaPage() {
 
   const openReschedule = (item: RowItem) => {
     setReschedItem(item);
-    setReschedDate(toISODate(item.due || new Date()));
+    // Pré-popula com o maior entre hoje e o vencimento atual, para que
+    // adiar uma cobrança já vencida jogue ela para frente (não para o passado).
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const base = item.due && item.due.getTime() > today.getTime() ? item.due : today;
+    setReschedDate(toISODate(base));
   };
 
   const applyReschedule = async (newDate: string) => {
@@ -525,7 +530,12 @@ export default function CobrancasSemanaPage() {
   };
 
   const quickReschedule = async (item: RowItem, deltaDays: number) => {
-    const base = item.due || new Date();
+    // Base = HOJE (ou o vencimento, se ainda for futuro). Assim "Adiar +N dias"
+    // sempre joga a cobrança para N dias à frente de hoje quando já está vencida,
+    // tirando ela do estado "vencido" enquanto a locadora aguarda o cliente.
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const base = item.due && item.due.getTime() > today.getTime() ? new Date(item.due) : today;
     const nd = new Date(base);
     nd.setDate(nd.getDate() + deltaDays);
     try {
