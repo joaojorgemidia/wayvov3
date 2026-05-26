@@ -30,7 +30,7 @@ import { OilChangeRecord } from "@/lib/types";
 import { brandConfigFor, loadBrandConfig } from "@/lib/oil-kpis";
 import { MessagePopup } from "@/components/MessagePopup";
 import { buildAllTokens } from "@/lib/message-tokens";
-import { buildCobrancaEvent, computeSemanaPeriodo } from "@/lib/cobranca-week-stats";
+import { buildCobrancaEvent, computeSemanaPeriodo, computeSemanaNumero } from "@/lib/cobranca-week-stats";
 import { DEFAULT_MULTA_ATRASO, DEFAULT_JUROS_DIARIO } from "@/lib/cobranca-defaults";
 import { formatDate } from "@/lib/alerts";
 
