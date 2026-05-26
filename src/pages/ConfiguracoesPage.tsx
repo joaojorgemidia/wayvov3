@@ -103,6 +103,50 @@ export default function ConfiguracoesPage() {
         </CardContent>
       </Card>
 
+      {/* ── Regras de Juros e Multa ────────────────────────────────────── */}
+      <Card>
+        <CardHeader className="pb-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Receipt className="h-4 w-4 text-muted-foreground" />
+              <CardTitle className="text-base">Regras de Juros e Multa</CardTitle>
+            </div>
+          </div>
+          <CardDescription>
+            Configure os valores de multa fixa e juros diário aplicados nas cobranças de atraso.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-1.5">
+              <Label htmlFor="multa-atraso" className="text-xs">Multa por atraso (R$)</Label>
+              <Input
+                id="multa-atraso"
+                type="text"
+                inputMode="decimal"
+                value={multaValue}
+                onChange={(e) => setMultaValue(e.target.value)}
+                placeholder="15,00"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="juros-diario" className="text-xs">Juros por dia de atraso (R$)</Label>
+              <Input
+                id="juros-diario"
+                type="text"
+                inputMode="decimal"
+                value={jurosValue}
+                onChange={(e) => setJurosValue(e.target.value)}
+                placeholder="7,00"
+              />
+            </div>
+          </div>
+          <Button variant="outline" size="sm" onClick={handleSaveCobranca}>
+            Salvar regras
+          </Button>
+        </CardContent>
+      </Card>
+
       {/* ── DETRAN-GO ──────────────────────────────────────────────────── */}
       <Card className={detranCfg ? "border-blue-200 dark:border-blue-900/40" : ""}>
         <CardHeader className="pb-3">
