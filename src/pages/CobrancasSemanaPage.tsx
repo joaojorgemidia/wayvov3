@@ -490,6 +490,11 @@ export default function CobrancasSemanaPage() {
             due: dueDate,
             financial: cache.financial,
             diasAtraso,
+            multa,
+            jurosDevido,
+            jurosPago,
+            jurosPendente,
+            dataPagamento: payDate,
           }),
         }),
       });

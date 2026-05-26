@@ -85,6 +85,11 @@ export function buildCobrancaEvent(args: {
   due?: Date | null;
   financial: FinancialEntry[];
   diasAtraso?: number | null;
+  multa?: number | null;
+  jurosDevido?: number | null;
+  jurosPago?: number | null;
+  jurosPendente?: number | null;
+  dataPagamento?: string | null;
 }): CobrancaEventInput {
   const { rental, entry, financial } = args;
   const due =
@@ -104,5 +109,10 @@ export function buildCobrancaEvent(args: {
     dataVencimento: entry?.dataPrevista || entry?.data || null,
     diasAtraso: args.diasAtraso ?? null,
     cobrancaPrePaga: rental?.cobrancaPrePaga ?? null,
+    multaAtraso: args.multa ?? null,
+    jurosDevido: args.jurosDevido ?? null,
+    jurosPago: args.jurosPago ?? null,
+    jurosPendente: args.jurosPendente ?? null,
+    dataPagamento: args.dataPagamento ?? null,
   };
 }

@@ -92,7 +92,13 @@ export const TOKEN_CATALOG = {
     "{SEMANAS_TOTAL}",
     "{VALOR_COBRANCA}",
     "{DATA_VENCIMENTO}",
+    "{DATA_PAGAMENTO}",
     "{DIAS_ATRASO}",
+    "{ATRASO_TEXTO}",
+    "{MULTA_ATRASO}",
+    "{JUROS_DEVIDO}",
+    "{JUROS_PAGOS}",
+    "{JUROS_PENDENTES}",
     "{COBRANCA_TIPO}",
   ],
 } as const;
@@ -169,7 +175,13 @@ export const TOKEN_DESCRIPTIONS: Record<string, string> = {
   "{SEMANAS_TOTAL}": "Total de semanas cobradas (pagas + pendentes)",
   "{VALOR_COBRANCA}": "Valor da cobrança/parcela",
   "{DATA_VENCIMENTO}": "Data de vencimento da cobrança",
-  "{DIAS_ATRASO}": "Dias em atraso",
+  "{DATA_PAGAMENTO}": "Data em que o pagamento foi efetivado",
+  "{DIAS_ATRASO}": "Dias em atraso (calculado pela data do pagamento)",
+  "{ATRASO_TEXTO}": "Texto do atraso (ex.: 3 dias)",
+  "{MULTA_ATRASO}": "Multa por atraso (R$)",
+  "{JUROS_DEVIDO}": "Total de juros + multa devidos",
+  "{JUROS_PAGOS}": "Juros/multa já pagos no recebimento",
+  "{JUROS_PENDENTES}": "Juros/multa ainda em aberto",
   "{COBRANCA_TIPO}": "Tipo de cobrança (Pré-paga / Pós-paga)",
 };
 
@@ -380,6 +392,12 @@ export interface CobrancaEventInput {
   dataVencimento?: string | null;
   diasAtraso?: number | null;
   cobrancaPrePaga?: boolean | null;
+  /** Multa/juros calculados com base na data de pagamento informada. */
+  multaAtraso?: number | null;
+  jurosDevido?: number | null;
+  jurosPago?: number | null;
+  jurosPendente?: number | null;
+  dataPagamento?: string | null;
 }
 
 /** Tokens de uma cobrança (semana, status pagamento, etc.). */
@@ -388,6 +406,10 @@ export function cobrancaTokens(e?: CobrancaEventInput | null): TokenMap {
   const ini = fmtDate(e.semanaInicio);
   const fim = fmtDate(e.semanaFim);
   const periodo = ini && fim ? `${ini} a ${fim}` : ini || fim || "";
+  const atrasoTxt =
+    e.diasAtraso != null && e.diasAtraso > 0
+      ? `${e.diasAtraso} ${e.diasAtraso === 1 ? "dia" : "dias"}`
+      : "";
   return {
     "{SEMANA_NUMERO}": e.semanaNumero != null ? `${e.semanaNumero}ª` : "",
     "{SEMANA_PERIODO}": periodo,
@@ -398,7 +420,13 @@ export function cobrancaTokens(e?: CobrancaEventInput | null): TokenMap {
     "{SEMANAS_TOTAL}": e.semanasTotal != null ? String(e.semanasTotal) : "",
     "{VALOR_COBRANCA}": fmtMoney(e.valorCobranca),
     "{DATA_VENCIMENTO}": fmtDate(e.dataVencimento),
+    "{DATA_PAGAMENTO}": fmtDate(e.dataPagamento),
     "{DIAS_ATRASO}": e.diasAtraso != null ? String(e.diasAtraso) : "",
+    "{ATRASO_TEXTO}": atrasoTxt,
+    "{MULTA_ATRASO}": fmtMoney(e.multaAtraso),
+    "{JUROS_DEVIDO}": fmtMoney(e.jurosDevido),
+    "{JUROS_PAGOS}": fmtMoney(e.jurosPago),
+    "{JUROS_PENDENTES}": fmtMoney(e.jurosPendente),
     "{COBRANCA_TIPO}":
       e.cobrancaPrePaga == null ? "" : e.cobrancaPrePaga ? "Pré-paga" : "Pós-paga",
   };
