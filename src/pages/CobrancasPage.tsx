@@ -515,31 +515,53 @@ export default function CobrancasPage() {
           const descricao = item.descricao || entry.descricao || item.categoriaLabel || "Pagamento";
           const dataPagamento = formatDate(resolveData.data);
 
-          const valorFmt = `R$ ${valorPago.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-          const vencimento = entry.data
-            ? new Date(entry.data + "T12:00:00").toLocaleDateString("pt-BR")
-            : dataPagamento;
+          const fmtBRL = (n: number) =>
+            `R$ ${n.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+          const valorOriginal = Number(entry.valor) || 0;
+          const valorFmt = fmtBRL(valorPago);
+          const dueDate = entry.data ? new Date(entry.data + "T12:00:00") : null;
+          const vencimento = dueDate ? dueDate.toLocaleDateString("pt-BR") : dataPagamento;
           const motoLinha = moto?.placa
             ? `${moto.placa}${moto.modelo ? ` — ${moto.modelo}` : ""}`
             : (entry.placa || "—");
+
+          let semanaTxt = "";
+          if (rental?.dataInicio && dueDate) {
+            const ini = new Date(rental.dataInicio + "T12:00:00").getTime();
+            const diff = Math.floor((dueDate.getTime() - ini) / (7 * 86400000));
+            if (diff >= 0) semanaTxt = `${diff + 1}ª semana`;
+          }
+
+          const payTs = new Date(resolveData.data + "T12:00:00").getTime();
+          const diasAtraso = dueDate ? Math.max(0, Math.floor((payTs - dueDate.getTime()) / 86400000)) : 0;
+          const multa = diasAtraso > 0 ? (rental?.multaAtraso || 0) : 0;
+          const jurosMes = rental?.jurosAtrasoMes || 0;
+          const jurosCalc = diasAtraso > 0 ? valorOriginal * (jurosMes / 100 / 30) * diasAtraso : 0;
+          const jurosDevido = multa + jurosCalc;
+          const excedente = Math.max(0, valorPago - valorOriginal);
+          const jurosPago = Math.min(excedente, jurosDevido);
+          const jurosPendente = Math.max(0, jurosDevido - jurosPago);
 
           const linhas: string[] = [];
           linhas.push(`✅ *PAGAMENTO CONFIRMADO*`);
           linhas.push("");
           linhas.push(`LOCATÁRIO: ${cliente?.nome || entry.clienteNome || "[NOME]"}`);
           linhas.push(`MOTO: ${motoLinha}`);
-          linhas.push(`VENCIMENTO: ${vencimento}`);
+          linhas.push(`VENCIMENTO: ${vencimento}${semanaTxt ? ` (${semanaTxt})` : ""}`);
           linhas.push("");
           linhas.push(`💰 *VALORES*`);
-          linhas.push(`${descricao}: ${valorFmt}`);
+          linhas.push(`${descricao}: ${fmtBRL(valorOriginal)}`);
+          if (diasAtraso > 0) {
+            linhas.push(`Atraso: ${diasAtraso} ${diasAtraso === 1 ? "dia" : "dias"}`);
+            linhas.push(`Juros pagos: ${fmtBRL(jurosPago)}`);
+            if (jurosPendente > 0) linhas.push(`Juros pendentes: ${fmtBRL(jurosPendente)}`);
+          }
           linhas.push(`─────────────`);
           linhas.push(`Total pago: *${valorFmt}*`);
           linhas.push("");
           linhas.push(`📅 *PAGAMENTO*`);
           linhas.push(`Data: ${dataPagamento}`);
-          if (resolveData.conta) {
-            linhas.push(`Conta: ${resolveData.conta}`);
-          }
+          linhas.push(`Banco: ${resolveData.conta || "—"}`);
           linhas.push("");
           linhas.push(`— wayvo · dado · decisão · destino`);
 
