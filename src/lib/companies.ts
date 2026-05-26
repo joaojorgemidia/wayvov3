@@ -27,12 +27,23 @@ export interface DetranConfig {
   senhaHash: string; // armazenado como recebido do usuário, protegido por RLS
 }
 
+export interface CobrancaConfig {
+  multaAtraso: number;   // R$ fixos por atraso
+  jurosDiario: number;   // R$ por dia de atraso
+}
+
+export const DEFAULT_COBRANCA_CONFIG: CobrancaConfig = {
+  multaAtraso: 15,
+  jurosDiario: 7,
+};
+
 export interface Company {
   id: string;
   nome: string;
   cnpj: string;
   asaasConfig?: AsaasConfig | null;
   detranConfig?: DetranConfig | null;
+  cobrancaConfig?: CobrancaConfig | null;
 }
 
 const COMPANIES_KEY = "moto-fleet-companies-v1";

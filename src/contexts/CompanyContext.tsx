@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useCallback, ReactNode, useEffect, useMemo } from "react";
-import { Company, AsaasConfig, DetranConfig, loadCompanies, saveCompanies, getActiveCompanyId, setActiveCompanyId } from "@/lib/companies";
+import { Company, AsaasConfig, DetranConfig, CobrancaConfig, loadCompanies, saveCompanies, getActiveCompanyId, setActiveCompanyId } from "@/lib/companies";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
@@ -12,6 +12,7 @@ interface CompanyContextType {
   updateCompany: (id: string, updates: { nome: string; cnpj: string }) => Promise<void>;
   updateAsaasConfig: (id: string, config: AsaasConfig) => Promise<void>;
   updateDetranConfig: (id: string, config: DetranConfig | null) => Promise<void>;
+  updateCobrancaConfig: (id: string, config: CobrancaConfig) => Promise<void>;
   removeCompany: (id: string) => Promise<void>;
 }
 
