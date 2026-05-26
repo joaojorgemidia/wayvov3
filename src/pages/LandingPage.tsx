@@ -148,7 +148,7 @@ export default function LandingPage() {
       >
         <div className="mx-auto max-w-7xl px-5 sm:px-8 h-16 flex items-center justify-between">
           <a href="#top" className="flex items-center">
-            <WayvoMark />
+            <WayvoMark size={34} />
           </a>
           <nav className="hidden md:flex items-center gap-8">
             <NavLinks />
