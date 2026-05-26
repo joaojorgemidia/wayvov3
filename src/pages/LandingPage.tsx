@@ -148,7 +148,7 @@ export default function LandingPage() {
       >
         <div className="mx-auto max-w-7xl px-5 sm:px-8 h-16 flex items-center justify-between">
           <a href="#top" className="flex items-center">
-            <WayvoMark />
+            <WayvoMark size={34} />
           </a>
           <nav className="hidden md:flex items-center gap-8">
             <NavLinks />
@@ -216,6 +216,10 @@ export default function LandingPage() {
         <div className="relative mx-auto max-w-7xl px-5 sm:px-8 pt-16 sm:pt-24 pb-16 sm:pb-24">
           <div className="grid lg:grid-cols-[1.05fr_1fr] gap-12 lg:gap-16 items-center">
             <div>
+              {/* Logo destacada no hero */}
+              <div className="mb-8">
+                <WayvoMark size={56} />
+              </div>
               <div
                 className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium mb-6"
                 style={{
@@ -592,7 +596,7 @@ export default function LandingPage() {
       <footer style={{ backgroundColor: COLORS.surface, borderTop: `1px solid ${COLORS.border}` }}>
         <div className="mx-auto max-w-7xl px-5 sm:px-8 py-12 grid sm:grid-cols-2 md:grid-cols-4 gap-8">
           <div>
-            <WayvoMark />
+            <WayvoMark size={40} />
             <p style={{ ...fontBody, color: COLORS.muted, fontSize: 13 }} className="mt-4 leading-relaxed max-w-xs">
               A plataforma de gestão para locadoras de motos que decidem com dado.
             </p>
