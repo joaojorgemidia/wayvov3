@@ -556,6 +556,29 @@ export default function RentalWizard({ rental, onSave, onCancel, motos, activeRe
             )}
           </div>
 
+          {/* Forma de cobrança */}
+          <div className="border rounded-lg p-4 space-y-3">
+            <h4 className="font-semibold text-sm">Forma de Cobrança</h4>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => setRentalField("cobrancaPrePaga", true)}
+                className={`text-left rounded-md border p-3 transition ${form.cobrancaPrePaga ? "border-primary ring-1 ring-primary bg-primary/5" : "hover:bg-muted/50"}`}
+              >
+                <div className="text-sm font-medium">Pré-paga</div>
+                <div className="text-xs text-muted-foreground">Paga adiantado. 1ª cobrança vence na data de início.</div>
+              </button>
+              <button
+                type="button"
+                onClick={() => setRentalField("cobrancaPrePaga", false)}
+                className={`text-left rounded-md border p-3 transition ${!form.cobrancaPrePaga ? "border-primary ring-1 ring-primary bg-primary/5" : "hover:bg-muted/50"}`}
+              >
+                <div className="text-sm font-medium">Pós-paga</div>
+                <div className="text-xs text-muted-foreground">Paga ao final do período. 1ª cobrança vence em 1 {form.frequenciaPagamento === "mensal" ? "mês" : form.frequenciaPagamento === "quinzenal" ? "quinzena" : "semana"}.</div>
+              </button>
+            </div>
+          </div>
+
           {/* Financial generation toggles */}
           <div className="border rounded-lg p-4 space-y-3">
             <h4 className="font-semibold text-sm">Gerar Cobranças Automáticas</h4>
