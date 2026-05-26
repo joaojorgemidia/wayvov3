@@ -107,7 +107,7 @@ export default function LandingPage() {
       >
         <div className="mx-auto max-w-7xl px-5 sm:px-8 h-16 flex items-center justify-between">
           <a href="#top" className="flex items-center">
-            <WayvoMark size={34} />
+            <WayvoMark size={32} />
           </a>
           <nav className="hidden md:flex items-center gap-8">
             <NavLinks />
@@ -190,15 +190,16 @@ export default function LandingPage() {
                 style={{ ...fontHead, color: COLORS.ink, fontSize: "clamp(2.4rem, 5.5vw, 4.2rem)", lineHeight: 1.02 }}
                 className="mb-6"
               >
-                O gestor que decide com dado{" "}
-                <span style={{ color: COLORS.primary }}>chega mais longe.</span>
+                Crescimento sem dado{" "}
+                <span style={{ color: COLORS.primary }}>não é estratégia.</span>{" "}
+                <span style={{ color: COLORS.muted, fontWeight: 600 }}>É sorte com prazo de validade.</span>
               </h1>
               <p
                 style={{ ...fontBody, color: COLORS.muted, fontSize: "clamp(1.05rem, 1.6vw, 1.2rem)" }}
                 className="max-w-xl leading-relaxed mb-8"
               >
-                Controle sua frota, automatize cobranças, gerencie contratos e escale sua operação de locação
-                com segurança e previsibilidade.
+                A WAYVO transforma sua operação de locação de motos em informação estruturada — para você decidir
+                com dado, no momento certo, e chegar onde grandes frotas chegam.
               </p>
               <div className="flex flex-col sm:flex-row gap-3">
                 <Link
@@ -516,11 +517,14 @@ export default function LandingPage() {
                 "radial-gradient(500px 250px at 80% 0%, rgba(0,200,106,0.22), transparent 60%), radial-gradient(400px 200px at 0% 100%, rgba(0,200,106,0.12), transparent 60%)",
             }}
           >
+            <p style={{ ...fontMono, color: COLORS.primary, fontSize: 12 }} className="mb-4 tracking-widest">
+              DADO · DECISÃO · DESTINO
+            </p>
             <h2 style={{ ...fontHead, color: "#fff", fontSize: "clamp(1.8rem, 3.5vw, 2.8rem)", lineHeight: 1.05 }} className="mb-4 max-w-2xl mx-auto">
-              Pare de gerenciar sua frota no improviso.
+              Sua frota tem 13 motos. Quantas são lucrativas?
             </h2>
             <p style={{ ...fontBody, color: "rgba(255,255,255,0.7)", fontSize: 16 }} className="mb-8 max-w-xl mx-auto">
-              Comece grátis hoje. Sem cartão de crédito. Sem fidelidade.
+              Saiba agora. Comece grátis, sem cartão de crédito, sem fidelidade.
             </p>
             <div className="flex flex-col sm:flex-row gap-3 justify-center">
               <Link
@@ -551,7 +555,7 @@ export default function LandingPage() {
       <footer style={{ backgroundColor: COLORS.surface, borderTop: `1px solid ${COLORS.border}` }}>
         <div className="mx-auto max-w-7xl px-5 sm:px-8 py-12 grid sm:grid-cols-2 md:grid-cols-4 gap-8">
           <div>
-            <WayvoMark size={40} />
+            <WayvoMark size={32} />
             <p style={{ ...fontBody, color: COLORS.muted, fontSize: 13 }} className="mt-4 leading-relaxed max-w-xs">
               A plataforma de gestão para locadoras de motos que decidem com dado.
             </p>
