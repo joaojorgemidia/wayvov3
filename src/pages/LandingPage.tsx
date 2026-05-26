@@ -53,13 +53,43 @@ const fontBody: React.CSSProperties = { fontFamily: "'Figtree', sans-serif" };
 const fontMono: React.CSSProperties = { fontFamily: "'DM Mono', monospace" };
 
 function WayvoMark({ size = 28, color = COLORS.ink }: { size?: number; color?: string }) {
+  // Símbolo oficial do brandbook WAYVO 2025:
+  // - chevron dominante apontando à direita (afunilado 4.5pt → 3pt)
+  // - ghost trail (rastro) 20% de opacidade
+  // - waypoint (círculo r=4.5) no vértice — o diferencial irreproduzível
+  const symbolH = Math.round(size * (48 / 42));
   return (
-    <div className="flex items-center gap-2">
-      <svg width={size} height={size} viewBox="0 0 28 28" fill="none" aria-label="Wayvo">
-        <polyline points="3,2 14,14 3,26" stroke={COLORS.primary} strokeWidth="4.5" strokeLinecap="round" strokeLinejoin="round" />
-        <polyline points="18,6 25,14 18,22" stroke={color} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+    <div className="flex items-center gap-2.5" aria-label="wayvo">
+      <svg width={size} height={symbolH} viewBox="0 0 42 48" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        {/* Ghost trail */}
+        <polyline
+          points="4,16 12,23 4,30"
+          stroke={COLORS.primary}
+          strokeWidth="1.3"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          opacity="0.2"
+        />
+        {/* Braço superior afunilado */}
+        <polygon points="17.6,3.4 32.1,18.9 29.9,21.1 14.4,6.6" fill={COLORS.primary} />
+        {/* Braço inferior afunilado */}
+        <polygon points="14.4,39.4 29.9,24.9 32.1,27.1 17.6,42.6" fill={COLORS.primary} />
+        {/* Waypoint */}
+        <circle cx="34" cy="23" r="4.5" fill={COLORS.primary} />
       </svg>
-      <span style={{ ...fontHead, color, fontSize: 22, lineHeight: 1, textTransform: "lowercase" }}>wayvo</span>
+      <span
+        style={{
+          fontFamily: "'Syne', sans-serif",
+          fontWeight: 700,
+          letterSpacing: "0.06em",
+          color,
+          fontSize: 22,
+          lineHeight: 1,
+          textTransform: "lowercase",
+        }}
+      >
+        wayvo
+      </span>
     </div>
   );
 }
