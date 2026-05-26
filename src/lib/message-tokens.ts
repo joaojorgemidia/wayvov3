@@ -95,6 +95,7 @@ export const TOKEN_CATALOG = {
     "{DATA_PAGAMENTO}",
     "{DIAS_ATRASO}",
     "{ATRASO_TEXTO}",
+    "{BLOCO_ATRASO}",
     "{MULTA_ATRASO}",
     "{JUROS_DEVIDO}",
     "{JUROS_PAGOS}",
