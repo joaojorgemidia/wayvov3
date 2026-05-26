@@ -230,6 +230,8 @@ export default function LocacoesPage() {
       const endDate = parseISO(rental.dataFimContrato);
       const freq = rental.frequenciaPagamento;
       const aluguelSerieId = `aluguel-${rental.id}`;
+      const prePaga = !!rental.cobrancaPrePaga;
+      const freqLabel = freq === "semanal" ? "semana" : freq === "quinzenal" ? "quinzena" : "mês";
 
       // Dias do período base (usado para pro-rata da última semana parcial)
       const periodDays = freq === "semanal" ? 7 : freq === "quinzenal" ? 15 : 30;
@@ -247,11 +249,18 @@ export default function LocacoesPage() {
         return addMonths(d, 1);
       };
 
-      let current = advanceDate(startDate);
-      let lastChargeDate = startDate; // rastreia data da última cobrança gerada
+      const fmtBr = (d: Date) => d.toLocaleDateString("pt-BR");
+
+      // Pré-pago: 1ª cobrança vence na data de início (cobre [início, início+período-1]).
+      // Pós-pago: 1ª cobrança vence em início+período (cobre [início, início+período-1]).
+      let current = prePaga ? startDate : advanceDate(startDate);
+      let lastChargeDate = prePaga ? startDate : startDate; // rastreia data da última cobrança gerada
       let idx = 1;
       while (isBefore(current, endDate) || isEqual(current, endDate)) {
         const dataStr = current.toISOString().split("T")[0];
+        const periodStart = prePaga ? current : addDays(current, -periodDays);
+        const periodEnd = prePaga ? addDays(current, periodDays - 1) : addDays(current, -1);
+        const periodoTxt = `${fmtBr(periodStart)} a ${fmtBr(periodEnd)}`;
         // Ao editar: só gera entradas futuras (preenche lacunas sem mexer no passado)
         const shouldGenerate = !isEditing || (dataStr >= today && !paidAluguelDates.has(dataStr));
         if (shouldGenerate) {
@@ -263,7 +272,7 @@ export default function LocacoesPage() {
               tipo: "receita", categoria: "aluguel",
               serieId: existing?.serieId ?? aluguelSerieId,
               recurringGroupId: existing?.recurringGroupId ?? aluguelGroupId,
-              descricao: `Aluguel ${idx}ª semana - ${numContrato} - ${motoPlaca}${obsExtra}`,
+              descricao: `Aluguel ${idx}ª ${freqLabel} (${periodoTxt}) - ${numContrato} - ${motoPlaca}${obsExtra}`,
               valor: rental.valorDiario, data: dataStr, pago: false,
               dataPrevista: dataStr,
               motoId: rental.motoId, rentalId: rental.id, clienteId: client.id,
@@ -283,6 +292,11 @@ export default function LocacoesPage() {
           ((rental.valorDiario / periodDays) * remainingDays).toFixed(2),
         );
         const dataStr = endDate.toISOString().split("T")[0];
+        // Pro-rata: vencimento no fim do contrato; período = [lastChargeDate+1, endDate]
+        // (em pré-pago a cobrança ainda ocorre na data de início do período parcial)
+        const partialStart = prePaga ? addDays(lastChargeDate, periodDays) : addDays(lastChargeDate, 1);
+        const partialEnd = endDate;
+        const periodoTxt = `${fmtBr(partialStart)} a ${fmtBr(partialEnd)}`;
         const shouldGenerate = !isEditing || (dataStr >= today && !paidAluguelDates.has(dataStr));
         if (shouldGenerate) {
           const existingPartial = existingAluguelByDate.get(dataStr);
@@ -292,7 +306,7 @@ export default function LocacoesPage() {
               tipo: "receita", categoria: "aluguel",
               serieId: existingPartial?.serieId ?? aluguelSerieId,
               recurringGroupId: existingPartial?.recurringGroupId ?? aluguelGroupId,
-              descricao: `Aluguel ${idx}ª semana (${remainingDays}d) - ${numContrato} - ${motoPlaca}${obsExtra}`,
+              descricao: `Aluguel ${idx}ª ${freqLabel} (${periodoTxt}, ${remainingDays}d) - ${numContrato} - ${motoPlaca}${obsExtra}`,
               valor: proratedValue, data: dataStr, pago: false,
               dataPrevista: dataStr,
               motoId: rental.motoId, rentalId: rental.id, clienteId: client.id,
