@@ -241,6 +241,7 @@ function dbToRental(r: any): Rental {
     proximoPagamento: r.proximo_pagamento || null,
     tempoMinimoContrato: r.tempo_minimo_contrato ?? null,
     frequenciaPagamento: r.frequencia_pagamento || "",
+    cobrancaPrePaga: r.cobranca_pre_paga ?? false,
     valorDiario: Number(r.valor_diario) || 0,
     valorCaucao: Number(r.valor_caucao) || 0,
     caucaoPendente: r.caucao_pendente || false,
