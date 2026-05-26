@@ -479,7 +479,18 @@ export default function CobrancasSemanaPage() {
         highlights: [
           { label: "Valor pago", value: `R$ ${valor.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, tone: "primary" },
         ],
-        tokens: buildAllTokens({ moto, rental, cliente: clienteObj }),
+        tokens: buildAllTokens({
+          moto,
+          rental,
+          cliente: clienteObj,
+          cobranca: buildCobrancaEvent({
+            rental,
+            entry: item.entry,
+            due: dueDate,
+            financial: cache.financial,
+            diasAtraso,
+          }),
+        }),
       });
 
       toast.success("Pagamento confirmado");
