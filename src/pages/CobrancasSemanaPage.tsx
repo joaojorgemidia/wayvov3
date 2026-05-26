@@ -437,12 +437,13 @@ export default function CobrancasSemanaPage() {
       if (semanaNum != null) semanaTxt = `${semanaNum}ª semana`;
 
       // Juros / multa por atraso (regra padrão do sistema quando não configurado na locação)
+      const cobrancaCfg = activeCompany?.cobrancaConfig ?? { multaAtraso: 15, jurosDiario: 7 };
       const payTs = new Date(payDate + "T12:00:00").getTime();
       const diasAtraso = dueDate ? Math.max(0, Math.floor((payTs - dueDate.getTime()) / 86400000)) : 0;
-      const multa = diasAtraso > 0 ? (rental?.multaAtraso || DEFAULT_MULTA_ATRASO) : 0;
+      const multa = diasAtraso > 0 ? (rental?.multaAtraso || cobrancaCfg.multaAtraso) : 0;
       const jurosMes = rental?.jurosAtrasoMes || 0;
       const jurosCalc = diasAtraso > 0 ? valorOriginal * (jurosMes / 100 / 30) * diasAtraso : 0;
-      const jurosDiarioFix = diasAtraso > 0 ? DEFAULT_JUROS_DIARIO * diasAtraso : 0;
+      const jurosDiarioFix = diasAtraso > 0 ? cobrancaCfg.jurosDiario * diasAtraso : 0;
       const jurosDevido = multa + jurosCalc + jurosDiarioFix;
       const excedente = Math.max(0, valor - valorOriginal);
       const jurosPago = Math.min(excedente, jurosDevido);
