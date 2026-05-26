@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import wayvoLogoLight from "@/assets/wayvo-logo-light.png";
-import wayvoLogoDark from "@/assets/wayvo-logo-dark.png";
+import { WayvoLogo } from "@/components/WayvoLogo";
 import {
   ArrowRight,
   Menu,
@@ -27,14 +26,7 @@ import {
 
 /* ============================================================
    Wayvo — Landing Page
-   Brand tokens locais (não afetam o app autenticado)
-   - Canvas: #F0FFF8 / #FFFFFF
-   - Primary: #00C86A
-   - Ink: #0A1810
-   - Muted: #687A6E
-   - Headings: Syne 700 (lowercase para marca)
-   - Body: Figtree 400/500
-   - Dados: DM Mono 400
+   Brand tokens conforme Brandbook 2025
 ============================================================ */
 
 const COLORS = {
@@ -54,19 +46,9 @@ const fontHead: React.CSSProperties = { fontFamily: "'Syne', sans-serif", fontWe
 const fontBody: React.CSSProperties = { fontFamily: "'Figtree', sans-serif" };
 const fontMono: React.CSSProperties = { fontFamily: "'DM Mono', monospace" };
 
+/** Alias local — usa o componente oficial */
 function WayvoMark({ size = 28, variant = "light" }: { size?: number; variant?: "light" | "dark" }) {
-  // Logo oficial WAYVO — usa PNG do brandbook
-  // Proporção original ~1120x320 → ratio 3.5
-  const src = variant === "dark" ? wayvoLogoDark : wayvoLogoLight;
-  const height = size;
-  return (
-    <img
-      src={src}
-      alt="wayvo"
-      height={height}
-      style={{ height, width: "auto", display: "block" }}
-    />
-  );
+  return <WayvoLogo size={size} variant={variant} />;
 }
 
 
