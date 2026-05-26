@@ -457,23 +457,17 @@ export default function CobrancasSemanaPage() {
         `VENCIMENTO: ${vencimento}${semanaTxt ? ` (${semanaTxt})` : ""}`,
         ``,
         `💰 *VALORES*`,
-        `${descricao}: ${fmtBRL(valorOriginal)}`,
-        ...(diasAtraso > 0
-          ? [
-              `Atraso: ${diasAtraso} ${diasAtraso === 1 ? "dia" : "dias"}`,
-              `Juros pagos: ${fmtBRL(jurosPago)}`,
-              ...(jurosPendente > 0 ? [`Juros pendentes: ${fmtBRL(jurosPendente)}`] : []),
-            ]
-          : []),
+        `${descricao}: ${fmtBRL(valorOriginal)}{BLOCO_ATRASO}`,
         `─────────────`,
         `Total pago: *${valorFmt}*`,
         ``,
         `📅 *PAGAMENTO*`,
-        `Data: ${dataPagamento}`,
+        `Data: {DATA_PAGAMENTO}`,
         `Banco: ${form.conta || "—"}`,
         ``,
         `— wayvo · dado · decisão · destino`,
       ];
+
 
       setPayConfirmPopup({
         mensagem: linhas.join("\n"),

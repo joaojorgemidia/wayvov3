@@ -95,6 +95,7 @@ export const TOKEN_CATALOG = {
     "{DATA_PAGAMENTO}",
     "{DIAS_ATRASO}",
     "{ATRASO_TEXTO}",
+    "{BLOCO_ATRASO}",
     "{MULTA_ATRASO}",
     "{JUROS_DEVIDO}",
     "{JUROS_PAGOS}",
@@ -178,6 +179,7 @@ export const TOKEN_DESCRIPTIONS: Record<string, string> = {
   "{DATA_PAGAMENTO}": "Data em que o pagamento foi efetivado",
   "{DIAS_ATRASO}": "Dias em atraso (calculado pela data do pagamento)",
   "{ATRASO_TEXTO}": "Texto do atraso (ex.: 3 dias)",
+  "{BLOCO_ATRASO}": "Bloco multilinha com atraso + juros (vazio se em dia)",
   "{MULTA_ATRASO}": "Multa por atraso (R$)",
   "{JUROS_DEVIDO}": "Total de juros + multa devidos",
   "{JUROS_PAGOS}": "Juros/multa já pagos no recebimento",
@@ -410,6 +412,19 @@ export function cobrancaTokens(e?: CobrancaEventInput | null): TokenMap {
     e.diasAtraso != null && e.diasAtraso > 0
       ? `${e.diasAtraso} ${e.diasAtraso === 1 ? "dia" : "dias"}`
       : "";
+  // Bloco multilinha que aparece somente quando há atraso. Começa com \n
+  // para encaixar inline ao final de uma linha existente do template.
+  const blocoAtraso =
+    e.diasAtraso != null && e.diasAtraso > 0
+      ? [
+          ``,
+          `Atraso: ${atrasoTxt}`,
+          `Juros pagos: ${fmtMoney(e.jurosPago)}`,
+          ...(e.jurosPendente != null && e.jurosPendente > 0
+            ? [`Juros pendentes: ${fmtMoney(e.jurosPendente)}`]
+            : []),
+        ].join("\n")
+      : "";
   return {
     "{SEMANA_NUMERO}": e.semanaNumero != null ? `${e.semanaNumero}ª` : "",
     "{SEMANA_PERIODO}": periodo,
@@ -423,6 +438,7 @@ export function cobrancaTokens(e?: CobrancaEventInput | null): TokenMap {
     "{DATA_PAGAMENTO}": fmtDate(e.dataPagamento),
     "{DIAS_ATRASO}": e.diasAtraso != null ? String(e.diasAtraso) : "",
     "{ATRASO_TEXTO}": atrasoTxt,
+    "{BLOCO_ATRASO}": blocoAtraso,
     "{MULTA_ATRASO}": fmtMoney(e.multaAtraso),
     "{JUROS_DEVIDO}": fmtMoney(e.jurosDevido),
     "{JUROS_PAGOS}": fmtMoney(e.jurosPago),
@@ -430,6 +446,7 @@ export function cobrancaTokens(e?: CobrancaEventInput | null): TokenMap {
     "{COBRANCA_TIPO}":
       e.cobrancaPrePaga == null ? "" : e.cobrancaPrePaga ? "Pré-paga" : "Pós-paga",
   };
+
 }
 
 // ============== Composição & render ==============

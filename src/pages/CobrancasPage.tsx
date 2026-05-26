@@ -560,18 +560,14 @@ export default function CobrancasPage() {
           linhas.push(`VENCIMENTO: ${vencimento}${semanaTxt ? ` (${semanaTxt})` : ""}`);
           linhas.push("");
           linhas.push(`💰 *VALORES*`);
-          linhas.push(`${descricao}: ${fmtBRL(valorOriginal)}`);
-          if (diasAtraso > 0) {
-            linhas.push(`Atraso: ${diasAtraso} ${diasAtraso === 1 ? "dia" : "dias"}`);
-            linhas.push(`Juros pagos: ${fmtBRL(jurosPago)}`);
-            if (jurosPendente > 0) linhas.push(`Juros pendentes: ${fmtBRL(jurosPendente)}`);
-          }
+          linhas.push(`${descricao}: ${fmtBRL(valorOriginal)}{BLOCO_ATRASO}`);
           linhas.push(`─────────────`);
           linhas.push(`Total pago: *${valorFmt}*`);
           linhas.push("");
           linhas.push(`📅 *PAGAMENTO*`);
-          linhas.push(`Data: ${dataPagamento}`);
+          linhas.push(`Data: {DATA_PAGAMENTO}`);
           linhas.push(`Banco: ${resolveData.conta || "—"}`);
+
           linhas.push("");
           linhas.push(`— wayvo · dado · decisão · destino`);
 
