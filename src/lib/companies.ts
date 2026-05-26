@@ -22,11 +22,17 @@ export const DEFAULT_ASAAS_CONFIG: AsaasConfig = {
   notifyDaysAfterDelay: 0,
 };
 
+export interface DetranConfig {
+  login: string;
+  senhaHash: string; // armazenado como recebido do usuário, protegido por RLS
+}
+
 export interface Company {
   id: string;
   nome: string;
   cnpj: string;
   asaasConfig?: AsaasConfig | null;
+  detranConfig?: DetranConfig | null;
 }
 
 const COMPANIES_KEY = "moto-fleet-companies-v1";

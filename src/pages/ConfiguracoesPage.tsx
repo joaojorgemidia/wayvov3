@@ -3,18 +3,36 @@ import { useCompany } from "@/contexts/CompanyContext";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Settings, CreditCard, CheckCircle2, XCircle } from "lucide-react";
+import { Settings, CreditCard, CheckCircle2, XCircle, ShieldCheck, Car } from "lucide-react";
 import AsaasConfigDialog from "@/components/AsaasConfigDialog";
-import { AsaasConfig } from "@/lib/companies";
+import DetranConfigDialog from "@/components/DetranConfigDialog";
+import { AsaasConfig, DetranConfig } from "@/lib/companies";
+import { toast } from "sonner";
 
 export default function ConfiguracoesPage() {
-  const { activeCompany, updateAsaasConfig } = useCompany();
+  const { activeCompany, updateAsaasConfig, updateDetranConfig } = useCompany();
   const [asaasOpen, setAsaasOpen] = useState(false);
+  const [detranOpen, setDetranOpen] = useState(false);
 
   const asaasCfg = activeCompany?.asaasConfig;
+  const detranCfg = activeCompany?.detranConfig;
 
   const handleSaveAsaas = async (config: AsaasConfig) => {
     await updateAsaasConfig(activeCompany.id, config);
+  };
+
+  const handleSaveDetran = async (config: DetranConfig | null) => {
+    await updateDetranConfig(activeCompany.id, config);
+    if (config) toast.success("DETRAN-GO conectado com sucesso.");
+    else toast.success("Integração DETRAN removida.");
+  };
+
+  // Mascara o login para exibição: joao@email.com → j***@email.com
+  const maskLogin = (login: string) => {
+    const [user, domain] = login.split("@");
+    if (domain) return `${user[0]}***@${domain}`;
+    if (login.length >= 4) return `${login.slice(0, 3)}${"•".repeat(login.length - 3)}`;
+    return login;
   };
 
   return (
@@ -24,7 +42,7 @@ export default function ConfiguracoesPage() {
         <h1 className="text-xl font-semibold">Configurações</h1>
       </div>
 
-      {/* Asaas / Cobranças */}
+      {/* ── Asaas / Cobranças ──────────────────────────────────────────── */}
       <Card>
         <CardHeader className="pb-3">
           <div className="flex items-center justify-between">
@@ -64,9 +82,58 @@ export default function ConfiguracoesPage() {
               )}
             </div>
           )}
-
           <Button variant="outline" size="sm" onClick={() => setAsaasOpen(true)}>
             {asaasCfg ? "Editar configuração" : "Configurar"}
+          </Button>
+        </CardContent>
+      </Card>
+
+      {/* ── DETRAN-GO ──────────────────────────────────────────────────── */}
+      <Card className={detranCfg ? "border-blue-200 dark:border-blue-900/40" : ""}>
+        <CardHeader className="pb-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Car className="h-4 w-4 text-muted-foreground" />
+              <CardTitle className="text-base">Consulta de Débitos — DETRAN-GO</CardTitle>
+            </div>
+            {detranCfg
+              ? <Badge className="gap-1 text-xs bg-blue-600 hover:bg-blue-600"><ShieldCheck className="h-3 w-3" />Conectado</Badge>
+              : <Badge variant="secondary" className="gap-1 text-xs"><XCircle className="h-3 w-3" />Não configurado</Badge>
+            }
+          </div>
+          <CardDescription>
+            Consulte multas e IPVA dos seus veículos diretamente no portal do DETRAN-GO, com atribuição automática ao locatário do período.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {detranCfg ? (
+            <div className="rounded-lg border bg-blue-50 dark:bg-blue-950/20 border-blue-100 dark:border-blue-900/30 p-3 space-y-2">
+              <div className="flex items-center gap-2">
+                <ShieldCheck className="h-4 w-4 text-blue-600 shrink-0" />
+                <div>
+                  <p className="text-sm font-medium text-blue-900 dark:text-blue-200">
+                    Conta conectada
+                  </p>
+                  <p className="text-xs text-blue-700 dark:text-blue-400 font-mono">
+                    {maskLogin(detranCfg.login)}
+                  </p>
+                </div>
+              </div>
+              <p className="text-xs text-blue-600 dark:text-blue-400">
+                Suas credenciais estão criptografadas e são usadas apenas para consultas dos veículos desta locadora.
+              </p>
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              Configure o acesso ao portal DETRAN-GO para habilitar a consulta automática de multas e IPVA na página de Multas.
+            </p>
+          )}
+          <Button
+            variant={detranCfg ? "outline" : "default"}
+            size="sm"
+            onClick={() => setDetranOpen(true)}
+          >
+            {detranCfg ? "Editar credenciais" : "Conectar ao DETRAN-GO"}
           </Button>
         </CardContent>
       </Card>
@@ -76,6 +143,14 @@ export default function ConfiguracoesPage() {
         onClose={() => setAsaasOpen(false)}
         onSave={handleSaveAsaas}
         initial={asaasCfg}
+        companyName={activeCompany?.nome}
+      />
+
+      <DetranConfigDialog
+        open={detranOpen}
+        onClose={() => setDetranOpen(false)}
+        onSave={handleSaveDetran}
+        current={detranCfg}
         companyName={activeCompany?.nome}
       />
     </div>

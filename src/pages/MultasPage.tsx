@@ -2,7 +2,9 @@ import { useState, useMemo, useEffect, useCallback } from "react";
 import { Fine, Motorcycle, Client, Rental } from "@/lib/types";
 import { saveFines } from "@/lib/store";
 import { useDataCacheSnapshot } from "@/lib/data-cache";
+import { useCompany } from "@/contexts/CompanyContext";
 import { supabase } from "@/integrations/supabase/client";
+import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
@@ -12,7 +14,7 @@ import { Label } from "@/components/ui/label";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Plus, Search, AlertTriangle, Pencil, Trash2, RefreshCw, Car, Loader2, CheckCircle2, XCircle, Info } from "lucide-react";
+import { Plus, Search, AlertTriangle, Pencil, Trash2, RefreshCw, Car, Loader2, CheckCircle2, XCircle, Info, Settings } from "lucide-react";
 import { usePermissions } from "@/hooks/usePermissions";
 import { toast } from "sonner";
 
@@ -104,11 +106,15 @@ interface SelectableDebit extends DetranDebit {
 // ─── Main component ────────────────────────────────────────────────────────────
 export default function MultasPage() {
   const cache = useDataCacheSnapshot();
+  const { activeCompany } = useCompany();
+  const navigate = useNavigate();
   const [fines, setFines] = useState<Fine[]>([]);
   const motos = cache.motos;
   const clients = cache.clients;
   const rentals = cache.rentals as Rental[];
   useEffect(() => { setFines(cache.fines); }, [cache.fines]);
+
+  const detranConfigurado = !!activeCompany?.detranConfig?.login;
 
   const [search, setSearch] = useState("");
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -183,7 +189,7 @@ export default function MultasPage() {
     setSelected(new Set());
 
     const { data, error } = await supabase.functions.invoke("detran-go-debitos", {
-      body: { motoIds: ids },
+      body: { motoIds: ids, companyId: activeCompany?.id },
     });
 
     if (error) {
@@ -450,6 +456,30 @@ export default function MultasPage() {
             <p className="text-sm text-muted-foreground">Busca multas e débitos diretamente no portal do DETRAN-GO via InfoSimples.</p>
           </SheetHeader>
 
+          {/* Banner: DETRAN não configurado */}
+          {!detranConfigurado && (
+            <div className="mx-6 mt-4 rounded-lg border border-yellow-200 bg-yellow-50 dark:border-yellow-900/40 dark:bg-yellow-950/20 p-4 flex items-start gap-3">
+              <AlertTriangle className="h-5 w-5 text-yellow-600 shrink-0 mt-0.5" />
+              <div className="flex-1 space-y-1.5">
+                <p className="text-sm font-semibold text-yellow-900 dark:text-yellow-200">
+                  Credenciais do DETRAN-GO não configuradas
+                </p>
+                <p className="text-xs text-yellow-700 dark:text-yellow-400">
+                  Para consultar multas e débitos, informe o login e senha do portal DETRAN-GO nas configurações da locadora.
+                </p>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7 text-xs border-yellow-400 text-yellow-800 hover:bg-yellow-100 dark:border-yellow-700 dark:text-yellow-300"
+                  onClick={() => { setDetranOpen(false); navigate("/configuracoes"); }}
+                >
+                  <Settings className="h-3.5 w-3.5 mr-1.5" />
+                  Ir para Configurações
+                </Button>
+              </div>
+            </div>
+          )}
+
           {/* Seleção de motos */}
           <div className="px-6 py-4 border-b space-y-3">
             <div className="flex items-center justify-between">
@@ -480,7 +510,7 @@ export default function MultasPage() {
             </div>
             <Button
               onClick={handleConsultar}
-              disabled={selectedMotoIds.size === 0 || motoResults.some(r => r.loading)}
+              disabled={!detranConfigurado || selectedMotoIds.size === 0 || motoResults.some(r => r.loading)}
               className="gap-2"
             >
               {motoResults.some(r => r.loading) ? (

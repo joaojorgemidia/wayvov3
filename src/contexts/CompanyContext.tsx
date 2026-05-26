@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useCallback, ReactNode, useEffect, useMemo } from "react";
-import { Company, AsaasConfig, loadCompanies, saveCompanies, getActiveCompanyId, setActiveCompanyId } from "@/lib/companies";
+import { Company, AsaasConfig, DetranConfig, loadCompanies, saveCompanies, getActiveCompanyId, setActiveCompanyId } from "@/lib/companies";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
@@ -11,6 +11,7 @@ interface CompanyContextType {
   addCompany: (company: Company) => Promise<void>;
   updateCompany: (id: string, updates: { nome: string; cnpj: string }) => Promise<void>;
   updateAsaasConfig: (id: string, config: AsaasConfig) => Promise<void>;
+  updateDetranConfig: (id: string, config: DetranConfig | null) => Promise<void>;
   removeCompany: (id: string) => Promise<void>;
 }
 
@@ -49,9 +50,9 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
     if (!user) return;
     let cancelled = false;
     (async () => {
-      const { data, error } = await supabase.from("companies").select("id, nome, cnpj, asaas_config");
+      const { data, error } = await supabase.from("companies").select("id, nome, cnpj, asaas_config, detran_config");
       if (cancelled || error || !data) return;
-      const dbCompanies: Company[] = data.map((c: any) => ({ id: c.id, nome: c.nome, cnpj: c.cnpj, asaasConfig: c.asaas_config ?? null }));
+      const dbCompanies: Company[] = data.map((c: any) => ({ id: c.id, nome: c.nome, cnpj: c.cnpj, asaasConfig: c.asaas_config ?? null, detranConfig: c.detran_config ?? null }));
 
       // One-time seed: if admin has local companies that aren't in DB yet, upload them
       if (isAdmin) {
@@ -219,8 +220,19 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
     toast.success("Configuração Asaas salva");
   }, [companies]);
 
+  const updateDetranConfig = useCallback(async (id: string, config: DetranConfig | null) => {
+    const { error } = await supabase.from("companies").update({ detran_config: config } as any).eq("id", id);
+    if (error) {
+      toast.error("Falha ao salvar integração DETRAN: " + error.message);
+      return;
+    }
+    const next = companies.map(c => c.id === id ? { ...c, detranConfig: config } : c);
+    setCompanies(next);
+    saveCompanies(next);
+  }, [companies]);
+
   return (
-    <CompanyContext.Provider value={{ companies: visibleCompanies, activeCompany, switchCompany, addCompany, updateCompany, updateAsaasConfig, removeCompany }}>
+    <CompanyContext.Provider value={{ companies: visibleCompanies, activeCompany, switchCompany, addCompany, updateCompany, updateAsaasConfig, updateDetranConfig, removeCompany }}>
       {children}
     </CompanyContext.Provider>
   );
