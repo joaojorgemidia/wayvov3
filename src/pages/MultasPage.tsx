@@ -4,7 +4,6 @@ import { saveFines } from "@/lib/store";
 import { useDataCacheSnapshot } from "@/lib/data-cache";
 import { useCompany } from "@/contexts/CompanyContext";
 import { supabase } from "@/integrations/supabase/client";
-import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
@@ -14,9 +13,11 @@ import { Label } from "@/components/ui/label";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Plus, Search, AlertTriangle, Pencil, Trash2, RefreshCw, Car, Loader2, CheckCircle2, XCircle, Info, Settings } from "lucide-react";
+import { Plus, Search, AlertTriangle, Pencil, Trash2, RefreshCw, Car, Loader2, CheckCircle2, XCircle, Info, Settings, ShieldCheck } from "lucide-react";
 import { usePermissions } from "@/hooks/usePermissions";
 import { toast } from "sonner";
+import DetranConfigDialog from "@/components/DetranConfigDialog";
+import { DetranConfig } from "@/lib/companies";
 
 const statusLabel: Record<string, string> = { pendente: "Pendente", paga: "Paga", contestada: "Contestada", transferida: "Transferida" };
 const statusColor: Record<string, string> = { pendente: "bg-warning/10 text-warning", paga: "bg-success/10 text-success", contestada: "bg-primary/10 text-primary", transferida: "bg-muted text-muted-foreground" };
@@ -106,8 +107,8 @@ interface SelectableDebit extends DetranDebit {
 // ─── Main component ────────────────────────────────────────────────────────────
 export default function MultasPage() {
   const cache = useDataCacheSnapshot();
-  const { activeCompany } = useCompany();
-  const navigate = useNavigate();
+  const { activeCompany, updateDetranConfig } = useCompany();
+  const [detranConfigOpen, setDetranConfigOpen] = useState(false);
   const [fines, setFines] = useState<Fine[]>([]);
   const motos = cache.motos;
   const clients = cache.clients;
@@ -300,9 +301,20 @@ export default function MultasPage() {
         </div>
         <div className="flex gap-2">
           {canCreate && (
-            <Button variant="outline" onClick={openDetran} className="gap-2">
-              <RefreshCw className="h-4 w-4" /> Consultar DETRAN
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button variant="outline" onClick={openDetran} className="gap-2">
+                <RefreshCw className="h-4 w-4" /> Consultar DETRAN
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => setDetranConfigOpen(true)}
+                title={detranConfigurado ? "Editar credenciais DETRAN-GO" : "Configurar DETRAN-GO"}
+                className={detranConfigurado ? "text-blue-600 hover:text-blue-700" : "text-muted-foreground"}
+              >
+                {detranConfigurado ? <ShieldCheck className="h-4 w-4" /> : <Settings className="h-4 w-4" />}
+              </Button>
+            </div>
           )}
           {canCreate && (
             <Button onClick={() => { setForm(emptyFine()); setMode("add"); setDialogOpen(true); }} className="gap-2">
@@ -446,6 +458,19 @@ export default function MultasPage() {
         </DialogContent>
       </Dialog>
 
+      {/* ── Config DETRAN ────────────────────────────────────────────────────── */}
+      <DetranConfigDialog
+        open={detranConfigOpen}
+        onClose={() => setDetranConfigOpen(false)}
+        onSave={async (config: DetranConfig | null) => {
+          await updateDetranConfig(activeCompany.id, config);
+          if (config) toast.success("DETRAN-GO conectado com sucesso.");
+          else toast.success("Integração DETRAN removida.");
+        }}
+        current={activeCompany?.detranConfig}
+        companyName={activeCompany?.nome}
+      />
+
       {/* ── Sheet DETRAN ─────────────────────────────────────────────────────── */}
       <Sheet open={detranOpen} onOpenChange={setDetranOpen}>
         <SheetContent side="right" className="w-full sm:max-w-3xl overflow-y-auto flex flex-col gap-0 p-0">
@@ -471,10 +496,10 @@ export default function MultasPage() {
                   size="sm"
                   variant="outline"
                   className="h-7 text-xs border-yellow-400 text-yellow-800 hover:bg-yellow-100 dark:border-yellow-700 dark:text-yellow-300"
-                  onClick={() => { setDetranOpen(false); navigate("/configuracoes"); }}
+                  onClick={() => { setDetranOpen(false); setDetranConfigOpen(true); }}
                 >
                   <Settings className="h-3.5 w-3.5 mr-1.5" />
-                  Ir para Configurações
+                  Configurar DETRAN-GO
                 </Button>
               </div>
             </div>

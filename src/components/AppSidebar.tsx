@@ -38,6 +38,7 @@ const items: MenuItem[] = [
     ],
   },
   { title: "Clientes", url: "/clientes", icon: Users },
+  { title: "Multas de trânsito", url: "/multas", icon: AlertTriangle },
   {
     title: "Motos", url: "/motos", icon: Bike,
     children: [
@@ -49,7 +50,6 @@ const items: MenuItem[] = [
 
 // Apenas os mais relevantes em breve — demais ficam em "Mais"
 const comingSoonItems: MenuItem[] = [
-  { title: "Multas de trânsito", url: "/multas", icon: AlertTriangle },
   { title: "Relatórios", url: "/relatorios", icon: BarChart3 },
 ];
 
