@@ -42,7 +42,7 @@ function makeEmptyRental(): Rental {
     id: crypto.randomUUID(), motoId: "", clienteId: "", vendedor: "",
     dataInicio: new Date().toISOString().split("T")[0], horaInicio: "08:00",
     dataFim: null, dataFimContrato: null, proximoPagamento: null,
-    tempoMinimoContrato: null, frequenciaPagamento: "",
+    tempoMinimoContrato: null, frequenciaPagamento: "", cobrancaPrePaga: false,
     valorDiario: 0, valorCaucao: 0, caucaoPendente: false, caucaoParcelado: false, parcelasCaucao: [],
     multaAtraso: 0, jurosAtrasoMes: 0,
     localRetirada: "", localDevolucao: "",
