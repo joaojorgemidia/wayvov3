@@ -515,19 +515,33 @@ export default function CobrancasPage() {
           const descricao = item.descricao || entry.descricao || item.categoriaLabel || "Pagamento";
           const dataPagamento = formatDate(resolveData.data);
 
+          const valorFmt = `R$ ${valorPago.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+          const vencimento = entry.data
+            ? new Date(entry.data + "T12:00:00").toLocaleDateString("pt-BR")
+            : dataPagamento;
+          const motoLinha = moto?.placa
+            ? `${moto.placa}${moto.modelo ? ` — ${moto.modelo}` : ""}`
+            : (entry.placa || "—");
+
           const linhas: string[] = [];
-          linhas.push(`Olá, ${cliente?.nome || "[NOME]"}! 👋`);
+          linhas.push(`✅ *PAGAMENTO CONFIRMADO*`);
           linhas.push("");
-          linhas.push(`Confirmamos o recebimento do seu pagamento. ✅`);
+          linhas.push(`LOCATÁRIO: ${cliente?.nome || entry.clienteNome || "[NOME]"}`);
+          linhas.push(`MOTO: ${motoLinha}`);
+          linhas.push(`VENCIMENTO: ${vencimento}`);
           linhas.push("");
-          linhas.push(`📋 *${descricao}*`);
-          linhas.push(`• Valor: *R$ ${valorPago.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}*`);
-          linhas.push(`• Data: *${dataPagamento}*`);
-          if (moto?.placa) {
-            linhas.push(`• Moto: *${moto.placa}*${moto.modelo ? ` (${moto.modelo})` : ""}`);
+          linhas.push(`💰 *VALORES*`);
+          linhas.push(`${descricao}: ${valorFmt}`);
+          linhas.push(`─────────────`);
+          linhas.push(`Total pago: *${valorFmt}*`);
+          linhas.push("");
+          linhas.push(`📅 *PAGAMENTO*`);
+          linhas.push(`Data: ${dataPagamento}`);
+          if (resolveData.conta) {
+            linhas.push(`Conta: ${resolveData.conta}`);
           }
           linhas.push("");
-          linhas.push("Qualquer dúvida, estamos à disposição. 🏍️");
+          linhas.push(`— wayvo · dado · decisão · destino`);
 
           setMessagePopup({
             open: true,
