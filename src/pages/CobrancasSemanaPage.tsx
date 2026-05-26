@@ -415,7 +415,16 @@ export default function CobrancasSemanaPage() {
       const valorOriginal = Number(item.entry.valor) || 0;
       const valorFmt = fmtBRL(valor);
       const dueDate = item.due || (item.entry.data ? new Date(item.entry.data + "T12:00:00") : null);
-      const vencimento = dueDate ? dueDate.toLocaleDateString("pt-BR") : dataPagamento;
+      const fmtDM = (d: Date) => `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}`;
+      let vencimento = dueDate ? dueDate.toLocaleDateString("pt-BR") : dataPagamento;
+      if (dueDate && rental) {
+        const { inicio, fim } = computeSemanaPeriodo(rental, dueDate);
+        if (inicio && fim) {
+          const ini = new Date(inicio + "T12:00:00");
+          const f = new Date(fim + "T12:00:00");
+          vencimento = `${fmtDM(ini)} até ${fmtDM(f)}`;
+        }
+      }
       const motoLinha = item.placa
         ? `${item.placa}${item.modelo ? ` — ${item.modelo}` : ""}`
         : "—";
@@ -435,13 +444,14 @@ export default function CobrancasSemanaPage() {
         }
       }
 
-      // Juros / multa por atraso
+      // Juros / multa por atraso (regra padrão do sistema quando não configurado na locação)
       const payTs = new Date(payDate + "T12:00:00").getTime();
       const diasAtraso = dueDate ? Math.max(0, Math.floor((payTs - dueDate.getTime()) / 86400000)) : 0;
-      const multa = diasAtraso > 0 ? (rental?.multaAtraso || 0) : 0;
+      const multa = diasAtraso > 0 ? (rental?.multaAtraso || DEFAULT_MULTA_ATRASO) : 0;
       const jurosMes = rental?.jurosAtrasoMes || 0;
       const jurosCalc = diasAtraso > 0 ? valorOriginal * (jurosMes / 100 / 30) * diasAtraso : 0;
-      const jurosDevido = multa + jurosCalc;
+      const jurosDiarioFix = diasAtraso > 0 ? DEFAULT_JUROS_DIARIO * diasAtraso : 0;
+      const jurosDevido = multa + jurosCalc + jurosDiarioFix;
       const excedente = Math.max(0, valor - valorOriginal);
       const jurosPago = Math.min(excedente, jurosDevido);
       const jurosPendente = Math.max(0, jurosDevido - jurosPago);
