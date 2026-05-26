@@ -245,7 +245,7 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
   }, [companies]);
 
   return (
-    <CompanyContext.Provider value={{ companies: visibleCompanies, activeCompany, switchCompany, addCompany, updateCompany, updateAsaasConfig, updateDetranConfig, removeCompany }}>
+    <CompanyContext.Provider value={{ companies: visibleCompanies, activeCompany, switchCompany, addCompany, updateCompany, updateAsaasConfig, updateDetranConfig, updateCobrancaConfig, removeCompany }}>
       {children}
     </CompanyContext.Provider>
   );
