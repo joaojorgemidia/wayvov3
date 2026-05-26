@@ -654,7 +654,7 @@ export function buildLocacoesPreview(
       dataFimContrato: null,
       proximoPagamento: null,
       tempoMinimoContrato: null,
-      frequenciaPagamento: "",
+      frequenciaPagamento: "", cobrancaPrePaga: false,
       valorDiario: valorSemanal,
       valorCaucao: 0,
       caucaoPendente: false,

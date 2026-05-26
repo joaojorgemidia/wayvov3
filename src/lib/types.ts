@@ -99,6 +99,8 @@ export interface Rental {
   proximoPagamento: string | null; // ISO date
   tempoMinimoContrato: number | null; // meses
   frequenciaPagamento: "semanal" | "quinzenal" | "mensal" | "";
+  /** true = locatário paga antecipado (cobrança no início do período). false = pós-pago (cobrança ao final). */
+  cobrancaPrePaga: boolean;
   valorDiario: number;
   valorCaucao: number;
   caucaoPendente: boolean;
