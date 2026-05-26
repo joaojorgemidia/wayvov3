@@ -672,18 +672,37 @@ export default function LocacoesPage() {
         <div className="flex items-center gap-3 rounded-md border bg-muted/50 px-4 py-2.5">
           <span className="text-sm font-medium">{selectedIds.size} locação(ões) selecionada(s)</span>
           <div className="flex gap-2 ml-auto">
-            <Button
-              size="sm" variant="outline" className="gap-1.5"
-              onClick={() => { setBulkFinalizarData(new Date().toISOString().split("T")[0]); setBulkFinalizarOpen(true); }}
-            >
-              <CheckCircle2 className="h-3.5 w-3.5" /> Finalizar selecionadas
-            </Button>
-            <Button
-              size="sm" variant="destructive" className="gap-1.5"
-              onClick={() => setBulkDeleteOpen(true)}
-            >
-              <Trash2 className="h-3.5 w-3.5" /> Excluir selecionadas
-            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button size="sm" variant="outline" className="gap-1.5">
+                  <MoreHorizontal className="h-3.5 w-3.5" /> Ações em massa
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-56">
+                <DropdownMenuLabel>Cobrança</DropdownMenuLabel>
+                <DropdownMenuItem onClick={() => handleBulkSetCobranca(true)} className="gap-2">
+                  <Wallet className="h-4 w-4" /> Marcar como Pré-paga
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => handleBulkSetCobranca(false)} className="gap-2">
+                  <Wallet className="h-4 w-4" /> Marcar como Pós-paga
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuLabel>Status</DropdownMenuLabel>
+                <DropdownMenuItem
+                  onClick={() => { setBulkFinalizarData(new Date().toISOString().split("T")[0]); setBulkFinalizarOpen(true); }}
+                  className="gap-2"
+                >
+                  <CheckCircle2 className="h-4 w-4" /> Finalizar selecionadas
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  onClick={() => setBulkDeleteOpen(true)}
+                  className="gap-2 text-destructive focus:text-destructive"
+                >
+                  <Trash2 className="h-4 w-4" /> Excluir selecionadas
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         </div>
       )}
