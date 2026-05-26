@@ -410,6 +410,19 @@ export function cobrancaTokens(e?: CobrancaEventInput | null): TokenMap {
     e.diasAtraso != null && e.diasAtraso > 0
       ? `${e.diasAtraso} ${e.diasAtraso === 1 ? "dia" : "dias"}`
       : "";
+  // Bloco multilinha que aparece somente quando há atraso. Começa com \n
+  // para encaixar inline ao final de uma linha existente do template.
+  const blocoAtraso =
+    e.diasAtraso != null && e.diasAtraso > 0
+      ? [
+          ``,
+          `Atraso: ${atrasoTxt}`,
+          `Juros pagos: ${fmtMoney(e.jurosPago)}`,
+          ...(e.jurosPendente != null && e.jurosPendente > 0
+            ? [`Juros pendentes: ${fmtMoney(e.jurosPendente)}`]
+            : []),
+        ].join("\n")
+      : "";
   return {
     "{SEMANA_NUMERO}": e.semanaNumero != null ? `${e.semanaNumero}ª` : "",
     "{SEMANA_PERIODO}": periodo,
@@ -423,6 +436,7 @@ export function cobrancaTokens(e?: CobrancaEventInput | null): TokenMap {
     "{DATA_PAGAMENTO}": fmtDate(e.dataPagamento),
     "{DIAS_ATRASO}": e.diasAtraso != null ? String(e.diasAtraso) : "",
     "{ATRASO_TEXTO}": atrasoTxt,
+    "{BLOCO_ATRASO}": blocoAtraso,
     "{MULTA_ATRASO}": fmtMoney(e.multaAtraso),
     "{JUROS_DEVIDO}": fmtMoney(e.jurosDevido),
     "{JUROS_PAGOS}": fmtMoney(e.jurosPago),
@@ -430,6 +444,7 @@ export function cobrancaTokens(e?: CobrancaEventInput | null): TokenMap {
     "{COBRANCA_TIPO}":
       e.cobrancaPrePaga == null ? "" : e.cobrancaPrePaga ? "Pré-paga" : "Pós-paga",
   };
+
 }
 
 // ============== Composição & render ==============
