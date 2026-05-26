@@ -2,11 +2,13 @@ import { useState } from "react";
 import { useCompany } from "@/contexts/CompanyContext";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
-import { Settings, CreditCard, CheckCircle2, XCircle, ShieldCheck, Car } from "lucide-react";
+import { Settings, CreditCard, CheckCircle2, XCircle, ShieldCheck, Car, Receipt } from "lucide-react";
 import AsaasConfigDialog from "@/components/AsaasConfigDialog";
 import DetranConfigDialog from "@/components/DetranConfigDialog";
-import { AsaasConfig, DetranConfig } from "@/lib/companies";
+import { AsaasConfig, DetranConfig, CobrancaConfig, DEFAULT_COBRANCA_CONFIG } from "@/lib/companies";
 import { toast } from "sonner";
 
 export default function ConfiguracoesPage() {
