@@ -498,12 +498,51 @@ export default function CobrancasPage() {
     try {
       if (item.module === "pagamento" || item.module === "outras_receitas") {
         const valor = parseFloat(resolveData.valor.replace(",", ".")) || 0;
+        const entry = cache.financial.find((f) => f.id === item.entityId);
         const next = cache.financial.map((e) =>
           e.id === item.entityId
             ? { ...e, pago: true, data: resolveData.data, valor: valor || e.valor, conta: resolveData.conta || e.conta }
             : e,
         );
         await saveFinancial(next);
+
+        // Popup de confirmação para o locatário
+        if (item.module === "pagamento" && entry) {
+          const moto = item.motoId ? cache.motos.find((m) => m.id === item.motoId) ?? null : null;
+          const cliente = getCliente(item.clienteId);
+          const rental = moto ? cache.rentals.find((r) => r.motoId === moto.id && r.status === "ativa") ?? null : null;
+          const valorPago = valor || entry.valor;
+          const descricao = item.descricao || entry.descricao || item.categoriaLabel || "Pagamento";
+          const dataPagamento = formatDate(resolveData.data);
+
+          const linhas: string[] = [];
+          linhas.push(`Olá, ${cliente?.nome || "[NOME]"}! 👋`);
+          linhas.push("");
+          linhas.push(`Confirmamos o recebimento do seu pagamento. ✅`);
+          linhas.push("");
+          linhas.push(`📋 *${descricao}*`);
+          linhas.push(`• Valor: *R$ ${valorPago.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}*`);
+          linhas.push(`• Data: *${dataPagamento}*`);
+          if (moto?.placa) {
+            linhas.push(`• Moto: *${moto.placa}*${moto.modelo ? ` (${moto.modelo})` : ""}`);
+          }
+          linhas.push("");
+          linhas.push("Qualquer dúvida, estamos à disposição. 🏍️");
+
+          setMessagePopup({
+            open: true,
+            title: "Confirmação de Pagamento",
+            mensagem: linhas.join("\n"),
+            placa: moto?.placa || entry.placa || "—",
+            cliente: cliente?.nome || entry.clienteNome || "",
+            telefone: cliente?.telefone || "",
+            highlights: [
+              { label: "Valor pago", value: `R$ ${valorPago.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, tone: "primary" },
+            ],
+            templateKey: "pagamento:confirmacao",
+            tokens: buildAllTokens({ moto, rental, cliente: cliente ?? null }),
+          });
+        }
       } else if (item.module === "multa") {
         const next = cache.fines.map((f) =>
           f.id === item.entityId ? { ...f, status: "paga" as const } : f,

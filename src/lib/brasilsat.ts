@@ -384,8 +384,9 @@ async function sendCommand(token: string, imei: string, command: string): Promis
   return data?.record?.commandid ?? "";
 }
 
-export async function setMileage(token: string, imei: string, mileage: number): Promise<void> {
-  await sendCommand(token, imei, `SET_MILEAGE,${mileage}`);
+// mileageKm em km; API BrasilSat espera metros (mesmo formato que retorna)
+export async function setMileage(token: string, imei: string, mileageKm: number): Promise<void> {
+  await sendCommand(token, imei, `SET_MILEAGE,${Math.round(mileageKm * 1000)}`);
 }
 
 // value: 0 = bloqueado (cortar combustível), 1 = liberado (restaurar)
@@ -395,32 +396,60 @@ export async function setRelay(token: string, imei: string, value: 0 | 1): Promi
   await sendCommand(token, imei, cmd);
 }
 
-// ─── Nomes customizados (localStorage) ───────────────────────────────────────
+// ─── Helpers de chave por empresa ────────────────────────────────────────────
+
+function companyKey(base: string, companyId: string) {
+  return `${base}:${companyId}`;
+}
+
+// ─── Nomes customizados (localStorage, por empresa) ──────────────────────────
 
 const NAMES_KEY = "brasilsat-device-names-v1";
 
-export function loadDeviceNames(): Record<string, string> {
+export function loadDeviceNames(companyId: string): Record<string, string> {
   try {
-    return JSON.parse(localStorage.getItem(NAMES_KEY) ?? "{}");
+    return JSON.parse(localStorage.getItem(companyKey(NAMES_KEY, companyId)) ?? "{}");
   } catch {
     return {};
   }
 }
 
-export function saveDeviceName(imei: string, name: string) {
-  const names = loadDeviceNames();
+export function saveDeviceName(companyId: string, imei: string, name: string) {
+  const names = loadDeviceNames(companyId);
   if (name.trim()) names[imei] = name.trim();
   else delete names[imei];
-  localStorage.setItem(NAMES_KEY, JSON.stringify(names));
+  localStorage.setItem(companyKey(NAMES_KEY, companyId), JSON.stringify(names));
 }
 
-// ─── Config helpers ───────────────────────────────────────────────────────────
+// ─── Config de sincronização de KM (por empresa) ─────────────────────────────
+
+export interface KmSyncConfig {
+  marginKm: number; // km extras adicionados ao kmAtual do sistema ao sincronizar
+}
+
+const KM_SYNC_CONFIG_KEY = "brasilsat-km-sync-config-v1";
+
+export function loadKmSyncConfig(companyId: string): KmSyncConfig {
+  try {
+    const raw = localStorage.getItem(companyKey(KM_SYNC_CONFIG_KEY, companyId));
+    if (!raw) return { marginKm: 0 };
+    return { marginKm: 0, ...JSON.parse(raw) };
+  } catch {
+    return { marginKm: 0 };
+  }
+}
+
+export function saveKmSyncConfig(companyId: string, cfg: KmSyncConfig) {
+  localStorage.setItem(companyKey(KM_SYNC_CONFIG_KEY, companyId), JSON.stringify(cfg));
+}
+
+// ─── Config de credenciais (por empresa) ─────────────────────────────────────
 
 const CONFIG_KEY = "brasilsat-config-v1";
 
-export function loadBrasilSatConfig(): BrasilSatConfig | null {
+export function loadBrasilSatConfig(companyId: string): BrasilSatConfig | null {
   try {
-    const raw = localStorage.getItem(CONFIG_KEY);
+    const raw = localStorage.getItem(companyKey(CONFIG_KEY, companyId));
     if (!raw) return null;
     return JSON.parse(raw);
   } catch {
@@ -428,6 +457,6 @@ export function loadBrasilSatConfig(): BrasilSatConfig | null {
   }
 }
 
-export function saveBrasilSatConfig(cfg: BrasilSatConfig) {
-  localStorage.setItem(CONFIG_KEY, JSON.stringify(cfg));
+export function saveBrasilSatConfig(companyId: string, cfg: BrasilSatConfig) {
+  localStorage.setItem(companyKey(CONFIG_KEY, companyId), JSON.stringify(cfg));
 }

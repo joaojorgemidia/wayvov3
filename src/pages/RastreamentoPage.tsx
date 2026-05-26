@@ -5,11 +5,14 @@ import {
   setMileage, setRelay,
   loadBrasilSatConfig, saveBrasilSatConfig,
   loadDeviceNames, saveDeviceName,
+  loadKmSyncConfig, saveKmSyncConfig,
   type BrasilSatConfig, type BrasilSatToken, type DeviceInfo,
   type DeviceTrack, type PlaybackPoint, type AlarmRecord,
+  type KmSyncConfig,
 } from "@/lib/brasilsat";
 import { loadMotos, loadRentals, loadClients } from "@/lib/store";
 import { isPrivacyEnabled, getRealDataCache, useDataCacheSnapshot } from "@/lib/data-cache";
+import { useCompany } from "@/contexts/CompanyContext";
 import { maskPlaca, maskName, maskImei } from "@/lib/privacy-mask";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -23,7 +26,8 @@ import { toast } from "sonner";
 import {
   MapPin, Wifi, WifiOff, Settings, RefreshCw, Gauge, Clock,
   AlertTriangle, History, Bell, Navigation, Search, X,
-  Zap, Battery, Thermometer, Fuel, Pencil, Lock, Unlock, Milestone,
+  Zap, Battery, Thermometer, Fuel, Pencil, Lock, Unlock, Milestone, Sliders,
+  MessageCircle, ShoppingCart, ExternalLink,
 } from "lucide-react";
 
 // ─── Ícones Leaflet ───────────────────────────────────────────────────────────
@@ -270,11 +274,11 @@ export default function RastreamentoPage() {
   // Re-render quando o modo demo é ativado/desativado
   useDataCacheSnapshot();
   const privacy = isPrivacyEnabled();
+  const { activeCompany } = useCompany();
+  const companyId = activeCompany?.id ?? "default";
 
   const [auth, setAuth]             = useState<AuthState | null>(null);
-  const [config, setConfig]         = useState<BrasilSatConfig>(
-    () => loadBrasilSatConfig() ?? { account: "", password: "" },
-  );
+  const [config, setConfig]         = useState<BrasilSatConfig>({ account: "", password: "" });
   const [configOpen, setConfigOpen] = useState(false);
   const [connecting, setConnecting] = useState(false);
 
@@ -284,7 +288,10 @@ export default function RastreamentoPage() {
   const [deviceSearch, setDeviceSearch] = useState("");
   const [deviceFilter, setDeviceFilter] = useState<"all" | "online" | "offline">("all");
 
-  const [customNames, setCustomNames] = useState<Record<string, string>>(() => loadDeviceNames());
+  const [customNames, setCustomNames] = useState<Record<string, string>>({});
+
+  const [kmConfig, setKmConfig]           = useState<KmSyncConfig>({ marginKm: 0 });
+  const [kmMarginInput, setKmMarginInput] = useState("0");
 
   const [renameOpen, setRenameOpen]   = useState(false);
   const [renameValue, setRenameValue] = useState("");
@@ -375,12 +382,12 @@ export default function RastreamentoPage() {
   // ── Token ─────────────────────────────────────────────────────────────────
   const getValidToken = useCallback(async (): Promise<string> => {
     if (auth && Date.now() < auth.token.expires_at) return auth.token.access_token;
-    const saved = loadBrasilSatConfig();
+    const saved = loadBrasilSatConfig(companyId);
     if (!saved?.account) throw new Error("Configure as credenciais primeiro");
     const token = await authenticate(saved);
     setAuth(prev => prev ? { ...prev, token } : null);
     return token.access_token;
-  }, [auth]);
+  }, [auth, companyId]);
 
   // ── Sincronização km moto → rastreador ────────────────────────────────────
   const syncKm = useCallback(async (freshTracks: DeviceTrack[]) => {
@@ -390,24 +397,31 @@ export default function RastreamentoPage() {
     let token: string;
     try { token = await getValidToken(); } catch { return; }
 
+    const { marginKm } = loadKmSyncConfig(companyId);
+
     for (const track of freshTracks) {
-      // Nome REAL do dispositivo (não o mascarado)
       const realName = (auth?.devices.find(d => d.imei === track.imei)?.deviceName || track.deviceName || customNames[track.imei] || track.imei).toUpperCase();
       const moto = motos.find(m => m.placa && realName.includes(m.placa.toUpperCase()));
       if (!moto || moto.kmAtual == null) continue;
-      if (syncedKmRef.current.get(track.imei) === moto.kmAtual) continue;
+
+      // KM alvo = km do sistema + margem configurada
+      const targetKm = moto.kmAtual + (marginKm ?? 0);
+      // Pula se já sincronizamos este valor ou um valor maior (evita sobrescrever atualização manual)
+      const lastSynced = syncedKmRef.current.get(track.imei) ?? -1;
+      if (lastSynced >= targetKm) continue;
+
       const trackerKm = track.mileage ?? 0;
-      if (moto.kmAtual > trackerKm) {
+      if (targetKm > trackerKm) {
         try {
-          await setMileage(token, track.imei, moto.kmAtual);
-          syncedKmRef.current.set(track.imei, moto.kmAtual);
-          toast.success(`KM sincronizado: ${getDisplayName(track.imei)} → ${moto.kmAtual.toLocaleString("pt-BR")} km`);
+          await setMileage(token, track.imei, targetKm);
+          syncedKmRef.current.set(track.imei, targetKm);
+          toast.success(`KM sincronizado: ${getDisplayName(track.imei)} → ${targetKm.toLocaleString("pt-BR")} km`);
         } catch (e: any) {
           console.warn("syncKm:", e.message);
         }
       }
     }
-  }, [getValidToken, customNames, getDisplayName, auth]);
+  }, [getValidToken, customNames, getDisplayName, auth, companyId]);
 
   // ── Conexão ────────────────────────────────────────────────────────────────
   const connect = useCallback(async (cfg: BrasilSatConfig) => {
@@ -417,7 +431,7 @@ export default function RastreamentoPage() {
       const token   = await authenticate(cfg);
       const devices = await getDeviceList(token.access_token);
       setAuth({ token, devices });
-      saveBrasilSatConfig(cfg);
+      saveBrasilSatConfig(companyId, cfg);
       setConfigOpen(false);
       toast.success(`Conectado · ${devices.length} dispositivo(s)`);
     } catch (e: any) {
@@ -425,7 +439,8 @@ export default function RastreamentoPage() {
     } finally {
       setConnecting(false);
     }
-  }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [companyId]);
 
   // ── Buscar posições ────────────────────────────────────────────────────────
   const fetchTracks = useCallback(async () => {
@@ -582,21 +597,41 @@ export default function RastreamentoPage() {
     }
   };
 
-  // ── Inicialização ─────────────────────────────────────────────────────────
+  // ── Inicialização e troca de empresa ─────────────────────────────────────
   useEffect(() => {
-    const saved = loadBrasilSatConfig();
-    if (saved?.account) connect(saved);
-    else setConfigOpen(true);
+    if (!companyId) return;
+
+    // Desconecta e limpa tudo da empresa anterior
+    setAuth(null);
+    setTracks([]);
+    setSelectedImei(null);
+    syncedKmRef.current.clear();
+    trackMarkersRef.current.forEach(m => m.remove());
+    trackMarkersRef.current.clear();
+
+    // Carrega config da empresa atual
+    const savedCfg = loadBrasilSatConfig(companyId);
+    setConfig(savedCfg ?? { account: "", password: "" });
+
+    const savedNames = loadDeviceNames(companyId);
+    setCustomNames(savedNames);
+
+    const savedKmCfg = loadKmSyncConfig(companyId);
+    setKmConfig(savedKmCfg);
+    setKmMarginInput(String(savedKmCfg.marginKm));
+
+    if (savedCfg?.account) connect(savedCfg);
+    // Sem else: empresa sem config mostra a tela de boas-vindas com os botões de suporte
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [companyId]);
 
   // ── Ações de dispositivo ──────────────────────────────────────────────────
   const handleRename = () => {
     if (!selectedImei) return;
     const name = renameValue.trim();
     if (!name) { toast.error("Informe um nome"); return; }
-    saveDeviceName(selectedImei, name);
-    const updated = loadDeviceNames();
+    saveDeviceName(companyId, selectedImei, name);
+    const updated = loadDeviceNames(companyId);
     setCustomNames(updated);
     const marker = trackMarkersRef.current.get(selectedImei);
     marker?.setTooltipContent(name);
@@ -618,6 +653,17 @@ export default function RastreamentoPage() {
     } catch (e: any) {
       toast.error(e.message ?? "Erro ao atualizar KM");
     }
+  };
+
+  const handleSaveKmConfig = () => {
+    const margin = parseFloat(kmMarginInput);
+    if (isNaN(margin) || margin < 0) { toast.error("Margem inválida"); return; }
+    const cfg: KmSyncConfig = { marginKm: margin };
+    saveKmSyncConfig(companyId, cfg);
+    setKmConfig(cfg);
+    // Limpa o cache de sync para que o próximo fetchTracks reaplique com a nova margem
+    syncedKmRef.current.clear();
+    toast.success("Configuração de KM salva");
   };
 
   const handleBlock = async (imei: string) => {
@@ -702,13 +748,44 @@ export default function RastreamentoPage() {
 
       {/* Corpo */}
       {!auth ? (
-        <div className="flex-1 flex items-center justify-center">
-          <div className="text-center space-y-4 max-w-sm">
-            <MapPin className="h-14 w-14 text-muted-foreground/30 mx-auto" />
-            <p className="text-muted-foreground">Configure as credenciais da BrasilSat para começar</p>
-            <Button onClick={() => setConfigOpen(true)}>
-              <Settings className="h-4 w-4 mr-2" /> Configurar
-            </Button>
+        <div className="flex-1 flex items-center justify-center p-6">
+          <div className="text-center space-y-6 max-w-sm w-full">
+            <div className="flex flex-col items-center gap-3">
+              <div className="h-16 w-16 rounded-2xl bg-muted/50 flex items-center justify-center">
+                <MapPin className="h-8 w-8 text-muted-foreground/40" />
+              </div>
+              <div>
+                <h3 className="font-semibold text-base">Rastreamento não configurado</h3>
+                <p className="text-sm text-muted-foreground mt-1">
+                  Esta empresa ainda não tem integração com o BrasilSat GPS.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-2.5">
+              <Button className="w-full" onClick={() => setConfigOpen(true)}>
+                <Settings className="h-4 w-4 mr-2" /> Inserir credenciais BrasilSat
+              </Button>
+
+              <a
+                href={`https://wa.me/?text=${encodeURIComponent("Olá! Gostaria de saber mais sobre a integração de rastreamento GPS BrasilSat no WAYVO.")}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center justify-center gap-2 w-full h-10 px-4 rounded-md text-sm font-medium border border-border bg-background hover:bg-muted transition-colors"
+              >
+                <MessageCircle className="h-4 w-4 text-[#25D366]" /> Falar com o suporte
+              </a>
+
+              <a
+                href="https://brasilsat.com.br"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center justify-center gap-2 w-full h-10 px-4 rounded-md text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+              >
+                <ShoppingCart className="h-4 w-4" /> Comprar rastreador BrasilSat
+                <ExternalLink className="h-3 w-3 opacity-60" />
+              </a>
+            </div>
           </div>
         </div>
       ) : (
@@ -971,9 +1048,12 @@ export default function RastreamentoPage() {
       )}
 
       {/* Dialog: Credenciais */}
-      <Dialog open={configOpen} onOpenChange={setConfigOpen}>
+      <Dialog open={configOpen} onOpenChange={open => {
+        setConfigOpen(open);
+        if (open) setKmMarginInput(String(loadKmSyncConfig(companyId).marginKm));
+      }}>
         <DialogContent className="max-w-sm">
-          <DialogHeader><DialogTitle>Credenciais BrasilSat GPS</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>Configurações BrasilSat GPS</DialogTitle></DialogHeader>
           <div className="space-y-4 pt-2">
             <div className="grid gap-1.5">
               <Label>Conta</Label>
@@ -1001,6 +1081,38 @@ export default function RastreamentoPage() {
                 : <Wifi className="h-4 w-4 mr-2" />}
               {connecting ? "Conectando..." : "Conectar"}
             </Button>
+
+            {/* Seção: Sincronização de KM */}
+            <div className="border-t pt-4 space-y-3">
+              <div className="flex items-center gap-2">
+                <Sliders className="h-4 w-4 text-muted-foreground" />
+                <span className="text-sm font-semibold">Sincronização de quilometragem</span>
+              </div>
+              <div className="grid gap-1.5">
+                <Label>Margem de erro (km)</Label>
+                <div className="flex items-center gap-2">
+                  <Input
+                    type="number"
+                    min={0}
+                    step={10}
+                    placeholder="0"
+                    value={kmMarginInput}
+                    onChange={e => setKmMarginInput(e.target.value)}
+                    onKeyDown={e => e.key === "Enter" && handleSaveKmConfig()}
+                  />
+                  <span className="text-sm text-muted-foreground shrink-0">km</span>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Valor adicionado ao KM do sistema ao sincronizar com o rastreador.
+                  {kmConfig.marginKm > 0 && (
+                    <span className="font-medium text-primary"> Atual: +{kmConfig.marginKm} km</span>
+                  )}
+                </p>
+              </div>
+              <Button size="sm" variant="outline" className="w-full" onClick={handleSaveKmConfig}>
+                <Milestone className="h-3.5 w-3.5 mr-1.5" /> Salvar margem
+              </Button>
+            </div>
           </div>
         </DialogContent>
       </Dialog>
