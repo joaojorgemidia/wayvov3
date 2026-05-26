@@ -92,7 +92,13 @@ export const TOKEN_CATALOG = {
     "{SEMANAS_TOTAL}",
     "{VALOR_COBRANCA}",
     "{DATA_VENCIMENTO}",
+    "{DATA_PAGAMENTO}",
     "{DIAS_ATRASO}",
+    "{ATRASO_TEXTO}",
+    "{MULTA_ATRASO}",
+    "{JUROS_DEVIDO}",
+    "{JUROS_PAGOS}",
+    "{JUROS_PENDENTES}",
     "{COBRANCA_TIPO}",
   ],
 } as const;
