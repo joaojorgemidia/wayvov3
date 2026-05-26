@@ -142,6 +142,9 @@ export function dbToFine(r: any): Fine {
     dataNotificacao: r.data_notificacao || null, valor: Number(r.valor) || 0,
     descricao: r.descricao || "", status: r.status || "pendente",
     responsavel: r.responsavel || "locadora",
+    origem: r.origem || "manual",
+    autoInfracao: r.auto_infracao || null,
+    codigoInfracao: r.codigo_infracao || null,
   };
 }
 
@@ -151,6 +154,9 @@ export function fineToDb(f: Fine): any {
     rental_id: f.rentalId || null, data_multa: f.dataMulta,
     data_notificacao: f.dataNotificacao || null, valor: f.valor,
     descricao: f.descricao, status: f.status, responsavel: f.responsavel,
+    origem: f.origem || "manual",
+    auto_infracao: f.autoInfracao || null,
+    codigo_infracao: f.codigoInfracao || null,
   };
 }
 

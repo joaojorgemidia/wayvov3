@@ -141,6 +141,9 @@ export interface Fine {
   descricao: string;
   status: "pendente" | "paga" | "contestada" | "transferida";
   responsavel: "locadora" | "cliente";
+  origem?: "manual" | "detran";
+  autoInfracao?: string | null;
+  codigoInfracao?: string | null;
 }
 
 export interface MaintenanceItem {
