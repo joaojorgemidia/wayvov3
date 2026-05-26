@@ -21,6 +21,7 @@ export default function ConfiguracoesPage() {
   const cobrancaCfg = activeCompany?.cobrancaConfig ?? DEFAULT_COBRANCA_CONFIG;
   const [multaValue, setMultaValue] = useState(String(cobrancaCfg.multaAtraso));
   const [jurosValue, setJurosValue] = useState(String(cobrancaCfg.jurosDiario));
+  const [jurosMesValue, setJurosMesValue] = useState(String(cobrancaCfg.jurosMes ?? 0));
 
   const handleSaveAsaas = async (config: AsaasConfig) => {
     await updateAsaasConfig(activeCompany.id, config);
@@ -35,11 +36,15 @@ export default function ConfiguracoesPage() {
   const handleSaveCobranca = async () => {
     const multa = parseFloat(multaValue.replace(',', '.'));
     const juros = parseFloat(jurosValue.replace(',', '.'));
-    if (Number.isNaN(multa) || Number.isNaN(juros) || multa < 0 || juros < 0) {
+    const jurosMes = parseFloat(jurosMesValue.replace(',', '.'));
+    if (Number.isNaN(multa) || Number.isNaN(juros) || Number.isNaN(jurosMes) || multa < 0 || juros < 0 || jurosMes < 0) {
       toast.error("Valores inválidos. Insira números positivos.");
       return;
     }
-    await updateCobrancaConfig(activeCompany.id, { multaAtraso: multa, jurosDiario: juros });
+    if (jurosMes > 10) {
+      toast.warning("Atenção: juros acima de 10% ao mês pode ser considerado abusivo.");
+    }
+    await updateCobrancaConfig(activeCompany.id, { multaAtraso: multa, jurosDiario: juros, jurosMes });
   };
 
   // Mascara o login para exibição: joao@email.com → j***@email.com
@@ -139,6 +144,22 @@ export default function ConfiguracoesPage() {
                 onChange={(e) => setJurosValue(e.target.value)}
                 placeholder="7,00"
               />
+            </div>
+            <div className="space-y-1.5 col-span-2">
+              <Label htmlFor="juros-mes" className="text-xs">
+                Juros ao mês (%) <span className="text-muted-foreground font-normal">— recomendado no máximo 10%</span>
+              </Label>
+              <Input
+                id="juros-mes"
+                type="text"
+                inputMode="decimal"
+                value={jurosMesValue}
+                onChange={(e) => setJurosMesValue(e.target.value)}
+                placeholder="0,00"
+              />
+              <p className="text-[11px] text-muted-foreground">
+                Aplicado proporcionalmente por dia de atraso. Usado quando a locação não tem juros próprio configurado.
+              </p>
             </div>
           </div>
           <Button variant="outline" size="sm" onClick={handleSaveCobranca}>
