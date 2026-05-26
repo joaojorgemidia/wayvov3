@@ -38,7 +38,7 @@ serve(async (req) => {
       userPrompt,
       fileBase64: pdfBase64,
       mimeType: mimeType || "application/pdf",
-      model: "gemini-2.5-flash",
+      claudeOnly: true,
     });
 
     console.log("Extracted CRLV data:", JSON.stringify(data));

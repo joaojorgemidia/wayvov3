@@ -43,14 +43,17 @@ export function getCnhStatus(client: Pick<Client, "cnh" | "cnhCategoria" | "cnhV
     const diff = Math.floor((validade.getTime() - hoje.getTime()) / (1000 * 60 * 60 * 24));
     daysToExpire = diff;
     if (diff < 0) issues.push("vencida");
-    else if (diff <= 30) issues.push("vence_em_breve");
+    else if (diff <= 90) issues.push("vence_em_breve");
   }
 
   const hasBlocker = issues.includes("vencida") || issues.includes("sem_categoria_a") || issues.includes("sem_cnh");
   const labels: string[] = [];
   if (issues.includes("sem_categoria_a")) labels.push("não habilitado p/ moto (cat. A)");
   if (issues.includes("vencida")) labels.push(`CNH vencida há ${Math.abs(daysToExpire ?? 0)} dia(s)`);
-  else if (issues.includes("vence_em_breve")) labels.push(`CNH vence em ${daysToExpire} dia(s)`);
+  else if (issues.includes("vence_em_breve")) {
+    const meses = Math.ceil((daysToExpire ?? 0) / 30);
+    labels.push(meses <= 1 ? `CNH vence em ${daysToExpire} dia(s)` : `CNH vence em ${meses} meses`);
+  }
   if (issues.includes("sem_validade")) labels.push("CNH sem validade informada");
 
   return { issues, hasBlocker, daysToExpire, label: labels.join(" · ") };

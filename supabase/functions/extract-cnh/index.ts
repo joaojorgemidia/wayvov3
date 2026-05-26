@@ -1,16 +1,33 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { extractWithFallback, corsHeaders } from "../_shared/extract-ai.ts";
 
-const systemPrompt = `Você é um especialista em extrair dados de documentos CNH (Carteira Nacional de Habilitação) digitais brasileiras.
-Analise o documento fornecido e extraia TODOS os campos disponíveis.
-Retorne APENAS um JSON válido com os campos encontrados. Se um campo não for encontrado, use null.`;
+const systemPrompt = `Você é um especialista em extrair dados de CNH (Carteira Nacional de Habilitação) brasileira.
 
-const userPrompt = `Extraia os dados desta CNH digital e retorne um JSON com exatamente estes campos:
+REGRAS CRÍTICAS — leia com atenção:
+
+CPF:
+- Procure o campo rotulado exatamente "CPF" no documento.
+- O CPF tem SEMPRE 11 dígitos no formato XXX.XXX.XXX-XX (ex: 123.456.789-00).
+- NÃO confunda com o número de registro da CNH (que é um número diferente, geralmente 9-11 dígitos sem pontos/traços no formato de CPF).
+- NÃO confunda com RG, RENACH ou qualquer outro campo numérico.
+- Se o documento mostrar um número que NÃO está no formato de CPF, retorne null para cpf.
+
+NÚMERO DE REGISTRO (numeroCnh):
+- Procure o campo rotulado "REGISTRO", "Nº REGISTRO", "N° REGISTRO" ou "NÚMERO DE REGISTRO".
+- É diferente do CPF — geralmente aparece em posição separada no documento.
+
+CATEGORIA (CAT. HAB.):
+- Procure o rótulo "CAT. HAB.", "CATEGORIA" ou similar.
+- Copie TODAS as letras (ex: "AB" → retorne "AB", não "A").
+- Letras separadas por espaço/barra (ex: "A B", "A/B") → junte sem separador (ex: "AB").
+- Categorias válidas: A, B, C, D, E, AB, AC, AD, AE (e combinações).`;
+
+const userPrompt = `Extraia os dados desta CNH e retorne um JSON com exatamente estes campos:
 {
-  "nome": "string ou null (nome completo do condutor)",
-  "cpf": "string ou null (CPF do condutor)",
-  "numeroCnh": "string ou null (número de registro da CNH)",
-  "categoria": "string ou null (categoria da CNH: A, B, AB, etc)",
+  "nome": "string ou null (nome completo do condutor, campo NOME)",
+  "cpf": "string ou null (campo CPF — formato XXX.XXX.XXX-XX, ex: '123.456.789-00'. Retorne null se não encontrar o campo CPF claramente.)",
+  "numeroCnh": "string ou null (campo REGISTRO ou Nº REGISTRO — número de registro da CNH, diferente do CPF)",
+  "categoria": "string ou null (campo CAT. HAB. — copie TODAS as letras, ex: 'AB' se mostrar 'AB')",
   "validade": "string ou null (data de validade no formato YYYY-MM-DD)"
 }
 Retorne SOMENTE o JSON, sem markdown, sem explicação.`;
@@ -34,74 +51,19 @@ serve(async (req) => {
     const { pdfBase64, mimeType } = await req.json();
     if (!pdfBase64 || typeof pdfBase64 !== "string") return fail("pdfBase64 is required", 400);
 
-    const GOOGLE_AI_API_KEY = Deno.env.get("GOOGLE_AI_API_KEY");
-    if (!GOOGLE_AI_API_KEY) return fail("GOOGLE_AI_API_KEY not configured", 500);
-
     const detectedMime = mimeType || "application/pdf";
-    console.log("Sending document to Gemini for CNH extraction, mime:", detectedMime);
+    console.log("Sending CNH to Claude for extraction, mime:", detectedMime);
 
-    const systemPrompt = `Você é um especialista em extrair dados de documentos CNH (Carteira Nacional de Habilitação) digitais brasileiras.
-Analise o documento fornecido e extraia TODOS os campos disponíveis.
-Retorne APENAS um JSON válido com os campos encontrados. Se um campo não for encontrado, use null.`;
+    const data = await extractWithFallback({
+      systemPrompt,
+      userPrompt,
+      fileBase64: pdfBase64,
+      mimeType: detectedMime,
+      claudeOnly: true,
+    });
 
-    const userPrompt = `Extraia os dados desta CNH digital e retorne um JSON com exatamente estes campos:
-{
-  "nome": "string ou null (nome completo do condutor)",
-  "cpf": "string ou null (CPF do condutor)",
-  "numeroCnh": "string ou null (número de registro da CNH)",
-  "categoria": "string ou null (categoria da CNH: A, B, AB, etc)",
-  "validade": "string ou null (data de validade no formato YYYY-MM-DD)"
-}
-Retorne SOMENTE o JSON, sem markdown, sem explicação.`;
-
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GOOGLE_AI_API_KEY}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          systemInstruction: { parts: [{ text: systemPrompt }] },
-          contents: [{
-            role: "user",
-            parts: [
-              { text: userPrompt },
-              { inlineData: { mimeType: detectedMime, data: pdfBase64 } },
-            ],
-          }],
-          generationConfig: { responseMimeType: "text/plain", thinkingConfig: { thinkingBudget: 0 } },
-        }),
-      }
-    );
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error("Gemini API error:", response.status, errorText);
-      if (response.status === 429) return fail("Limite de requisições excedido. Tente novamente em alguns segundos.");
-      return fail("Erro ao processar documento com IA. Tente novamente.");
-    }
-
-    const aiResult = await response.json();
-
-    if (!aiResult.candidates || aiResult.candidates.length === 0) {
-      const blockReason = aiResult.promptFeedback?.blockReason ?? "sem candidatos";
-      console.error("Gemini blocked:", blockReason);
-      return fail("Documento não pôde ser processado. Tente outro arquivo.");
-    }
-
-    const parts: { thought?: boolean; text?: string }[] = aiResult.candidates[0]?.content?.parts ?? [];
-    const content = parts.find(p => !p.thought && typeof p.text === "string")?.text ?? "";
-    console.log("Gemini raw response:", content);
-
-    let extracted: Record<string, unknown>;
-    try {
-      extracted = parseJsonFromText(content);
-    } catch (parseError) {
-      console.error("Failed to parse Gemini response as JSON:", parseError, "raw:", content);
-      return fail("Não foi possível interpretar os dados do documento. Tente novamente.");
-    }
-
-    console.log("Extracted CNH data:", JSON.stringify(extracted));
-    return ok(extracted);
+    console.log("Extracted CNH data:", JSON.stringify(data));
+    return ok(data);
   } catch (error) {
     console.error("extract-cnh error:", error);
     return fail(error instanceof Error ? error.message : "Erro desconhecido", 500);

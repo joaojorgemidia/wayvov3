@@ -14,6 +14,10 @@ export default {
     },
     extend: {
       colors: {
+        brand: '#00C86A',
+        'brand-dark': '#00A856',
+        noturno: '#091C3B',
+        'bg-light': '#F0FFF8',
         border: "hsl(var(--border))",
         input: "hsl(var(--input))",
         ring: "hsl(var(--ring))",
@@ -67,9 +71,12 @@ export default {
         },
       },
       fontFamily: {
-        sans: ['Inter', 'sans-serif'],
-        display: ['Inter', 'sans-serif'],
-        data: ['JetBrains Mono', 'monospace'],
+        sans: ['Figtree', 'sans-serif'],
+        display: ['Syne', 'sans-serif'],
+        syne: ['Syne', 'sans-serif'],
+        figtree: ['Figtree', 'sans-serif'],
+        data: ['DM Mono', 'monospace'],
+        mono: ['DM Mono', 'monospace'],
       },
       borderRadius: {
         lg: "var(--radius)",

@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect } from "react";
+import { supabase } from "@/integrations/supabase/client";
 import { Rental, Motorcycle, Client, FinancialEntry, OilChangeRecord } from "@/lib/types";
 import { saveRentals, saveMotos, loadFinancial, saveFinancial, loadMotos, loadClients, loadRentals, saveClients } from "@/lib/store";
 import { lastOilChange } from "@/lib/oil-kpis";
@@ -120,7 +121,7 @@ export default function LocacoesPage() {
   const ativas = useMemo(() => rentals.filter(r => r.status === "ativa" && matchSearch(r)), [rentals, search, motos, clients]);
   const finalizadas = useMemo(() => rentals.filter(r => (r.status === "finalizada" || r.status === "cancelada") && matchSearch(r)), [rentals, search, motos, clients]);
 
-  const handleSaveRental = (rental: Rental, client: Client) => {
+  const handleSaveRental = async (rental: Rental, client: Client) => {
     const allClients = loadClients();
     if (!allClients.find(c => c.id === client.id)) {
       // Client will be added through saveClients in the wizard
@@ -143,6 +144,18 @@ export default function LocacoesPage() {
     // Future pending entries are merged by date so their IDs are preserved
     // (no duplicate or broken series when re-saving with updated values).
     const today = new Date().toISOString().split("T")[0];
+
+    // Dates the user explicitly deleted (soft-deleted in DB) — reconciler must not regenerate them.
+    const deletedAluguelDates = new Set<string>();
+    if (isEditing) {
+      const { data: deletedRows } = await supabase
+        .from("financial_entries")
+        .select("data")
+        .eq("rental_id", rental.id)
+        .eq("categoria", "aluguel")
+        .not("deleted_at", "is", null);
+      deletedRows?.forEach(r => r.data && deletedAluguelDates.add(r.data));
+    }
 
     // Index existing future unpaid aluguel entries by date for ID-preserving merge
     const existingAluguelByDate = new Map<string, FinancialEntry>();
@@ -244,17 +257,19 @@ export default function LocacoesPage() {
         if (shouldGenerate) {
           // Reutiliza ID, serieId e recurringGroupId da entrada existente para não quebrar a série
           const existing = existingAluguelByDate.get(dataStr);
-          newFinancialEntries.push(resolveAssociations({
-            id: existing?.id ?? crypto.randomUUID(),
-            tipo: "receita", categoria: "aluguel",
-            serieId: existing?.serieId ?? aluguelSerieId,
-            recurringGroupId: existing?.recurringGroupId ?? aluguelGroupId,
-            descricao: `Aluguel ${idx}ª semana - ${numContrato} - ${motoPlaca}${obsExtra}`,
-            valor: rental.valorDiario, data: dataStr, pago: false,
-            dataPrevista: dataStr,
-            motoId: rental.motoId, rentalId: rental.id, clienteId: client.id,
-            placa: motoPlaca, clienteNome: client.nome, natureza: "operacional",
-          }, ctx));
+          if (!deletedAluguelDates.has(dataStr)) {
+            newFinancialEntries.push(resolveAssociations({
+              id: existing?.id ?? crypto.randomUUID(),
+              tipo: "receita", categoria: "aluguel",
+              serieId: existing?.serieId ?? aluguelSerieId,
+              recurringGroupId: existing?.recurringGroupId ?? aluguelGroupId,
+              descricao: `Aluguel ${idx}ª semana - ${numContrato} - ${motoPlaca}${obsExtra}`,
+              valor: rental.valorDiario, data: dataStr, pago: false,
+              dataPrevista: dataStr,
+              motoId: rental.motoId, rentalId: rental.id, clienteId: client.id,
+              placa: motoPlaca, clienteNome: client.nome, natureza: "operacional",
+            }, ctx));
+          }
         }
         lastChargeDate = current;
         current = advanceDate(current);
@@ -271,17 +286,19 @@ export default function LocacoesPage() {
         const shouldGenerate = !isEditing || (dataStr >= today && !paidAluguelDates.has(dataStr));
         if (shouldGenerate) {
           const existingPartial = existingAluguelByDate.get(dataStr);
-          newFinancialEntries.push(resolveAssociations({
-            id: existingPartial?.id ?? crypto.randomUUID(),
-            tipo: "receita", categoria: "aluguel",
-            serieId: existingPartial?.serieId ?? aluguelSerieId,
-            recurringGroupId: existingPartial?.recurringGroupId ?? aluguelGroupId,
-            descricao: `Aluguel ${idx}ª semana (${remainingDays}d) - ${numContrato} - ${motoPlaca}${obsExtra}`,
-            valor: proratedValue, data: dataStr, pago: false,
-            dataPrevista: dataStr,
-            motoId: rental.motoId, rentalId: rental.id, clienteId: client.id,
-            placa: motoPlaca, clienteNome: client.nome, natureza: "operacional",
-          }, ctx));
+          if (!deletedAluguelDates.has(dataStr)) {
+            newFinancialEntries.push(resolveAssociations({
+              id: existingPartial?.id ?? crypto.randomUUID(),
+              tipo: "receita", categoria: "aluguel",
+              serieId: existingPartial?.serieId ?? aluguelSerieId,
+              recurringGroupId: existingPartial?.recurringGroupId ?? aluguelGroupId,
+              descricao: `Aluguel ${idx}ª semana (${remainingDays}d) - ${numContrato} - ${motoPlaca}${obsExtra}`,
+              valor: proratedValue, data: dataStr, pago: false,
+              dataPrevista: dataStr,
+              motoId: rental.motoId, rentalId: rental.id, clienteId: client.id,
+              placa: motoPlaca, clienteNome: client.nome, natureza: "operacional",
+            }, ctx));
+          }
         }
       }
     }

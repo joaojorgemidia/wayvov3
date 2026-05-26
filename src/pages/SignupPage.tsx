@@ -9,7 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { loadCompanies, saveCompanies } from "@/lib/companies";
-import wayvoLogo from "@/assets/wayvo-logo.png";
+import { WayvoLogo } from "@/components/WayvoLogo";
 
 function maskCNPJ(v: string) {
   const d = v.replace(/\D/g, "").slice(0, 14);
@@ -133,7 +133,7 @@ export default function SignupPage() {
       <Card className="w-full max-w-sm">
         <CardHeader className="text-center">
           <div className="mx-auto mb-2">
-            <img src={wayvoLogo} alt="Wayvo" className="h-12 mx-auto" />
+            <WayvoLogo variant="light" />
           </div>
           <CardTitle className="text-xl">Criar Conta</CardTitle>
         </CardHeader>

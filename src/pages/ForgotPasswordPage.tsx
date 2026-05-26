@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Loader2 } from "lucide-react";
-import wayvoLogo from "@/assets/wayvo-logo.png";
+import { WayvoLogo } from "@/components/WayvoLogo";
 
 export default function ForgotPasswordPage() {
   const [email, setEmail] = useState("");
@@ -34,7 +34,7 @@ export default function ForgotPasswordPage() {
       <Card className="w-full max-w-sm">
         <CardHeader className="text-center">
           <div className="mx-auto mb-2">
-            <img src={wayvoLogo} alt="Wayvo" className="h-12 mx-auto" />
+            <WayvoLogo variant="light" />
           </div>
           <CardTitle className="text-xl">Recuperar senha</CardTitle>
         </CardHeader>

@@ -79,7 +79,7 @@ export function AppSidebar() {
       <SidebarContent>
         {/* Logo — fora do SidebarGroupLabel para não ser cortado */}
         <div className={`flex items-center border-b border-sidebar-border ${collapsed ? "justify-center px-2 py-3" : "px-4 py-4"}`}>
-          <WayvoLogo variant="dark" collapsed={collapsed} />
+          <WayvoLogo variant="light" collapsed={collapsed} />
         </div>
 
         {/* Navegação principal */}
@@ -96,7 +96,7 @@ export function AppSidebar() {
                     <SidebarMenuItem key={item.title}>
                       <Collapsible defaultOpen={isActive}>
                         <CollapsibleTrigger asChild>
-                          <SidebarMenuButton className={`w-full justify-between hover:bg-sidebar-accent/50 ${isActive ? "bg-sidebar-accent text-primary font-medium" : ""}`}>
+                          <SidebarMenuButton className={`w-full justify-between hover:bg-sidebar-accent/50 ${isActive ? "sidebar-nav-active" : ""}`}>
                             <span className="flex items-center">
                               <item.icon className="mr-2 h-4 w-4" />
                               <span>{item.title}</span>
@@ -134,7 +134,7 @@ export function AppSidebar() {
                         to={item.url}
                         end={item.url === "/dashboard"}
                         className="hover:bg-sidebar-accent/50"
-                        activeClassName="bg-sidebar-accent text-primary font-medium"
+                        activeClassName="sidebar-nav-active"
                       >
                         <item.icon className="mr-2 h-4 w-4" />
                         {!collapsed && <span>{item.title}</span>}
@@ -191,7 +191,7 @@ export function AppSidebar() {
                             <SidebarMenuButton key={item.title} asChild>
                               <NavLink
                                 to={item.url}
-                                className={`text-xs py-1.5 hover:bg-sidebar-accent/50 ${isActive ? "text-primary font-medium" : "text-muted-foreground"}`}
+                                className={`text-xs py-1.5 hover:bg-sidebar-accent/50 ${isActive ? "sidebar-nav-active" : "text-muted-foreground"}`}
                                 activeClassName=""
                               >
                                 <item.icon className="mr-2 h-3.5 w-3.5" />

@@ -32,6 +32,7 @@ import {
   ExternalLink, Loader2, Link2
 } from "lucide-react";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { Textarea } from "@/components/ui/textarea";
 import { PieChart, Pie, Cell, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip as RechartsTooltip, CartesianGrid } from "recharts";
 import { format, startOfMonth, endOfMonth, addMonths, addYears, addDays, addWeeks, subMonths, subDays, isSameMonth, parseISO, isWithinInterval } from "date-fns";
 import { generateRecurrenceDates } from "@/lib/recurrence";
@@ -870,6 +871,11 @@ export default function FinanceiroPage() {
   const [confirmConta, setConfirmConta] = useState("");
   const [confirmValor, setConfirmValor] = useState("");
   const [confirmPayBank, setConfirmPayBank] = useState("");
+  const [rentalPaySuccess, setRentalPaySuccess] = useState<{
+    nome: string; telefone: string;
+    vencimento: string; pagamento: string;
+    valor: number; periodoLabel: string; mensagem: string;
+  } | null>(null);
   const [detailEntry, setDetailEntry] = useState<FinancialEntry | null>(null);
 
   // Fecha o Sheet de detalhe automaticamente quando a entrada for removida de entries
@@ -1063,6 +1069,48 @@ export default function FinanceiroPage() {
     }
   }, [persist]);
 
+  const ASAAS_TERMINAL = ["RECEIVED", "CANCELLED", "REFUNDED", "REFUND_REQUESTED"];
+
+  const syncAsaasPayment = useCallback(async (updated: FinancialEntry, original: FinancialEntry) => {
+    if (!updated.asaasPaymentId) return;
+    if (ASAAS_TERMINAL.includes(updated.asaasStatus || "")) return;
+    const dateChanged = updated.data !== original.data;
+    const valueChanged = updated.valor !== original.valor;
+    if (!dateChanged && !valueChanged) return;
+    const body: Record<string, unknown> = { asaasPaymentId: updated.asaasPaymentId };
+    if (dateChanged) body.dueDate = updated.data;
+    if (valueChanged) body.value = updated.valor;
+    const { error } = await supabase.functions.invoke("asaas-update-payment", { body });
+    if (error) toast.warning("Salvo localmente, mas não foi possível atualizar o boleto no Asaas.");
+  }, []);
+
+  const syncAsaasChanges = useCallback(async (updatedList: FinancialEntry[], originalList: FinancialEntry[]) => {
+    const origById = new Map(originalList.map(e => [e.id, e]));
+    await Promise.allSettled(
+      updatedList
+        .filter(e => !!e.asaasPaymentId && !ASAAS_TERMINAL.includes(e.asaasStatus || ""))
+        .map(e => {
+          const orig = origById.get(e.id);
+          if (!orig) return Promise.resolve();
+          return syncAsaasPayment(e, orig);
+        }),
+    );
+  }, [syncAsaasPayment]);
+
+  const cancelAsaasPayments = useCallback(async (toDelete: FinancialEntry[]) => {
+    const cancellable = toDelete.filter(
+      e => !!e.asaasPaymentId && !ASAAS_TERMINAL.includes(e.asaasStatus || ""),
+    );
+    if (cancellable.length === 0) return;
+    const results = await Promise.allSettled(
+      cancellable.map(e =>
+        supabase.functions.invoke("asaas-cancel-payment", { body: { asaasPaymentId: e.asaasPaymentId } }),
+      ),
+    );
+    const failed = results.filter(r => r.status === "rejected" || (r.status === "fulfilled" && r.value.error)).length;
+    if (failed > 0) toast.warning(`${failed} boleto(s) não puderam ser cancelados no Asaas.`);
+  }, []);
+
   // Migration now handled centrally in loadFinancial()
 
   // ─── Reconcile credit-card invoices ────────────────────────────
@@ -1241,9 +1289,10 @@ export default function FinanceiroPage() {
   );
 
   // When explicit filter dates are set, they should search the full dataset instead of being limited by the top period navigator.
-  const filteredSource = useMemo(() => {
-    return dateFrom || dateTo ? entries : monthEntries;
-  }, [entries, monthEntries, dateFrom, dateTo]);
+  const filteredSource = useMemo(
+    () => (dateFrom || dateTo ? entries : monthEntries),
+    [entries, monthEntries, dateFrom, dateTo],
+  );
 
   const filtered = useMemo(() => {
     const norm = (s: string) => (s || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
@@ -1618,10 +1667,15 @@ export default function FinanceiroPage() {
         : [...entries, normalizedEntry];
     }
 
+    const prevEntry = entries.find(e => e.id === normalizedEntry.id);
     const saved = await persistWithFeedback(updated, {
       successMessage: isEditing ? "Lançamento atualizado." : "Lançamento salvo."
     });
     if (!saved) return false;
+
+    if (isEditing && prevEntry) {
+      syncAsaasPayment(normalizedEntry, prevEntry).catch(() => {});
+    }
 
     // Sync "venda_moto" entries back to the motorcycle record
     if (normalizedEntry.categoria === "venda_moto" && normalizedEntry.motoId) {
@@ -1646,9 +1700,11 @@ export default function FinanceiroPage() {
   const handleEditScopeOnly = async () => {
     if (!editScopeTarget) return;
     if (isSaving) return;
+    const prevEntry = entries.find(e => e.id === editScopeTarget.id);
     const updated = entries.map(e => e.id === editScopeTarget.id ? editScopeTarget : e);
     const saved = await persistWithFeedback(updated, { successMessage: "Lançamento atualizado." });
     if (!saved) return;
+    if (prevEntry) syncAsaasPayment(editScopeTarget, prevEntry).catch(() => {});
     setEditScopeTarget(null);
     setDialogOpen(false);
   };
@@ -1693,6 +1749,7 @@ export default function FinanceiroPage() {
     });
     const saved = await persistWithFeedback(updated, { successMessage: "Pendências atualizadas." });
     if (!saved) return;
+    syncAsaasChanges(updated, entries).catch(() => {});
     setEditScopeTarget(null);
     setDialogOpen(false);
   };
@@ -1714,6 +1771,7 @@ export default function FinanceiroPage() {
     });
     const saved = await persistWithFeedback(updated, { successMessage: "Série atualizada." });
     if (!saved) return;
+    syncAsaasChanges(updated, entries).catch(() => {});
     setEditScopeTarget(null);
     setDialogOpen(false);
   };
@@ -1812,13 +1870,16 @@ export default function FinanceiroPage() {
     setDeleteTarget(entry);
   };
 
-  const handleDeleteOnly = () => {
+  const handleDeleteOnly = async () => {
     if (!deleteTarget) return;
-    const id = deleteTarget.id;
-    persist(entries.filter(e => e.id !== id))
-      .then(() => toast.success("Lançamento removido."))
-      .catch(err => { console.error("[FinanceiroPage] persist error:", err); toast.error("Erro ao salvar. Verifique sua conexão."); });
+    const target = deleteTarget;
     setDeleteTarget(null);
+    await cancelAsaasPayments([target]);
+    const updated = entries.filter(e => e.id !== target.id);
+    setEntries(updated);
+    saveFinancial(updated)
+      .then(() => toast.success("Lançamento removido."))
+      .catch(err => { setEntries(entries); console.error("[FinanceiroPage] persist error:", err); toast.error("Erro ao salvar. Verifique sua conexão."); });
   };
 
   // Retorna true se `e` pertence à mesma série que `target`.
@@ -1831,7 +1892,7 @@ export default function FinanceiroPage() {
   };
 
   // "Esta e as próximas pendentes" — exclui este e todos os NÃO PAGOS com data >= este.
-  const handleDeleteFuturesInSeries = () => {
+  const handleDeleteFuturesInSeries = async () => {
     if (!deleteTarget) return;
     const targetDate = deleteTarget.data ?? "";
     const idsToRemove = new Set<string>([deleteTarget.id]);
@@ -1841,10 +1902,12 @@ export default function FinanceiroPage() {
       }
     });
 
+    let displayEntries = entries.filter(e => !idsToRemove.has(e.id));
+    let dbEntries = displayEntries;
+
     // Quando a série usa auto-materialização (recorrente/despesaFixa), limitar
     // recorrenciaVezes da entrada-base evita que o efeito recrie as entradas deletadas.
-    let filtered = entries.filter(e => !idsToRemove.has(e.id));
-    const baseEntry = filtered.find(e =>
+    const baseEntry = displayEntries.find(e =>
       !e.fixedOriginId &&
       (e.recorrente || e.despesaFixa) &&
       (deleteTarget.recurringGroupId
@@ -1852,41 +1915,45 @@ export default function FinanceiroPage() {
         : (() => { const sid = deleteTarget.serieId || deleteTarget.fixedOriginId; return !!(sid && (e.serieId === sid || e.id === sid)); })())
     );
     if (baseEntry) {
-      const remaining = filtered.filter(e =>
+      const remaining = displayEntries.filter(e =>
         e.id !== baseEntry.id && isSameSeries(e, baseEntry)
       ).length;
       // Importante: limpar `despesaFixa` (que ignora recorrenciaVezes e força 24
       // ocorrências no auto-materialize) e, se nada sobrou, também `recorrente`.
       // Sem isso, o efeito de auto-materialização recria as entradas excluídas.
-      filtered = filtered.map(e => e.id === baseEntry.id
-        ? {
-            ...e,
-            recorrenciaVezes: remaining,
-            despesaFixa: false,
-            recorrente: remaining > 0 ? e.recorrente : false,
-          }
-        : e);
+      const applyBase = (e: FinancialEntry) => e.id === baseEntry.id
+        ? { ...e, recorrenciaVezes: remaining, despesaFixa: false, recorrente: remaining > 0 ? e.recorrente : false }
+        : e;
+      displayEntries = displayEntries.map(applyBase);
+      dbEntries = dbEntries.map(applyBase);
     }
 
     const count = idsToRemove.size;
-    persist(filtered)
-      .then(() => toast.success(`${count} lançamento(s) removido(s).`))
-      .catch(err => { console.error("[FinanceiroPage] persist error:", err); toast.error("Erro ao salvar. Verifique sua conexão."); });
+    const toCancel = entries.filter(e => idsToRemove.has(e.id));
     setDeleteTarget(null);
+    await cancelAsaasPayments(toCancel);
+    setEntries(displayEntries);
+    saveFinancial(dbEntries)
+      .then(() => toast.success(`${count} lançamento(s) removido(s).`))
+      .catch(err => { setEntries(entries); console.error("[FinanceiroPage] persist error:", err); toast.error("Erro ao salvar. Verifique sua conexão."); });
   };
 
   // "Todos da série (incluindo pagos)" — exclui todos os lançamentos da série.
-  const handleDeleteAllIncludingPaid = () => {
+  const handleDeleteAllIncludingPaid = async () => {
     if (!deleteTarget) return;
     const idsToRemove = new Set<string>([deleteTarget.id]);
     entries.forEach(e => {
       if (e.id !== deleteTarget.id && isSameSeries(e, deleteTarget)) idsToRemove.add(e.id);
     });
     const count = idsToRemove.size;
-    persist(entries.filter(e => !idsToRemove.has(e.id)))
-      .then(() => toast.success(`${count} lançamento(s) removido(s).`))
-      .catch(err => { console.error("[FinanceiroPage] persist error:", err); toast.error("Erro ao salvar. Verifique sua conexão."); });
+    const toCancel = entries.filter(e => idsToRemove.has(e.id));
     setDeleteTarget(null);
+    await cancelAsaasPayments(toCancel);
+    const updated = entries.filter(e => !idsToRemove.has(e.id));
+    setEntries(updated);
+    saveFinancial(updated)
+      .then(() => toast.success(`${count} lançamento(s) removido(s).`))
+      .catch(err => { setEntries(entries); console.error("[FinanceiroPage] persist error:", err); toast.error("Erro ao salvar. Verifique sua conexão."); });
   };
 
   const togglePago = (id: string) => {
@@ -1921,6 +1988,47 @@ export default function FinanceiroPage() {
         return { ...e, pago: false, data: e.dataPrevista || e.data };
       }
     }));
+    // Success panel para pagamentos de aluguel de locação
+    if (!confirmToggleEntry.pago && confirmToggleEntry.rentalId) {
+      const rental = rentals.find(r => r.id === confirmToggleEntry.rentalId);
+      const client = clients.find(c => c.id === confirmToggleEntry.clienteId);
+      const dueDateStr = confirmToggleEntry.dataPrevista || confirmToggleEntry.data;
+      const dueDate = dueDateStr ? new Date(dueDateStr + "T00:00:00") : null;
+      const startDate = rental ? new Date(rental.dataInicio + "T00:00:00") : null;
+      const payDate = confirmDate || new Date().toISOString().split("T")[0];
+      let periodoLabel = "";
+      if (rental && dueDate && startDate) {
+        const freq = rental.frequenciaPagamento;
+        const periodDays = freq === "quinzenal" ? 14 : freq === "mensal" ? 30 : 7;
+        const diffDays = Math.round((dueDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24));
+        const periodNum = Math.max(1, Math.floor(diffDays / periodDays) + 1);
+        const periodEnd = new Date(dueDate.getTime() + (periodDays - 1) * 24 * 60 * 60 * 1000);
+        const fmt = (d: Date) => d.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" });
+        const labelTipo = freq === "quinzenal" ? "Quinzena" : freq === "mensal" ? "Mês" : "Semana";
+        periodoLabel = `${labelTipo} ${String(periodNum).padStart(2, "0")}: ${fmt(dueDate)} até ${fmt(periodEnd)}`;
+      }
+      const nome = client?.nome || "Locatário";
+      const priNome = nome.split(" ")[0];
+      const mensagem = [
+        `Olá, ${priNome}! Segue confirmação do seu pagamento:`,
+        "",
+        periodoLabel ? `📋 Referência: ${periodoLabel}` : null,
+        dueDateStr ? `📅 Vencimento: ${new Date(dueDateStr + "T12:00:00").toLocaleDateString("pt-BR")}` : null,
+        `✅ Pago em: ${new Date(payDate + "T12:00:00").toLocaleDateString("pt-BR")}`,
+        `💰 Valor: R$ ${finalValor.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`,
+        "",
+        "Obrigado! 🏍️",
+      ].filter(Boolean).join("\n");
+      setRentalPaySuccess({
+        nome,
+        telefone: client?.telefone || "",
+        vencimento: dueDateStr ? new Date(dueDateStr + "T12:00:00").toLocaleDateString("pt-BR") : "—",
+        pagamento: new Date(payDate + "T12:00:00").toLocaleDateString("pt-BR"),
+        valor: finalValor,
+        periodoLabel: periodoLabel || "—",
+        mensagem,
+      });
+    }
     setConfirmToggleEntry(null);
   };
 
@@ -3842,6 +3950,49 @@ export default function FinanceiroPage() {
                   <span className="text-muted-foreground">Categoria:</span>
                   <span className="font-medium">{getCatLabel(confirmToggleEntry.categoria, confirmToggleEntry.tipo)}</span>
                 </div>
+                {confirmToggleEntry.rentalId && (() => {
+                  const rental = rentals.find(r => r.id === confirmToggleEntry.rentalId);
+                  const client = clients.find(c => c.id === confirmToggleEntry.clienteId);
+                  const dueDateStr = confirmToggleEntry.dataPrevista || confirmToggleEntry.data;
+                  const dueDate = dueDateStr ? new Date(dueDateStr + "T00:00:00") : null;
+                  const startDate = rental ? new Date(rental.dataInicio + "T00:00:00") : null;
+                  const fmt = (d: Date) => d.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" });
+                  let periodoLabel = "—";
+                  if (rental && dueDate && startDate) {
+                    const freq = rental.frequenciaPagamento;
+                    const periodDays = freq === "quinzenal" ? 14 : freq === "mensal" ? 30 : 7;
+                    const diffDays = Math.round((dueDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24));
+                    const periodNum = Math.max(1, Math.floor(diffDays / periodDays) + 1);
+                    const periodEnd = new Date(dueDate.getTime() + (periodDays - 1) * 24 * 60 * 60 * 1000);
+                    const labelTipo = freq === "quinzenal" ? "Quinzena" : freq === "mensal" ? "Mês" : "Semana";
+                    periodoLabel = `${labelTipo} ${String(periodNum).padStart(2, "0")}: ${fmt(dueDate)} até ${fmt(periodEnd)}`;
+                  }
+                  return (
+                    <>
+                      <div className="border-t my-1" />
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Locatário:</span>
+                        <span className="font-medium">{client?.nome || "—"}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Vencimento:</span>
+                        <span className="font-medium">
+                          {dueDateStr ? new Date(dueDateStr + "T12:00:00").toLocaleDateString("pt-BR") : "—"}
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Pagamento:</span>
+                        <span className="font-medium">
+                          {confirmDate ? new Date(confirmDate + "T12:00:00").toLocaleDateString("pt-BR") : "—"}
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Referência:</span>
+                        <span className="font-semibold text-primary">{periodoLabel}</span>
+                      </div>
+                    </>
+                  );
+                })()}
                 <div className="flex justify-between items-center">
                   <span className="text-muted-foreground">Valor:</span>
                   <div className="flex items-center gap-1">
@@ -3953,6 +4104,84 @@ export default function FinanceiroPage() {
           ) : null}
         </DialogContent>
       </Dialog>
+      {/* ═══ Rental Payment Success Dialog ═══ */}
+      <Dialog open={!!rentalPaySuccess} onOpenChange={(v) => { if (!v) setRentalPaySuccess(null); }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Recebimento Confirmado</DialogTitle>
+          </DialogHeader>
+          {rentalPaySuccess && (
+            <div className="space-y-4">
+              <div className="rounded-lg border bg-muted/30 p-3 space-y-1.5 text-sm">
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Locatário:</span>
+                  <span className="font-medium">{rentalPaySuccess.nome}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Referência:</span>
+                  <span className="font-semibold text-primary">{rentalPaySuccess.periodoLabel}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Vencimento:</span>
+                  <span className="font-medium">{rentalPaySuccess.vencimento}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Pago em:</span>
+                  <span className="font-medium">{rentalPaySuccess.pagamento}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Valor:</span>
+                  <span className="font-semibold text-green-600">R$ {rentalPaySuccess.valor.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</span>
+                </div>
+              </div>
+
+              {rentalPaySuccess.telefone && (
+                <div className="flex items-center gap-2 text-sm rounded-md border px-3 py-2">
+                  <span className="text-muted-foreground shrink-0">Telefone:</span>
+                  <span className="font-medium flex-1">{rentalPaySuccess.telefone}</span>
+                </div>
+              )}
+
+              <div className="space-y-1.5">
+                <Label className="text-sm">Mensagem para enviar</Label>
+                <Textarea
+                  value={rentalPaySuccess.mensagem}
+                  readOnly
+                  className="text-sm resize-none"
+                  rows={7}
+                />
+              </div>
+
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  className="flex-1"
+                  onClick={() => {
+                    navigator.clipboard.writeText(rentalPaySuccess.mensagem);
+                    toast.success("Mensagem copiada!");
+                  }}
+                >
+                  Copiar mensagem
+                </Button>
+                {rentalPaySuccess.telefone && (
+                  <Button variant="outline" className="flex-1" asChild>
+                    <a
+                      href={`https://wa.me/55${rentalPaySuccess.telefone.replace(/\D/g, "")}?text=${encodeURIComponent(rentalPaySuccess.mensagem)}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      Abrir WhatsApp
+                    </a>
+                  </Button>
+                )}
+              </div>
+
+              <Button className="w-full" variant="outline" onClick={() => setRentalPaySuccess(null)}>Fechar</Button>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
       {/* ═══ Detail Sheet ═══ */}
       <Sheet open={!!detailEntry} onOpenChange={(open) => !open && setDetailEntry(null)}>
         <SheetContent className="sm:max-w-md overflow-y-auto">

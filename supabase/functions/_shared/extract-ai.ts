@@ -34,6 +34,7 @@ interface ExtractOptions {
   model?: string;           // default: gemini-2.5-flash
   maxOutputTokens?: number; // default: 2048
   attempts?: number;        // default: 3
+  claudeOnly?: boolean;     // skip Gemini entirely, use only Claude
 }
 
 async function callGeminiOnce(opts: ExtractOptions, apiKey: string): Promise<string> {
@@ -91,26 +92,39 @@ async function callGeminiOnce(opts: ExtractOptions, apiKey: string): Promise<str
   return text;
 }
 
+function detectMime(base64: string): string {
+  if (base64.startsWith("/9j/")) return "image/jpeg";
+  if (base64.startsWith("iVBORw")) return "image/png";
+  if (base64.startsWith("UklGR")) return "image/webp";
+  if (base64.startsWith("JVBER")) return "application/pdf";
+  if (base64.startsWith("R0lGOD")) return "image/gif";
+  return "image/jpeg";
+}
+
 async function callClaudeOnce(opts: ExtractOptions, apiKey: string): Promise<string> {
-  // Claude aceita PDF nativamente e imagens. https://docs.anthropic.com/en/docs/build-with-claude/pdf-support
-  const isPdf = opts.mimeType === "application/pdf";
+  const realMime = detectMime(opts.fileBase64);
+  const isPdf = realMime === "application/pdf";
+  const contentBlock = isPdf
+    ? { type: "document", source: { type: "base64", media_type: "application/pdf", data: opts.fileBase64 } }
+    : { type: "image", source: { type: "base64", media_type: realMime, data: opts.fileBase64 } };
+
   const content: any[] = [
-    {
-      type: isPdf ? "document" : "image",
-      source: { type: "base64", media_type: opts.mimeType, data: opts.fileBase64 },
-    },
+    contentBlock,
     { type: "text", text: opts.userPrompt + "\n\nResponda APENAS com JSON válido, sem markdown." },
   ];
 
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    "x-api-key": apiKey,
+    "anthropic-version": "2023-06-01",
+  };
+  // pdfs-1 beta header não é mais necessário nos modelos Claude 4.x
+
   const response = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": apiKey,
-      "anthropic-version": "2023-06-01",
-    },
+    headers,
     body: JSON.stringify({
-      model: "claude-3-5-sonnet-20241022",
+      model: "claude-sonnet-4-6",
       max_tokens: opts.maxOutputTokens || 2048,
       system: opts.systemPrompt,
       messages: [{ role: "user", content }],
@@ -132,14 +146,32 @@ export async function extractWithFallback(opts: ExtractOptions): Promise<Record<
   const geminiKey = Deno.env.get("GOOGLE_AI_API_KEY");
   const claudeKey = Deno.env.get("ANTHROPIC_API_KEY");
 
-  if (!geminiKey && !claudeKey) {
-    throw new Error("Nem GOOGLE_AI_API_KEY nem ANTHROPIC_API_KEY configurados");
+  if (!claudeKey && !geminiKey) {
+    throw new Error("Nem ANTHROPIC_API_KEY nem GOOGLE_AI_API_KEY configurados");
   }
 
   const attempts = opts.attempts ?? 3;
   const errors: string[] = [];
 
-  // 1) Gemini com retries
+  // 1) Claude (principal quando claudeOnly=true, ou quando Gemini não está configurado)
+  if (opts.claudeOnly || !geminiKey) {
+    if (!claudeKey) throw new Error("ANTHROPIC_API_KEY não configurado");
+    for (let i = 0; i < attempts; i++) {
+      try {
+        const text = await callClaudeOnce(opts, claudeKey);
+        console.log(`[Claude ok tentativa ${i + 1}] ${text.slice(0, 200)}`);
+        return parseJsonFromText(text);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.warn(`[Claude tentativa ${i + 1}/${attempts} falhou] ${msg}`);
+        errors.push(`claude#${i + 1}: ${msg}`);
+        if (i < attempts - 1) await new Promise((r) => setTimeout(r, 400 * (i + 1)));
+      }
+    }
+    throw new Error(`Todas as tentativas Claude falharam. ${errors.join(" | ")}`);
+  }
+
+  // 2) Modo auto: Gemini com retries, fallback Claude
   if (geminiKey) {
     for (let i = 0; i < attempts; i++) {
       try {
@@ -150,13 +182,11 @@ export async function extractWithFallback(opts: ExtractOptions): Promise<Record<
         const msg = err instanceof Error ? err.message : String(err);
         console.warn(`[Gemini tentativa ${i + 1}/${attempts} falhou] ${msg}`);
         errors.push(`gemini#${i + 1}: ${msg}`);
-        // backoff curto entre tentativas
         if (i < attempts - 1) await new Promise((r) => setTimeout(r, 400 * (i + 1)));
       }
     }
   }
 
-  // 2) Fallback Claude
   if (claudeKey) {
     try {
       console.log("[Fallback Claude]");
