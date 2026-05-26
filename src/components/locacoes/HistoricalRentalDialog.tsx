@@ -70,7 +70,7 @@ export default function HistoricalRentalDialog({ open, onOpenChange, motos, clie
       dataInicio, horaInicio: "00:00",
       dataFim, dataFimContrato: dataFim,
       proximoPagamento: null,
-      tempoMinimoContrato: null, frequenciaPagamento: "",
+      tempoMinimoContrato: null, frequenciaPagamento: "", cobrancaPrePaga: false,
       valorDiario: 0, valorCaucao: 0, caucaoPendente: false, caucaoParcelado: false,
       parcelasCaucao: [],
       multaAtraso: 0, jurosAtrasoMes: 0,
