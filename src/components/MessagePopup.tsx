@@ -27,15 +27,31 @@ export interface MessagePopupProps {
   paletteContext?: TokenContext;
 }
 
-const TEMPLATE_STORAGE_PREFIX = "wayvo:msg-template:";
+// v2: prefixo novo — invalida modelos antigos que foram salvos com tokenização
+// gulosa (substrings curtas como "05" ou "64,00" corrompiam datas e dinheiro).
+const TEMPLATE_STORAGE_PREFIX = "wayvo:msg-template:v2:";
 
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** Substitui valores conhecidos por {TOKEN} de forma segura:
+ *  - exige boundary (não-alfanumérico) antes/depois do match
+ *  - ignora valores muito curtos (<4 chars) e puramente numéricos
+ *  - ordena do maior para o menor para evitar colisões */
 function tokenizeMessage(text: string, tokens: Record<string, string>): string {
   let out = text;
   const entries = Object.entries(tokens)
-    .filter(([, v]) => v && v.length > 0)
+    .filter(([, v]) => {
+      if (!v || v.length < 4) return false;
+      // pula valores que são só dígitos/pontuação (ex.: "05", "2026", "64,00")
+      if (!/[A-Za-zÀ-ÿ]/.test(v)) return false;
+      return true;
+    })
     .sort((a, b) => b[1].length - a[1].length);
   for (const [token, value] of entries) {
-    out = out.split(value).join(token);
+    const re = new RegExp(`(^|[^A-Za-z0-9])${escapeRegex(value)}(?=$|[^A-Za-z0-9])`, "g");
+    out = out.replace(re, (_m, pre) => `${pre}${token}`);
   }
   return out;
 }
