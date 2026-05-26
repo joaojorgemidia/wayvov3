@@ -159,6 +159,18 @@ export const TOKEN_DESCRIPTIONS: Record<string, string> = {
   "{CATEGORIA}": "Categoria/tipo da manutenção (Revisão, Reparo, etc.)",
   "{FORNECEDOR}": "Fornecedor / oficina responsável",
   "{DATA_AGENDADA}": "Data agendada da manutenção",
+  // Cobrança
+  "{SEMANA_NUMERO}": "Número da semana cobrada (1ª, 2ª…)",
+  "{SEMANA_PERIODO}": "Período da semana (ex.: 26/05 a 01/06)",
+  "{SEMANA_INICIO}": "Início do período da semana",
+  "{SEMANA_FIM}": "Fim do período da semana",
+  "{SEMANAS_PAGAS}": "Quantidade de semanas pagas pelo locatário",
+  "{SEMANAS_PENDENTES}": "Quantidade de semanas pendentes",
+  "{SEMANAS_TOTAL}": "Total de semanas cobradas (pagas + pendentes)",
+  "{VALOR_COBRANCA}": "Valor da cobrança/parcela",
+  "{DATA_VENCIMENTO}": "Data de vencimento da cobrança",
+  "{DIAS_ATRASO}": "Dias em atraso",
+  "{COBRANCA_TIPO}": "Tipo de cobrança (Pré-paga / Pós-paga)",
 };
 
 // ============== Contextos por etapa ==============
@@ -181,8 +193,8 @@ export const CONTEXT_GROUPS: Record<TokenContext, (keyof typeof TOKEN_CATALOG)[]
   vistoria:     ["locatario", "veiculo", "locacao", "trocaOleo"],
   locacao:      ["locatario", "condutor", "veiculo", "locacao"],
   multa:        ["locatario", "condutor", "veiculo", "locacao"],
-  cobranca:     ["locatario", "locacao"],
-  geral:        ["locatario", "condutor", "veiculo", "locacao", "trocaOleo", "manutencao"],
+  cobranca:     ["locatario", "locacao", "cobranca"],
+  geral:        ["locatario", "condutor", "veiculo", "locacao", "trocaOleo", "manutencao", "cobranca"],
 };
 
 export const GROUP_LABELS: Record<keyof typeof TOKEN_CATALOG, string> = {
@@ -192,6 +204,7 @@ export const GROUP_LABELS: Record<keyof typeof TOKEN_CATALOG, string> = {
   condutor: "Condutor",
   trocaOleo: "Troca de Óleo",
   manutencao: "Manutenção",
+  cobranca: "Cobrança",
 };
 
 /** Retorna os grupos de tokens (com label, lista, descrição e valor preenchido)
