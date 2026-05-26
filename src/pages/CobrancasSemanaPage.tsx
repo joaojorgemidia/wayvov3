@@ -160,6 +160,7 @@ function tokensFor(item: RowItem): Record<string, string> {
 }
 
 export default function CobrancasSemanaPage() {
+  const { activeCompany } = useCompany();
   const cache = useDataCacheSnapshot();
   const [confirmItem, setConfirmItem] = useState<RowItem | null>(null);
   const [form, setForm] = useState({ data: "", valor: "", conta: "", observacao: "" });
