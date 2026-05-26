@@ -216,6 +216,10 @@ export default function LandingPage() {
         <div className="relative mx-auto max-w-7xl px-5 sm:px-8 pt-16 sm:pt-24 pb-16 sm:pb-24">
           <div className="grid lg:grid-cols-[1.05fr_1fr] gap-12 lg:gap-16 items-center">
             <div>
+              {/* Logo destacada no hero */}
+              <div className="mb-8">
+                <WayvoMark size={56} />
+              </div>
               <div
                 className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium mb-6"
                 style={{
