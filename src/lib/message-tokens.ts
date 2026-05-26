@@ -82,6 +82,19 @@ export const TOKEN_CATALOG = {
     "{FORNECEDOR}",
     "{DATA_AGENDADA}",
   ],
+  cobranca: [
+    "{SEMANA_NUMERO}",
+    "{SEMANA_PERIODO}",
+    "{SEMANA_INICIO}",
+    "{SEMANA_FIM}",
+    "{SEMANAS_PAGAS}",
+    "{SEMANAS_PENDENTES}",
+    "{SEMANAS_TOTAL}",
+    "{VALOR_COBRANCA}",
+    "{DATA_VENCIMENTO}",
+    "{DIAS_ATRASO}",
+    "{COBRANCA_TIPO}",
+  ],
 } as const;
 
 // ============== Descrições amigáveis dos tokens ==============
