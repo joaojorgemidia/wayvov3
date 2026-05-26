@@ -368,6 +368,42 @@ export function oilTokens(e?: OilEventInput | null): TokenMap {
   };
 }
 
+/** Dados específicos de uma cobrança/parcela. */
+export interface CobrancaEventInput {
+  semanaNumero?: number | null;
+  semanaInicio?: string | null;
+  semanaFim?: string | null;
+  semanasPagas?: number | null;
+  semanasPendentes?: number | null;
+  semanasTotal?: number | null;
+  valorCobranca?: number | null;
+  dataVencimento?: string | null;
+  diasAtraso?: number | null;
+  cobrancaPrePaga?: boolean | null;
+}
+
+/** Tokens de uma cobrança (semana, status pagamento, etc.). */
+export function cobrancaTokens(e?: CobrancaEventInput | null): TokenMap {
+  if (!e) return {};
+  const ini = fmtDate(e.semanaInicio);
+  const fim = fmtDate(e.semanaFim);
+  const periodo = ini && fim ? `${ini} a ${fim}` : ini || fim || "";
+  return {
+    "{SEMANA_NUMERO}": e.semanaNumero != null ? `${e.semanaNumero}ª` : "",
+    "{SEMANA_PERIODO}": periodo,
+    "{SEMANA_INICIO}": ini,
+    "{SEMANA_FIM}": fim,
+    "{SEMANAS_PAGAS}": e.semanasPagas != null ? String(e.semanasPagas) : "",
+    "{SEMANAS_PENDENTES}": e.semanasPendentes != null ? String(e.semanasPendentes) : "",
+    "{SEMANAS_TOTAL}": e.semanasTotal != null ? String(e.semanasTotal) : "",
+    "{VALOR_COBRANCA}": fmtMoney(e.valorCobranca),
+    "{DATA_VENCIMENTO}": fmtDate(e.dataVencimento),
+    "{DIAS_ATRASO}": e.diasAtraso != null ? String(e.diasAtraso) : "",
+    "{COBRANCA_TIPO}":
+      e.cobrancaPrePaga == null ? "" : e.cobrancaPrePaga ? "Pré-paga" : "Pós-paga",
+  };
+}
+
 // ============== Composição & render ==============
 
 /** Junta múltiplos mapas — o último vence em caso de chave repetida. */
@@ -399,12 +435,13 @@ export function tokenize(text: string, tokens: TokenMap): string {
   return out;
 }
 
-/** Atalho: monta o conjunto completo (Veículo + Locação + Locatário + Condutor + Troca de Óleo). */
+/** Atalho: monta o conjunto completo (Veículo + Locação + Locatário + Condutor + Troca de Óleo + Cobrança). */
 export function buildAllTokens(args: {
   moto?: Motorcycle | null;
   rental?: Rental | null;
   cliente?: Client | null;
   oil?: OilEventInput | null;
+  cobranca?: CobrancaEventInput | null;
 }): TokenMap {
   return mergeTokens(
     vehicleTokens(args.moto ?? null),
@@ -412,5 +449,6 @@ export function buildAllTokens(args: {
     clientTokens(args.cliente ?? null),
     driverTokens(args.cliente ?? null),
     oilTokens(args.oil ?? null),
+    cobrancaTokens(args.cobranca ?? null),
   );
 }
