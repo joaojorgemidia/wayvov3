@@ -279,6 +279,7 @@ function rentalToDb(r: Rental): any {
     proximo_pagamento: r.proximoPagamento || null,
     tempo_minimo_contrato: r.tempoMinimoContrato,
     frequencia_pagamento: r.frequenciaPagamento,
+    cobranca_pre_paga: r.cobrancaPrePaga ?? false,
     valor_diario: r.valorDiario,
     valor_caucao: r.valorCaucao,
     caucao_pendente: r.caucaoPendente,
