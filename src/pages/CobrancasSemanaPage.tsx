@@ -864,7 +864,25 @@ export default function CobrancasSemanaPage() {
       {/* ── MessagePopup ─────────────────────────────────────────── */}
       {msgState && (() => {
         const { item, type } = msgState;
-        const tokens = tokensFor(item);
+        const moto = item.motoId ? cache.motos.find((m) => m.id === item.motoId) ?? null : null;
+        const rental = item.entry.rentalId
+          ? cache.rentals.find((r) => r.id === item.entry.rentalId) ?? null
+          : (moto ? cache.rentals.find((r) => r.motoId === moto.id && r.status === "ativa") ?? null : null);
+        const cliente = item.clienteId ? cache.clients.find((c) => c.id === item.clienteId) ?? null : null;
+        const baseTokens = buildAllTokens({
+          moto,
+          rental,
+          cliente,
+          cobranca: buildCobrancaEvent({
+            rental,
+            entry: item.entry,
+            due: item.due,
+            financial: cache.financial,
+            diasAtraso: item.daysLate,
+          }),
+        });
+        // Mantém tokens locais simples (compatibilidade com templates antigos)
+        const tokens = { ...tokensFor(item), ...baseTokens };
         const mensagem = applyTokens(type.template, tokens);
         return (
           <MessagePopup
