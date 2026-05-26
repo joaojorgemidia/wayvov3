@@ -30,11 +30,13 @@ export interface DetranConfig {
 export interface CobrancaConfig {
   multaAtraso: number;   // R$ fixos por atraso
   jurosDiario: number;   // R$ por dia de atraso
+  jurosMes: number;      // % ao mês (usado quando a locação não tem juros próprio)
 }
 
 export const DEFAULT_COBRANCA_CONFIG: CobrancaConfig = {
   multaAtraso: 15,
   jurosDiario: 7,
+  jurosMes: 0,
 };
 
 export interface Company {
