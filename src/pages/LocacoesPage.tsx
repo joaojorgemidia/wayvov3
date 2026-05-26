@@ -458,6 +458,14 @@ export default function LocacoesPage() {
     toast.success(`${toFinalize.length} locação(ões) finalizada(s).`);
   };
 
+  const handleBulkSetCobranca = (prePaga: boolean) => {
+    const targets = rentals.filter(r => selectedIds.has(r.id));
+    if (!targets.length) { toast.error("Nenhuma locação selecionada."); return; }
+    persist(rentals.map(r => selectedIds.has(r.id) ? { ...r, cobrancaPrePaga: prePaga } : r));
+    setSelectedIds(new Set());
+    toast.success(`${targets.length} locação(ões) marcada(s) como ${prePaga ? "Pré-paga" : "Pós-paga"}.`);
+  };
+
   const handleBulkDelete = () => {
     const toDelete = rentals.filter(r => selectedIds.has(r.id));
     const activeMotoIds = toDelete.filter(r => r.status === "ativa").map(r => r.motoId).filter(Boolean);
