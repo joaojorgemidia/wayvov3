@@ -145,6 +145,22 @@ export default function ConfiguracoesPage() {
                 placeholder="7,00"
               />
             </div>
+            <div className="space-y-1.5 col-span-2">
+              <Label htmlFor="juros-mes" className="text-xs">
+                Juros ao mês (%) <span className="text-muted-foreground font-normal">— recomendado no máximo 10%</span>
+              </Label>
+              <Input
+                id="juros-mes"
+                type="text"
+                inputMode="decimal"
+                value={jurosMesValue}
+                onChange={(e) => setJurosMesValue(e.target.value)}
+                placeholder="0,00"
+              />
+              <p className="text-[11px] text-muted-foreground">
+                Aplicado proporcionalmente por dia de atraso. Usado quando a locação não tem juros próprio configurado.
+              </p>
+            </div>
           </div>
           <Button variant="outline" size="sm" onClick={handleSaveCobranca}>
             Salvar regras
