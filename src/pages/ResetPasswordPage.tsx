@@ -58,7 +58,7 @@ export default function ResetPasswordPage() {
       <Card className="w-full max-w-sm">
         <CardHeader className="text-center">
           <div className="mx-auto mb-2">
-            <img src={wayvoLogo} alt="Wayvo" className="h-12 mx-auto" />
+            <WayvoLogo variant="light" />
           </div>
           <CardTitle className="text-xl">Definir nova senha</CardTitle>
         </CardHeader>
