@@ -30,6 +30,7 @@ import { OilChangeRecord } from "@/lib/types";
 import { brandConfigFor, loadBrandConfig } from "@/lib/oil-kpis";
 import { MessagePopup } from "@/components/MessagePopup";
 import { buildAllTokens } from "@/lib/message-tokens";
+import { buildCobrancaEvent } from "@/lib/cobranca-week-stats";
 import { formatDate } from "@/lib/alerts";
 
 function moduleBadgeColor(m: CollectionModule) {
