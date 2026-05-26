@@ -12,12 +12,15 @@ import { AsaasConfig, DetranConfig, CobrancaConfig, DEFAULT_COBRANCA_CONFIG } fr
 import { toast } from "sonner";
 
 export default function ConfiguracoesPage() {
-  const { activeCompany, updateAsaasConfig, updateDetranConfig } = useCompany();
+  const { activeCompany, updateAsaasConfig, updateDetranConfig, updateCobrancaConfig } = useCompany();
   const [asaasOpen, setAsaasOpen] = useState(false);
   const [detranOpen, setDetranOpen] = useState(false);
 
   const asaasCfg = activeCompany?.asaasConfig;
   const detranCfg = activeCompany?.detranConfig;
+  const cobrancaCfg = activeCompany?.cobrancaConfig ?? DEFAULT_COBRANCA_CONFIG;
+  const [multaValue, setMultaValue] = useState(String(cobrancaCfg.multaAtraso));
+  const [jurosValue, setJurosValue] = useState(String(cobrancaCfg.jurosDiario));
 
   const handleSaveAsaas = async (config: AsaasConfig) => {
     await updateAsaasConfig(activeCompany.id, config);
