@@ -408,17 +408,33 @@ export default function CobrancasSemanaPage() {
       const rental = moto ? cache.rentals.find((r) => r.motoId === moto.id && r.status === "ativa") ?? null : null;
       const clienteObj = item.clienteId ? cache.clients.find((c) => c.id === item.clienteId) ?? null : null;
 
+      const valorFmt = `R$ ${valor.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+      const vencimento = item.due
+        ? item.due.toLocaleDateString("pt-BR")
+        : (item.entry.data
+            ? new Date(item.entry.data + "T12:00:00").toLocaleDateString("pt-BR")
+            : dataPagamento);
+      const motoLinha = item.placa
+        ? `${item.placa}${item.modelo ? ` — ${item.modelo}` : ""}`
+        : "—";
+
       const linhas = [
-        `Olá, ${item.clienteNome || "[NOME]"}! 👋`,
-        "",
-        `Confirmamos o recebimento do seu pagamento. ✅`,
-        "",
-        `📋 *${descricao}*`,
-        `• Valor: *R$ ${valor.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}*`,
-        `• Data: *${dataPagamento}*`,
-        ...(item.placa ? [`• Moto: *${item.placa}*${item.modelo ? ` (${item.modelo})` : ""}`] : []),
-        "",
-        "Qualquer dúvida, estamos à disposição. 🏍️",
+        `✅ *PAGAMENTO CONFIRMADO*`,
+        ``,
+        `LOCATÁRIO: ${item.clienteNome || "[NOME]"}`,
+        `MOTO: ${motoLinha}`,
+        `VENCIMENTO: ${vencimento}`,
+        ``,
+        `💰 *VALORES*`,
+        `${descricao}: ${valorFmt}`,
+        `─────────────`,
+        `Total pago: *${valorFmt}*`,
+        ``,
+        `📅 *PAGAMENTO*`,
+        `Data: ${dataPagamento}`,
+        ...(form.conta ? [`Conta: ${form.conta}`] : []),
+        ``,
+        `— wayvo · dado · decisão · destino`,
       ];
 
       setPayConfirmPopup({
