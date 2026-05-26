@@ -27,9 +27,9 @@ export interface MessagePopupProps {
   paletteContext?: TokenContext;
 }
 
-// v2: prefixo novo — invalida modelos antigos que foram salvos com tokenização
-// gulosa (substrings curtas como "05" ou "64,00" corrompiam datas e dinheiro).
-const TEMPLATE_STORAGE_PREFIX = "wayvo:msg-template:v2:";
+// v3: bump para invalidar templates que tinham texto estático de atraso/juros
+// e data de pagamento — agora usamos tokens dinâmicos {BLOCO_ATRASO} e {DATA_PAGAMENTO}.
+const TEMPLATE_STORAGE_PREFIX = "wayvo:msg-template:v3:";
 
 function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
