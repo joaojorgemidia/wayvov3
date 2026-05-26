@@ -27,6 +27,7 @@ import { saveFinancial } from "@/lib/store";
 import { FinancialEntry } from "@/lib/types";
 import { MessagePopup } from "@/components/MessagePopup";
 import { applyTokens, buildAllTokens } from "@/lib/message-tokens";
+import { buildCobrancaEvent } from "@/lib/cobranca-week-stats";
 import { buildWhatsAppUrl } from "@/lib/whatsapp";
 
 const WEEK_LONG = ["Domingo", "Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado"];
@@ -478,7 +479,18 @@ export default function CobrancasSemanaPage() {
         highlights: [
           { label: "Valor pago", value: `R$ ${valor.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, tone: "primary" },
         ],
-        tokens: buildAllTokens({ moto, rental, cliente: clienteObj }),
+        tokens: buildAllTokens({
+          moto,
+          rental,
+          cliente: clienteObj,
+          cobranca: buildCobrancaEvent({
+            rental,
+            entry: item.entry,
+            due: dueDate,
+            financial: cache.financial,
+            diasAtraso,
+          }),
+        }),
       });
 
       toast.success("Pagamento confirmado");
@@ -863,7 +875,25 @@ export default function CobrancasSemanaPage() {
       {/* ── MessagePopup ─────────────────────────────────────────── */}
       {msgState && (() => {
         const { item, type } = msgState;
-        const tokens = tokensFor(item);
+        const moto = item.motoId ? cache.motos.find((m) => m.id === item.motoId) ?? null : null;
+        const rental = item.entry.rentalId
+          ? cache.rentals.find((r) => r.id === item.entry.rentalId) ?? null
+          : (moto ? cache.rentals.find((r) => r.motoId === moto.id && r.status === "ativa") ?? null : null);
+        const cliente = item.clienteId ? cache.clients.find((c) => c.id === item.clienteId) ?? null : null;
+        const baseTokens = buildAllTokens({
+          moto,
+          rental,
+          cliente,
+          cobranca: buildCobrancaEvent({
+            rental,
+            entry: item.entry,
+            due: item.due,
+            financial: cache.financial,
+            diasAtraso: item.daysLate,
+          }),
+        });
+        // Mantém tokens locais simples (compatibilidade com templates antigos)
+        const tokens = { ...tokensFor(item), ...baseTokens };
         const mensagem = applyTokens(type.template, tokens);
         return (
           <MessagePopup

@@ -14,7 +14,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Table, TableHeader, TableBody, TableHead, TableRow, TableCell } from "@/components/ui/table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Plus, Search, FileText, Eye, Trash2, Pencil, XCircle, History, CheckCircle2 } from "lucide-react";
+import { Plus, Search, FileText, Eye, Trash2, Pencil, XCircle, History, CheckCircle2, MoreHorizontal, Wallet } from "lucide-react";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuLabel, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import RentalWizard from "@/components/locacoes/RentalWizard";
 import HistoricalRentalDialog from "@/components/locacoes/HistoricalRentalDialog";
@@ -458,6 +459,14 @@ export default function LocacoesPage() {
     toast.success(`${toFinalize.length} locação(ões) finalizada(s).`);
   };
 
+  const handleBulkSetCobranca = (prePaga: boolean) => {
+    const targets = rentals.filter(r => selectedIds.has(r.id));
+    if (!targets.length) { toast.error("Nenhuma locação selecionada."); return; }
+    persist(rentals.map(r => selectedIds.has(r.id) ? { ...r, cobrancaPrePaga: prePaga } : r));
+    setSelectedIds(new Set());
+    toast.success(`${targets.length} locação(ões) marcada(s) como ${prePaga ? "Pré-paga" : "Pós-paga"}.`);
+  };
+
   const handleBulkDelete = () => {
     const toDelete = rentals.filter(r => selectedIds.has(r.id));
     const activeMotoIds = toDelete.filter(r => r.status === "ativa").map(r => r.motoId).filter(Boolean);
@@ -663,18 +672,37 @@ export default function LocacoesPage() {
         <div className="flex items-center gap-3 rounded-md border bg-muted/50 px-4 py-2.5">
           <span className="text-sm font-medium">{selectedIds.size} locação(ões) selecionada(s)</span>
           <div className="flex gap-2 ml-auto">
-            <Button
-              size="sm" variant="outline" className="gap-1.5"
-              onClick={() => { setBulkFinalizarData(new Date().toISOString().split("T")[0]); setBulkFinalizarOpen(true); }}
-            >
-              <CheckCircle2 className="h-3.5 w-3.5" /> Finalizar selecionadas
-            </Button>
-            <Button
-              size="sm" variant="destructive" className="gap-1.5"
-              onClick={() => setBulkDeleteOpen(true)}
-            >
-              <Trash2 className="h-3.5 w-3.5" /> Excluir selecionadas
-            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button size="sm" variant="outline" className="gap-1.5">
+                  <MoreHorizontal className="h-3.5 w-3.5" /> Ações em massa
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-56">
+                <DropdownMenuLabel>Cobrança</DropdownMenuLabel>
+                <DropdownMenuItem onClick={() => handleBulkSetCobranca(true)} className="gap-2">
+                  <Wallet className="h-4 w-4" /> Marcar como Pré-paga
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => handleBulkSetCobranca(false)} className="gap-2">
+                  <Wallet className="h-4 w-4" /> Marcar como Pós-paga
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuLabel>Status</DropdownMenuLabel>
+                <DropdownMenuItem
+                  onClick={() => { setBulkFinalizarData(new Date().toISOString().split("T")[0]); setBulkFinalizarOpen(true); }}
+                  className="gap-2"
+                >
+                  <CheckCircle2 className="h-4 w-4" /> Finalizar selecionadas
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  onClick={() => setBulkDeleteOpen(true)}
+                  className="gap-2 text-destructive focus:text-destructive"
+                >
+                  <Trash2 className="h-4 w-4" /> Excluir selecionadas
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         </div>
       )}

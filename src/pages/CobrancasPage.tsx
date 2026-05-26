@@ -30,6 +30,7 @@ import { OilChangeRecord } from "@/lib/types";
 import { brandConfigFor, loadBrandConfig } from "@/lib/oil-kpis";
 import { MessagePopup } from "@/components/MessagePopup";
 import { buildAllTokens } from "@/lib/message-tokens";
+import { buildCobrancaEvent } from "@/lib/cobranca-week-stats";
 import { formatDate } from "@/lib/alerts";
 
 function moduleBadgeColor(m: CollectionModule) {
@@ -581,7 +582,18 @@ export default function CobrancasPage() {
               { label: "Valor pago", value: `R$ ${valorPago.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, tone: "primary" },
             ],
             templateKey: "pagamento:confirmacao",
-            tokens: buildAllTokens({ moto, rental, cliente: cliente ?? null }),
+            tokens: buildAllTokens({
+              moto,
+              rental,
+              cliente: cliente ?? null,
+              cobranca: buildCobrancaEvent({
+                rental,
+                entry,
+                due: dueDate,
+                financial: cache.financial,
+                diasAtraso,
+              }),
+            }),
           });
         }
       } else if (item.module === "multa") {
