@@ -11,6 +11,7 @@ import { Layout } from "@/components/Layout";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 
 const Index = React.lazy(() => import("./pages/Index"));
+const LandingPage = React.lazy(() => import("./pages/LandingPage"));
 const MotosPage = React.lazy(() => import("./pages/MotosPage"));
 const ClientesPage = React.lazy(() => import("./pages/ClientesPage"));
 const LocacoesPage = React.lazy(() => import("./pages/LocacoesPage"));
@@ -70,13 +71,13 @@ const App = () => (
             </div>
           }>
             <Routes>
+              <Route path="/" element={<LandingPage />} />
               <Route path="/login" element={<LoginPage />} />
               <Route path="/signup" element={<SignupPage />} />
               <Route path="/forgot-password" element={<ForgotPasswordPage />} />
               <Route path="/reset-password" element={<ResetPasswordPage />} />
               <Route element={<ProtectedRoute />}>
                 <Route element={<ProtectedApp />}>
-                  <Route path="/" element={<Index />} />
                   <Route path="/dashboard" element={<Index />} />
                   <Route path="/motos" element={<MotosPage />} />
                   <Route path="/clientes" element={<ClientesPage />} />
