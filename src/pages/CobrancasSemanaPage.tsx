@@ -26,7 +26,7 @@ import { useDataCacheSnapshot } from "@/lib/data-cache";
 import { saveFinancial } from "@/lib/store";
 import { FinancialEntry } from "@/lib/types";
 import { MessagePopup } from "@/components/MessagePopup";
-import { applyTokens } from "@/lib/message-tokens";
+import { applyTokens, buildAllTokens } from "@/lib/message-tokens";
 import { buildWhatsAppUrl } from "@/lib/whatsapp";
 
 const WEEK_LONG = ["Domingo", "Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado"];
@@ -161,6 +161,11 @@ export default function CobrancasSemanaPage() {
   const [confirmItem, setConfirmItem] = useState<RowItem | null>(null);
   const [form, setForm] = useState({ data: "", valor: "", conta: "", observacao: "" });
   const [msgState, setMsgState] = useState<{ item: RowItem; type: MsgType } | null>(null);
+  const [payConfirmPopup, setPayConfirmPopup] = useState<{
+    mensagem: string; placa: string; cliente: string; telefone: string;
+    highlights: { label: string; value: string; tone: "primary" | "warning" | "danger" }[];
+    tokens: Record<string, string>;
+  } | null>(null);
   const [search, setSearch] = useState("");
   const [dayFilter, setDayFilter] = useState<number | "all">("all");
   const [reschedItem, setReschedItem] = useState<RowItem | null>(null);
@@ -376,14 +381,16 @@ export default function CobrancasSemanaPage() {
 
   const handleConfirm = async () => {
     if (!confirmItem) return;
-    const valor = parseFloat(form.valor.replace(",", ".")) || confirmItem.entry.valor || 0;
+    const item = confirmItem;
+    const valor = parseFloat(form.valor.replace(",", ".")) || item.entry.valor || 0;
     try {
+      const payDate = form.data || new Date().toISOString().slice(0, 10);
       const next = cache.financial.map((e) =>
-        e.id === confirmItem.entry.id
+        e.id === item.entry.id
           ? {
               ...e,
               pago: true,
-              data: form.data || new Date().toISOString().slice(0, 10),
+              data: payDate,
               valor,
               conta: form.conta || e.conta,
               observacao: form.observacao
@@ -393,6 +400,38 @@ export default function CobrancasSemanaPage() {
           : e,
       );
       await saveFinancial(next);
+
+      // Popup de confirmação para enviar ao cliente
+      const dataPagamento = new Date(payDate + "T12:00:00").toLocaleDateString("pt-BR");
+      const descricao = metaFor(item.catKey).label;
+      const moto = item.motoId ? cache.motos.find((m) => m.id === item.motoId) ?? null : null;
+      const rental = moto ? cache.rentals.find((r) => r.motoId === moto.id && r.status === "ativa") ?? null : null;
+      const clienteObj = item.clienteId ? cache.clients.find((c) => c.id === item.clienteId) ?? null : null;
+
+      const linhas = [
+        `Olá, ${item.clienteNome || "[NOME]"}! 👋`,
+        "",
+        `Confirmamos o recebimento do seu pagamento. ✅`,
+        "",
+        `📋 *${descricao}*`,
+        `• Valor: *R$ ${valor.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}*`,
+        `• Data: *${dataPagamento}*`,
+        ...(item.placa ? [`• Moto: *${item.placa}*${item.modelo ? ` (${item.modelo})` : ""}`] : []),
+        "",
+        "Qualquer dúvida, estamos à disposição. 🏍️",
+      ];
+
+      setPayConfirmPopup({
+        mensagem: linhas.join("\n"),
+        placa: item.placa || "—",
+        cliente: item.clienteNome,
+        telefone: item.telefoneCliente || "",
+        highlights: [
+          { label: "Valor pago", value: `R$ ${valor.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, tone: "primary" },
+        ],
+        tokens: buildAllTokens({ moto, rental, cliente: clienteObj }),
+      });
+
       toast.success("Pagamento confirmado");
       setConfirmItem(null);
     } catch (err) {
@@ -793,6 +832,23 @@ export default function CobrancasSemanaPage() {
           />
         );
       })()}
+
+      {/* ── MessagePopup: Confirmação de pagamento ───────────────── */}
+      {payConfirmPopup && (
+        <MessagePopup
+          open={!!payConfirmPopup}
+          onOpenChange={(o) => !o && setPayConfirmPopup(null)}
+          title="Confirmação de Pagamento"
+          mensagem={payConfirmPopup.mensagem}
+          placa={payConfirmPopup.placa}
+          cliente={payConfirmPopup.cliente}
+          telefone={payConfirmPopup.telefone}
+          highlights={payConfirmPopup.highlights}
+          templateKey="pagamento:confirmacao"
+          tokens={payConfirmPopup.tokens}
+          paletteContext="cobranca"
+        />
+      )}
 
       {/* ── Dialog: Confirmar pagamento ───────────────────────────── */}
       <Dialog open={!!confirmItem} onOpenChange={(o) => !o && setConfirmItem(null)}>
