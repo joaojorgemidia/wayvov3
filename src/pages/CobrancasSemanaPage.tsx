@@ -27,7 +27,7 @@ import { saveFinancial } from "@/lib/store";
 import { FinancialEntry } from "@/lib/types";
 import { MessagePopup } from "@/components/MessagePopup";
 import { applyTokens, buildAllTokens } from "@/lib/message-tokens";
-import { buildCobrancaEvent, computeSemanaPeriodo } from "@/lib/cobranca-week-stats";
+import { buildCobrancaEvent, computeSemanaPeriodo, computeSemanaNumero } from "@/lib/cobranca-week-stats";
 import { DEFAULT_MULTA_ATRASO, DEFAULT_JUROS_DIARIO } from "@/lib/cobranca-defaults";
 import { buildWhatsAppUrl } from "@/lib/whatsapp";
 
@@ -429,20 +429,10 @@ export default function CobrancasSemanaPage() {
         ? `${item.placa}${item.modelo ? ` — ${item.modelo}` : ""}`
         : "—";
 
-      // Semana paga (relativa ao início da locação)
-      // Pré-pago: vencimento = início do período → semana = floor(diff/7)+1
-      // Pós-pago: vencimento = fim do período → semana = ceil(diff/7), min 1
+      // Semana paga (relativa ao início da locação) — usa helper unificado
       let semanaTxt = "";
-      if (rental?.dataInicio && dueDate) {
-        const ini = new Date(rental.dataInicio + "T12:00:00").getTime();
-        const diffDays = Math.floor((dueDate.getTime() - ini) / 86400000);
-        if (diffDays >= 0) {
-          const semana = rental.cobrancaPrePaga
-            ? Math.floor(diffDays / 7) + 1
-            : Math.max(1, Math.ceil(diffDays / 7));
-          semanaTxt = `${semana}ª semana`;
-        }
-      }
+      const semanaNum = computeSemanaNumero(rental ?? null, dueDate);
+      if (semanaNum != null) semanaTxt = `${semanaNum}ª semana`;
 
       // Juros / multa por atraso (regra padrão do sistema quando não configurado na locação)
       const payTs = new Date(payDate + "T12:00:00").getTime();

@@ -30,7 +30,7 @@ import { OilChangeRecord } from "@/lib/types";
 import { brandConfigFor, loadBrandConfig } from "@/lib/oil-kpis";
 import { MessagePopup } from "@/components/MessagePopup";
 import { buildAllTokens } from "@/lib/message-tokens";
-import { buildCobrancaEvent, computeSemanaPeriodo } from "@/lib/cobranca-week-stats";
+import { buildCobrancaEvent, computeSemanaPeriodo, computeSemanaNumero } from "@/lib/cobranca-week-stats";
 import { DEFAULT_MULTA_ATRASO, DEFAULT_JUROS_DIARIO } from "@/lib/cobranca-defaults";
 import { formatDate } from "@/lib/alerts";
 
@@ -537,16 +537,8 @@ export default function CobrancasPage() {
             : (entry.placa || "—");
 
           let semanaTxt = "";
-          if (rental?.dataInicio && dueDate) {
-            const ini = new Date(rental.dataInicio + "T12:00:00").getTime();
-            const diffDays = Math.floor((dueDate.getTime() - ini) / 86400000);
-            if (diffDays >= 0) {
-              const semana = rental.cobrancaPrePaga
-                ? Math.floor(diffDays / 7) + 1
-                : Math.max(1, Math.ceil(diffDays / 7));
-              semanaTxt = `${semana}ª semana`;
-            }
-          }
+          const semanaNum = computeSemanaNumero(rental ?? null, dueDate);
+          if (semanaNum != null) semanaTxt = `${semanaNum}ª semana`;
 
           const payTs = new Date(resolveData.data + "T12:00:00").getTime();
           const diasAtraso = dueDate ? Math.max(0, Math.floor((payTs - dueDate.getTime()) / 86400000)) : 0;
