@@ -369,7 +369,7 @@ export default function TrocaOleoPage() {
     return motos
       .filter((m) => {
         if (!q) return true;
-        if (m.placa.toUpperCase().includes(q)) return true;
+        if (m.placa.toUpperCase().startsWith(q)) return true;
         const nome = motoClientMap.get(m.id)?.nome?.toUpperCase() ?? "";
         return nome.includes(q);
       })
