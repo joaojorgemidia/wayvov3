@@ -5,7 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Info } from "lucide-react";
+import { Info, Eye, EyeOff } from "lucide-react";
 import { AsaasConfig, DEFAULT_ASAAS_CONFIG } from "@/lib/companies";
 
 interface Props {
@@ -22,6 +22,7 @@ const DELAY_OPTIONS = ["0", "1", "2", "3", "5", "7", "10", "15", "30"];
 export default function AsaasConfigDialog({ open, onClose, onSave, initial, companyName }: Props) {
   const [cfg, setCfg] = useState<AsaasConfig>(() => ({ ...DEFAULT_ASAAS_CONFIG, ...initial }));
   const [saving, setSaving] = useState(false);
+  const [showKey, setShowKey] = useState(false);
 
   const set = <K extends keyof AsaasConfig>(key: K, val: AsaasConfig[K]) =>
     setCfg(prev => ({ ...prev, [key]: val }));
@@ -44,6 +45,29 @@ export default function AsaasConfigDialog({ open, onClose, onSave, initial, comp
         </DialogHeader>
 
         <div className="space-y-5 py-2">
+          {/* Chave de API */}
+          <div className="space-y-1.5">
+            <Label className="text-sm font-medium">Chave de API Asaas</Label>
+            <p className="text-xs text-muted-foreground">Encontrada em Minha conta → Integrações no painel Asaas. Cada empresa usa sua própria chave.</p>
+            <div className="relative">
+              <Input
+                type={showKey ? "text" : "password"}
+                value={cfg.apiKey || ""}
+                onChange={e => set("apiKey", e.target.value.trim() || undefined)}
+                placeholder="$aact_…"
+                className="pr-10 font-mono text-xs"
+              />
+              <button
+                type="button"
+                onClick={() => setShowKey(v => !v)}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                tabIndex={-1}
+              >
+                {showKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              </button>
+            </div>
+          </div>
+
           {/* Toggle principal */}
           <div className="flex items-center gap-3">
             <Switch checked={cfg.enabled} onCheckedChange={v => set("enabled", v)} id="asaas-enabled" />

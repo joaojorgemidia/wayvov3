@@ -1,4 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -8,10 +9,7 @@ const corsHeaders = {
 
 const ASAAS_BASE = "https://www.asaas.com/api/v3";
 
-async function asaas(path: string, method: string, body?: object) {
-  const apiKey = Deno.env.get("ASAAS_API_KEY");
-  if (!apiKey) throw new Error("ASAAS_API_KEY não configurado");
-
+async function asaas(path: string, method: string, apiKey: string, body?: object) {
   const res = await fetch(`${ASAAS_BASE}${path}`, {
     method,
     headers: {
@@ -34,8 +32,13 @@ serve(async (req) => {
     return new Response(null, { headers: corsHeaders });
   }
 
+  const supabase = createClient(
+    Deno.env.get("SUPABASE_URL")!,
+    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+  );
+
   try {
-    const { asaasPaymentId, dueDate, value } = await req.json();
+    const { asaasPaymentId, dueDate, value, companyId } = await req.json();
 
     if (!asaasPaymentId) {
       return new Response(JSON.stringify({ error: "asaasPaymentId é obrigatório" }), {
@@ -49,11 +52,25 @@ serve(async (req) => {
       });
     }
 
+    // Resolve API key: company config > env var
+    let apiKey = Deno.env.get("ASAAS_API_KEY") || "";
+    if (companyId) {
+      const { data: company } = await supabase
+        .from("companies")
+        .select("asaas_config")
+        .eq("id", companyId)
+        .single();
+      if (company?.asaas_config?.apiKey) {
+        apiKey = company.asaas_config.apiKey;
+      }
+    }
+    if (!apiKey) throw new Error("Chave de API Asaas não configurada para esta empresa");
+
     const updatePayload: Record<string, unknown> = {};
     if (dueDate) updatePayload.dueDate = dueDate;
     if (value !== undefined) updatePayload.value = Number(value);
 
-    const updated = await asaas(`/payments/${asaasPaymentId}`, "PUT", updatePayload);
+    const updated = await asaas(`/payments/${asaasPaymentId}`, "PUT", apiKey, updatePayload);
 
     return new Response(
       JSON.stringify({ success: true, paymentId: updated.id, status: updated.status }),

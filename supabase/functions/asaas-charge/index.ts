@@ -9,10 +9,7 @@ const corsHeaders = {
 
 const ASAAS_BASE = "https://www.asaas.com/api/v3";
 
-async function asaas(path: string, method: string, body?: object) {
-  const apiKey = Deno.env.get("ASAAS_API_KEY");
-  if (!apiKey) throw new Error("ASAAS_API_KEY não configurado");
-
+async function asaas(path: string, method: string, apiKey: string, body?: object) {
   const res = await fetch(`${ASAAS_BASE}${path}`, {
     method,
     headers: {
@@ -28,6 +25,12 @@ async function asaas(path: string, method: string, body?: object) {
     throw new Error(`Asaas ${method} ${path} falhou: ${msg}`);
   }
   return data;
+}
+
+function resolveApiKey(companyConfig: Record<string, any> | null): string {
+  const key = companyConfig?.apiKey || Deno.env.get("ASAAS_API_KEY");
+  if (!key) throw new Error("Chave de API Asaas não configurada para esta empresa");
+  return key;
 }
 
 serve(async (req) => {
@@ -128,6 +131,8 @@ serve(async (req) => {
       }
     }
 
+    const apiKey = resolveApiKey(asaasConfig);
+
     // Placa: vem direto da entrada (já resolvida) ou fallback da moto
     const placa = entry.placa || null;
 
@@ -162,7 +167,7 @@ serve(async (req) => {
       if (client.numero) customerPayload.addressNumber = client.numero;
       if (client.bairro) customerPayload.province = client.bairro;
 
-      const newCustomer = await asaas("/customers", "POST", customerPayload);
+      const newCustomer = await asaas("/customers", "POST", apiKey, customerPayload);
       asaasCustomerId = newCustomer.id;
 
       await supabase
@@ -254,7 +259,7 @@ serve(async (req) => {
       paymentPayload.notifications = notifications;
     }
 
-    const payment = await asaas("/payments", "POST", paymentPayload);
+    const payment = await asaas("/payments", "POST", apiKey, paymentPayload);
 
     // 5. Atualiza a entrada com os dados do boleto
     await supabase

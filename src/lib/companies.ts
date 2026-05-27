@@ -1,4 +1,5 @@
 export interface AsaasConfig {
+  apiKey?: string;                // chave de API da conta Asaas desta empresa
   enabled: boolean;
   multaAtraso: number;
   jurosAtrasoMes: number;

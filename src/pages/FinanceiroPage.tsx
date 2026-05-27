@@ -1098,7 +1098,7 @@ export default function FinanceiroPage() {
     const dateChanged = updated.data !== original.data;
     const valueChanged = updated.valor !== original.valor;
     if (!dateChanged && !valueChanged) return;
-    const body: Record<string, unknown> = { asaasPaymentId: updated.asaasPaymentId };
+    const body: Record<string, unknown> = { asaasPaymentId: updated.asaasPaymentId, companyId: currentCompanyId };
     if (dateChanged) body.dueDate = updated.data;
     if (valueChanged) body.value = updated.valor;
     const { error } = await supabase.functions.invoke("asaas-update-payment", { body });
@@ -1125,7 +1125,7 @@ export default function FinanceiroPage() {
     if (cancellable.length === 0) return;
     const results = await Promise.allSettled(
       cancellable.map(e =>
-        supabase.functions.invoke("asaas-cancel-payment", { body: { asaasPaymentId: e.asaasPaymentId } }),
+        supabase.functions.invoke("asaas-cancel-payment", { body: { asaasPaymentId: e.asaasPaymentId, companyId: currentCompanyId } }),
       ),
     );
     const failed = results.filter(r => r.status === "rejected" || (r.status === "fulfilled" && r.value.error)).length;
