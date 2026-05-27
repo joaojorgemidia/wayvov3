@@ -6,6 +6,8 @@ import { lastOilChange } from "@/lib/oil-kpis";
 import { useDataCacheSnapshot } from "@/lib/data-cache";
 import { resolveAssociations } from "@/lib/financial-associations";
 import { addWeeks, addDays, addMonths, isBefore, isEqual, parseISO, differenceInDays } from "date-fns";
+import { useCompany } from "@/contexts/CompanyContext";
+import { DEFAULT_COBRANCA_CONFIG } from "@/lib/companies";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -38,14 +40,15 @@ const MOTIVOS_ENCERRAMENTO = [
   "Outro",
 ];
 
-function makeEmptyRental(): Rental {
+function makeEmptyRental(defaults?: { multaAtraso?: number; jurosAtrasoMes?: number }): Rental {
   return {
     id: crypto.randomUUID(), motoId: "", clienteId: "", vendedor: "",
     dataInicio: new Date().toISOString().split("T")[0], horaInicio: "08:00",
     dataFim: null, dataFimContrato: null, proximoPagamento: null,
     tempoMinimoContrato: null, frequenciaPagamento: "", cobrancaPrePaga: false,
     valorDiario: 0, valorCaucao: 0, caucaoPendente: false, caucaoParcelado: false, parcelasCaucao: [],
-    multaAtraso: 15, jurosAtrasoMes: 0,
+    multaAtraso: defaults?.multaAtraso ?? DEFAULT_COBRANCA_CONFIG.multaAtraso,
+    jurosAtrasoMes: defaults?.jurosAtrasoMes ?? DEFAULT_COBRANCA_CONFIG.jurosMes,
     localRetirada: "", localDevolucao: "",
     kmInicio: 0, kmFim: null, nivelCombustivel: "", plano: "",
     raioCirculacao: "", seguroTerceiros: false,
@@ -57,10 +60,13 @@ function makeEmptyRental(): Rental {
 
 export default function LocacoesPage() {
   const cache = useDataCacheSnapshot();
+  const { activeCompany } = useCompany();
   const [rentals, setRentals] = useState<Rental[]>([]);
   const motos = cache.motos;
   const clients = cache.clients;
   const [search, setSearch] = useState("");
+
+  const cobrancaCfg = activeCompany?.cobrancaConfig ?? DEFAULT_COBRANCA_CONFIG;
 
   useEffect(() => { setRentals(cache.rentals); }, [cache.rentals]);
 
@@ -727,7 +733,7 @@ export default function LocacoesPage() {
             <DialogTitle>{editRental ? `Editar Locação ${getNumero(editRental)}` : "Nova Locação"}</DialogTitle>
           </DialogHeader>
           <RentalWizard
-            rental={editRental || makeEmptyRental()}
+            rental={editRental || makeEmptyRental({ multaAtraso: cobrancaCfg.multaAtraso, jurosAtrasoMes: cobrancaCfg.jurosMes })}
             motos={motos}
             activeRentalMotoIds={rentals.filter(r => r.status === "ativa" && r.id !== editRental?.id).map(r => r.motoId)}
             activeRentalClientIds={rentals.filter(r => r.status === "ativa" && r.id !== editRental?.id).map(r => r.clienteId)}
