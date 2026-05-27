@@ -406,20 +406,33 @@ export default function RastreamentoPage() {
 
       // KM alvo = km do sistema + margem configurada
       const targetKm = moto.kmAtual + (marginKm ?? 0);
-      // Pula se já sincronizamos este valor ou um valor maior (evita sobrescrever atualização manual)
+
+      // Pula se já sincronizamos este valor na sessão atual
       const lastSynced = syncedKmRef.current.get(track.imei) ?? -1;
       if (lastSynced >= targetKm) continue;
 
+      // Pula se já sincronizamos este valor em sessão anterior (evita chamada desnecessária ao reabrir a página)
+      const persistKey = `wayvo:km-synced:${companyId}:${track.imei}`;
+      try {
+        const persisted = Number(localStorage.getItem(persistKey) ?? -1);
+        if (persisted >= targetKm) {
+          syncedKmRef.current.set(track.imei, persisted);
+          continue;
+        }
+      } catch { /* ignora falha de localStorage */ }
+
       const trackerKm = track.mileage ?? 0;
-      if (targetKm > trackerKm) {
+      if (targetKm !== trackerKm) {
         try {
           await setMileage(token, track.imei, targetKm);
-          syncedKmRef.current.set(track.imei, targetKm);
           toast.success(`KM sincronizado: ${getDisplayName(track.imei)} → ${targetKm.toLocaleString("pt-BR")} km`);
         } catch (e: any) {
           console.warn("syncKm:", e.message);
         }
       }
+      // Marca como sincronizado (mesmo que os valores já fossem iguais) para evitar re-checagem
+      syncedKmRef.current.set(track.imei, targetKm);
+      try { localStorage.setItem(persistKey, String(targetKm)); } catch { /* ignora */ }
     }
   }, [getValidToken, customNames, getDisplayName, auth, companyId]);
 

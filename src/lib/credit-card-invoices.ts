@@ -27,6 +27,7 @@ function lastDayOfMonth(year: number, month: number) {
 export function reconcileCardInvoices(
   entries: FinancialEntry[],
   cards: CreditCardLike[],
+  suppressedIds: Set<string> = new Set(),
 ): FinancialEntry[] {
   const cardByName = new Map<string, CreditCardLike>();
   cards.filter(c => c.tipo === "cartao").forEach(c => cardByName.set(c.nome, c));
@@ -88,6 +89,7 @@ export function reconcileCardInvoices(
   const desired = new Set<string>();
   groups.forEach((g) => {
     const id = invoiceId(g.card.id, g.ym);
+    if (suppressedIds.has(id)) return;
     desired.add(id);
     const [yStr, mStr] = g.ym.split("-");
     const y = Number(yStr);

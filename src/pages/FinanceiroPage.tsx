@@ -705,6 +705,27 @@ export default function FinanceiroPage() {
   const { activeCompany } = useCompany();
   const currentCompanyId = activeCompany.id;
   const { canCreate, canEdit, canDelete } = usePermissions();
+
+  // IDs de faturas auto-geradas que o usuário excluiu explicitamente. Persistidos em
+  // localStorage para sobreviver a navegação e não serem recriados pelo reconcile.
+  const suppressedInvoiceIdsRef = React.useRef<Set<string>>(new Set());
+  React.useEffect(() => {
+    try {
+      const raw = localStorage.getItem(`wayvo:suppressed-invoices:${currentCompanyId}`);
+      suppressedInvoiceIdsRef.current = raw ? new Set(JSON.parse(raw)) : new Set();
+    } catch { suppressedInvoiceIdsRef.current = new Set(); }
+  }, [currentCompanyId]);
+
+  // Chaves "baseId::data" de ocorrências recorrentes que o usuário excluiu explicitamente.
+  // Persistidas para que o auto-materialize não as recrie após a deleção.
+  const deletedOccurrencesRef = React.useRef<Set<string>>(new Set());
+  React.useEffect(() => {
+    try {
+      const raw = localStorage.getItem(`wayvo:deleted-occurrences:${currentCompanyId}`);
+      deletedOccurrencesRef.current = raw ? new Set(JSON.parse(raw)) : new Set();
+    } catch { deletedOccurrencesRef.current = new Set(); }
+  }, [currentCompanyId]);
+
   const { applyCompraMotoCorrections: shouldCorrectCompraMoto, filterImportedEntries } =
     getCompanyFeatureFlags(currentCompanyId);
   const cache = useDataCacheSnapshot();
@@ -1131,7 +1152,7 @@ export default function FinanceiroPage() {
     });
     if (sig === lastInvoiceSigRef.current) return;
     lastInvoiceSigRef.current = sig;
-    const next = reconcileCardInvoices(entries, cards as any);
+    const next = reconcileCardInvoices(entries, cards as any, suppressedInvoiceIdsRef.current);
     if (JSON.stringify(next) !== JSON.stringify(entries)) {
       persist(next).catch(err => console.error("[fatura-cartao] reconcile failed", err));
     }
@@ -1170,6 +1191,9 @@ export default function FinanceiroPage() {
       );
 
       for (const occurrenceDate of occurrenceDates) {
+        // 0) ocorrência que o usuário excluiu explicitamente → nunca recriar
+        if (deletedOccurrencesRef.current.has(`${base.id}::${occurrenceDate}`)) continue;
+
         // 1) já existe ocorrência na série para essa data?
         const seriesIdx = nextEntries.findIndex(entry => {
           if (entry.id === base.id) return false;
@@ -1874,6 +1898,31 @@ export default function FinanceiroPage() {
     if (!deleteTarget) return;
     const target = deleteTarget;
     setDeleteTarget(null);
+    // Faturas auto-geradas (id inv__ ou fatura-) precisam ser suprimidas para que o
+    // reconcile não as recrie imediatamente após a deleção.
+    if ((target.id.startsWith("inv__") || target.id.startsWith("fatura-")) && target.categoria === "fatura_cartao") {
+      suppressedInvoiceIdsRef.current.add(target.id);
+      try {
+        localStorage.setItem(
+          `wayvo:suppressed-invoices:${currentCompanyId}`,
+          JSON.stringify([...suppressedInvoiceIdsRef.current]),
+        );
+      } catch { /* ignora */ }
+    }
+    // Ocorrências de séries recorrentes precisam ser tombstonadas para que o
+    // auto-materialize não as recrie. A chave é "baseId::data".
+    const occDate = target.dataPrevista || target.data;
+    const occBaseId = target.fixedOriginId || (target.serieId && target.serieId !== target.id ? target.serieId : null);
+    if (occBaseId && occDate) {
+      const occKey = `${occBaseId}::${occDate}`;
+      deletedOccurrencesRef.current.add(occKey);
+      try {
+        localStorage.setItem(
+          `wayvo:deleted-occurrences:${currentCompanyId}`,
+          JSON.stringify([...deletedOccurrencesRef.current]),
+        );
+      } catch { /* ignora */ }
+    }
     await cancelAsaasPayments([target]);
     const updated = entries.filter(e => e.id !== target.id);
     setEntries(updated);

@@ -108,14 +108,29 @@ export default function UsuariosPage() {
 
   if (!canManageUsers) return <Navigate to="/dashboard" replace />;
 
+  const extractInvokeError = async (res: { error: any; data: any }): Promise<string | null> => {
+    if (!res.error && !res.data?.error) return null;
+    if (res.data?.error) return res.data.error;
+    try {
+      const body = await res.error.context.json();
+      return body?.error || res.error.message;
+    } catch {
+      return res.error?.message || "Erro desconhecido";
+    }
+  };
+
   const handleCreate = async () => {
     if (!newEmail || !newPassword || !newCompanies.length) {
       toast.error("Preencha todos os campos obrigatórios");
       return;
     }
+    const emailLower = newEmail.trim().toLowerCase();
+    if (users.some(u => u.email?.toLowerCase() === emailLower)) {
+      toast.error("Já existe um usuário com este e-mail");
+      return;
+    }
     setCreating(true);
     try {
-      const { data: { session } } = await supabase.auth.getSession();
       const res = await supabase.functions.invoke("admin-create-user", {
         body: {
           email: newEmail,
@@ -125,8 +140,9 @@ export default function UsuariosPage() {
           company_ids: newCompanies,
         },
       });
-      if (res.error || res.data?.error) {
-        toast.error(res.data?.error || res.error?.message || "Erro ao criar usuário");
+      const err = await extractInvokeError(res);
+      if (err) {
+        toast.error(err);
       } else {
         toast.success("Usuário criado com sucesso!");
         setDialogOpen(false);
@@ -159,6 +175,11 @@ export default function UsuariosPage() {
 
   const handleSaveEdit = async () => {
     if (!editing) return;
+    const emailLower = editEmail.trim().toLowerCase();
+    if (editEmail !== editing.email && users.some(u => u.user_id !== editing.user_id && u.email?.toLowerCase() === emailLower)) {
+      toast.error("Já existe um usuário com este e-mail");
+      return;
+    }
     setSaving(true);
     try {
       const res = await supabase.functions.invoke("admin-manage-user", {
@@ -172,8 +193,9 @@ export default function UsuariosPage() {
           company_ids: editCompanies,
         },
       });
-      if (res.error || res.data?.error) {
-        toast.error(res.data?.error || res.error?.message || "Erro ao salvar");
+      const err = await extractInvokeError(res);
+      if (err) {
+        toast.error(err);
       } else {
         toast.success("Usuário atualizado!");
         setEditOpen(false);
@@ -192,8 +214,9 @@ export default function UsuariosPage() {
       const res = await supabase.functions.invoke("admin-manage-user", {
         body: { action: "delete", user_id: deleteTarget.user_id },
       });
-      if (res.error || res.data?.error) {
-        toast.error(res.data?.error || res.error?.message || "Erro ao excluir");
+      const err = await extractInvokeError(res);
+      if (err) {
+        toast.error(err);
       } else {
         toast.success("Usuário excluído");
         setDeleteTarget(null);
