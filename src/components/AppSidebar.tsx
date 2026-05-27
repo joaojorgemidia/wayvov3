@@ -1,7 +1,7 @@
 import {
   Bike, LayoutDashboard, Users, FileText, DollarSign, Wrench,
   AlertTriangle, BarChart3, Droplets, Search,
-  Package, MapPin, UserSearch, ChevronDown, MoreHorizontal, Landmark, ShieldCheck, History, BellRing, Settings
+  Package, MapPin, UserSearch, ChevronDown, MoreHorizontal, Landmark, ShieldCheck, History, BellRing, Settings, Building2
 } from "lucide-react";
 import { WayvoLogo } from "@/components/WayvoLogo";
 import { useAuth } from "@/contexts/AuthContext";
@@ -66,6 +66,7 @@ const moreComingSoonItems: MenuItem[] = [
 
 const adminItems: MenuItem[] = [
   { title: "Usuários", url: "/usuarios", icon: ShieldCheck },
+  { title: "Empresas", url: "/empresas", icon: Building2 },
 ];
 
 export function AppSidebar() {

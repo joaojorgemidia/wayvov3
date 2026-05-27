@@ -27,6 +27,7 @@ const RastreamentoPage = React.lazy(() => import("./pages/RastreamentoPage"));
 const AntecedentesPage = React.lazy(() => import("./pages/AntecedentesPage"));
 const ContasPage = React.lazy(() => import("./pages/ContasPage"));
 const UsuariosPage = React.lazy(() => import("./pages/UsuariosPage"));
+const EmpresasPage = React.lazy(() => import("./pages/EmpresasPage"));
 const HistoricoPage = React.lazy(() => import("./pages/HistoricoPage"));
 const CobrancasPage = React.lazy(() => import("./pages/CobrancasPage"));
 const CobrancasSemanaPage = React.lazy(() => import("./pages/CobrancasSemanaPage"));
@@ -94,6 +95,7 @@ const App = () => (
                   <Route path="/antecedentes" element={<AntecedentesPage />} />
                   <Route path="/contas" element={<ContasPage />} />
                   <Route path="/usuarios" element={<UsuariosPage />} />
+                  <Route path="/empresas" element={<EmpresasPage />} />
                   <Route path="/historico" element={<HistoricoPage />} />
                   <Route path="/configuracoes" element={<ConfiguracoesPage />} />
                   <Route path="/cobrancas" element={<CobrancasPage />} />
