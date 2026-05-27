@@ -405,8 +405,10 @@ export default function TrocaOleoPage() {
   }, [motos, search, kmRange, situacaoFilter, motoStatusMap, motoClientMap, contactedAt]);
 
   const vencidasList = useMemo(
-    () => filtered.filter((m) => motoStatusMap.get(m.id)?.situation === "vencida"),
-    [filtered, motoStatusMap],
+    () => filtered.filter(
+      (m) => motoStatusMap.get(m.id)?.situation === "vencida" && motoClientMap.has(m.id),
+    ),
+    [filtered, motoStatusMap, motoClientMap],
   );
   const emDiaList = useMemo(
     () =>
@@ -418,13 +420,8 @@ export default function TrocaOleoPage() {
     [filtered, motoStatusMap, motoClientMap],
   );
   const estoqueList = useMemo(
-    () =>
-      filtered.filter(
-        (m) =>
-          motoStatusMap.get(m.id)?.situation !== "vencida" &&
-          !motoClientMap.has(m.id),
-      ),
-    [filtered, motoStatusMap, motoClientMap],
+    () => filtered.filter((m) => !motoClientMap.has(m.id)),
+    [filtered, motoClientMap],
   );
 
   // KPIs
