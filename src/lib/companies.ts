@@ -25,6 +25,10 @@ export const DEFAULT_ASAAS_CONFIG: AsaasConfig = {
   gerarBoletoXDiasAntes: 0,
 };
 
+export interface AutentiqueConfig {
+  token?: string;   // Bearer token da API Autentique
+}
+
 export interface DetranConfig {
   login: string;
   senhaHash: string; // armazenado como recebido do usuário, protegido por RLS
@@ -49,6 +53,7 @@ export interface Company {
   asaasConfig?: AsaasConfig | null;
   detranConfig?: DetranConfig | null;
   cobrancaConfig?: CobrancaConfig | null;
+  autentiqueConfig?: AutentiqueConfig | null;
 }
 
 const COMPANIES_KEY = "moto-fleet-companies-v1";

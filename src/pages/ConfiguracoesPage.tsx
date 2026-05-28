@@ -5,16 +5,18 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
-import { Settings, CreditCard, CheckCircle2, XCircle, ShieldCheck, Car, Receipt } from "lucide-react";
+import { Settings, CreditCard, CheckCircle2, XCircle, ShieldCheck, Car, Receipt, FileSignature, Eye, EyeOff } from "lucide-react";
 import AsaasConfigDialog from "@/components/AsaasConfigDialog";
 import DetranConfigDialog from "@/components/DetranConfigDialog";
 import { AsaasConfig, DetranConfig, CobrancaConfig, DEFAULT_COBRANCA_CONFIG } from "@/lib/companies";
 import { toast } from "sonner";
 
 export default function ConfiguracoesPage() {
-  const { activeCompany, updateAsaasConfig, updateDetranConfig, updateCobrancaConfig } = useCompany();
+  const { activeCompany, updateAsaasConfig, updateDetranConfig, updateCobrancaConfig, updateAutentiqueConfig } = useCompany();
   const [asaasOpen, setAsaasOpen] = useState(false);
   const [detranOpen, setDetranOpen] = useState(false);
+  const [showAutToken, setShowAutToken] = useState(false);
+  const [autToken, setAutToken] = useState(activeCompany?.autentiqueConfig?.token || "");
 
   const asaasCfg = activeCompany?.asaasConfig;
   const detranCfg = activeCompany?.detranConfig;
@@ -215,6 +217,67 @@ export default function ConfiguracoesPage() {
           >
             {detranCfg ? "Editar credenciais" : "Conectar ao DETRAN-GO"}
           </Button>
+        </CardContent>
+      </Card>
+
+      {/* ── Autentique ──────────────────────────────────────────────────── */}
+      <Card>
+        <CardHeader className="pb-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <FileSignature className="h-4 w-4 text-muted-foreground" />
+              <CardTitle className="text-base">Assinatura Digital (Autentique)</CardTitle>
+            </div>
+            {activeCompany?.autentiqueConfig?.token
+              ? <Badge variant="default" className="gap-1 text-xs"><CheckCircle2 className="h-3 w-3" />Configurado</Badge>
+              : <Badge variant="secondary" className="gap-1 text-xs"><XCircle className="h-3 w-3" />Não configurado</Badge>
+            }
+          </div>
+          <CardDescription>
+            Token da API do Autentique para envio de contratos para assinatura digital.
+            Encontrado em <strong>app.autentique.com.br → Perfil → API</strong>.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="space-y-1.5">
+            <Label className="text-xs">Token da API</Label>
+            <div className="relative">
+              <Input
+                type={showAutToken ? "text" : "password"}
+                value={autToken}
+                onChange={e => setAutToken(e.target.value.trim())}
+                placeholder="Cole aqui o Bearer token do Autentique"
+                className="pr-10 font-mono text-xs"
+              />
+              <button
+                type="button"
+                onClick={() => setShowAutToken(v => !v)}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                tabIndex={-1}
+              >
+                {showAutToken ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              </button>
+            </div>
+          </div>
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => updateAutentiqueConfig(activeCompany.id, autToken.trim() ? { token: autToken.trim() } : null)}
+            >
+              Salvar
+            </Button>
+            {activeCompany?.autentiqueConfig?.token && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="text-destructive hover:text-destructive"
+                onClick={() => { setAutToken(""); updateAutentiqueConfig(activeCompany.id, null); }}
+              >
+                Remover
+              </Button>
+            )}
+          </div>
         </CardContent>
       </Card>
 

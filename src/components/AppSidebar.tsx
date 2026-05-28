@@ -1,7 +1,7 @@
 import {
   Bike, LayoutDashboard, Users, FileText, DollarSign, Wrench,
   AlertTriangle, BarChart3, Droplets, Search,
-  Package, MapPin, UserSearch, ChevronDown, MoreHorizontal, Landmark, ShieldCheck, History, BellRing, Settings, Building2
+  Package, MapPin, UserSearch, ChevronDown, MoreHorizontal, Landmark, ShieldCheck, History, BellRing, Settings, Building2, FileSignature
 } from "lucide-react";
 import { WayvoLogo } from "@/components/WayvoLogo";
 import { useAuth } from "@/contexts/AuthContext";
@@ -28,6 +28,7 @@ const items: MenuItem[] = [
   { title: "Troca de Óleo", url: "/troca-oleo", icon: Droplets },
   { title: "Vistoria", url: "/vistoria", icon: Search },
   { title: "Locações", url: "/locacoes", icon: FileText },
+  { title: "Contratos", url: "/contratos", icon: FileSignature },
   { title: "Finanças", url: "/financeiro", icon: DollarSign },
   { title: "Rastreamento", url: "/rastreamento", icon: MapPin },
   {

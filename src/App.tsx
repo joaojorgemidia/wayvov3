@@ -34,6 +34,7 @@ const CobrancasSemanaPage = React.lazy(() => import("./pages/CobrancasSemanaPage
 const SyncMigrationPage = React.lazy(() => import("./pages/SyncMigrationPage"));
 const RebuildAluguelPage = React.lazy(() => import("./pages/RebuildAluguelPage"));
 const ConfiguracoesPage = React.lazy(() => import("./pages/ConfiguracoesPage"));
+const ContratosPage = React.lazy(() => import("./pages/ContratosPage"));
 const LoginPage = React.lazy(() => import("./pages/LoginPage"));
 const SignupPage = React.lazy(() => import("./pages/SignupPage"));
 const ForgotPasswordPage = React.lazy(() => import("./pages/ForgotPasswordPage"));
@@ -100,6 +101,7 @@ const App = () => (
                   <Route path="/configuracoes" element={<ConfiguracoesPage />} />
                   <Route path="/cobrancas" element={<CobrancasPage />} />
                   <Route path="/cobrancas/semana" element={<CobrancasSemanaPage />} />
+                  <Route path="/contratos" element={<ContratosPage />} />
                 </Route>
               </Route>
               <Route path="/sync-migration" element={<SyncMigrationPage />} />
