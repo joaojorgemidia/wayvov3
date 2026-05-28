@@ -153,12 +153,16 @@ export default function ContratosPage() {
       });
       if (error) throw error;
       if (data?.error) throw new Error(data.error);
-      const { updated = 0, linked = 0, skipped = 0 } = data || {};
-      toast.success(
-        linked > 0 || updated > 0
-          ? `Sincronizado: ${linked} novo(s) importado(s), ${updated} atualizado(s)`
-          : `Tudo já estava atualizado (${skipped} verificado(s))`,
-      );
+      const { updated = 0, linked = 0, skipped = 0, errors = [] } = data || {};
+      if (errors.length > 0) {
+        toast.error(`Erro na sincronização: ${errors[0]}`);
+      } else {
+        toast.success(
+          linked > 0 || updated > 0
+            ? `Sincronizado: ${linked} novo(s) importado(s), ${updated} atualizado(s)`
+            : `Tudo já estava atualizado (${skipped} verificado(s))`,
+        );
+      }
       fetchAll();
     } catch (e: unknown) {
       toast.error("Erro ao sincronizar: " + (e instanceof Error ? e.message : "erro"));

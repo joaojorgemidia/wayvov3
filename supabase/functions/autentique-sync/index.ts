@@ -56,8 +56,12 @@ async function fetchAllDocuments(token: string): Promise<AutDoc[]> {
       headers: { "Authorization": `Bearer ${token}`, "Content-Type": "application/json" },
       body: JSON.stringify({ query: LIST_DOCUMENTS_QUERY, variables: { page } }),
     });
-    if (!res.ok) throw new Error(`Autentique API error: ${res.status}`);
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      throw new Error(`Autentique API error ${res.status}: ${body.slice(0, 200)}`);
+    }
     const json = await res.json();
+    console.log("[autentique-sync] API response page", page, JSON.stringify(json).slice(0, 300));
     if (json.errors?.length) throw new Error(json.errors[0].message);
     const result = json.data?.documents;
     if (!result) break;
