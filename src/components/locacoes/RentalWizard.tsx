@@ -1,4 +1,4 @@
-import { useState, useRef, type ChangeEvent, type DragEvent } from "react";
+import { useState, useRef, useEffect, type ChangeEvent, type DragEvent } from "react";
 import { Rental, Client, Motorcycle, CaucaoParcela } from "@/lib/types";
 import { loadClients, saveClients, loadMotos, loadRentals } from "@/lib/store";
 import { useDataCacheSnapshot } from "@/lib/data-cache";
@@ -80,6 +80,17 @@ export default function RentalWizard({ rental, onSave, onCancel, motos, activeRe
   const { clients: existingClients } = useDataCacheSnapshot();
   const { user } = useAuth();
   const { activeCompany } = useCompany();
+  const [contractTemplates, setContractTemplates] = useState<{ id: string; nome: string }[]>([]);
+
+  useEffect(() => {
+    if (!activeCompany?.id) return;
+    (supabase as any)
+      .from("contract_templates")
+      .select("id, nome")
+      .eq("company_id", activeCompany.id)
+      .order("nome")
+      .then(({ data }: any) => { if (data) setContractTemplates(data); });
+  }, [activeCompany?.id]);
   const linkedClient = rental.clienteId ? existingClients.find(c => c.id === rental.clienteId) : undefined;
   const [clientForm, setClientForm] = useState<Client>(() => linkedClient ? { ...linkedClient } : emptyClient());
   const [clientMode, setClientMode] = useState<"new" | "existing">(linkedClient ? "existing" : "new");
@@ -485,9 +496,13 @@ export default function RentalWizard({ rental, onSave, onCancel, motos, activeRe
             <div className="grid gap-2">
               <Label className="text-primary font-bold text-base">Plano *</Label>
               <SearchableSelect
-                options={[{ value: "aluguel", label: "Só Aluguel" }, { value: "moto_no_final", label: "Moto no Final" }]}
+                options={
+                  contractTemplates.length > 0
+                    ? contractTemplates.map(t => ({ value: t.nome, label: t.nome }))
+                    : [{ value: "aluguel", label: "Só Aluguel" }, { value: "moto_no_final", label: "Moto no Final" }]
+                }
                 value={form.plano}
-                onValueChange={v => setRentalField("plano", v as Rental["plano"])}
+                onValueChange={v => setRentalField("plano", v)}
                 placeholder="Selecione o plano..."
                 triggerClassName={form.plano ? "border-primary ring-1 ring-primary" : ""}
               />

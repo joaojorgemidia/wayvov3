@@ -25,6 +25,7 @@ import { toast } from "sonner";
 import {
   FileText, Upload, Download, ExternalLink, Plus, Trash2,
   FileSignature, Info, Loader2, RefreshCw, CloudDownload, Link2Off,
+  Pencil, CheckCircle2, XCircle, ScanSearch,
 } from "lucide-react";
 
 // ─── tipos ───────────────────────────────────────────────────────────────────
@@ -86,6 +87,52 @@ const PLACEHOLDERS = [
   { key: "{NIVEL_COMBUSTIVEL}", desc: "Nível de combustível" },
 ];
 
+// ─── DOCX parser (ZIP local headers + DecompressionStream) ────────────────────
+async function extractDocxText(file: File): Promise<string> {
+  const buf = await file.arrayBuffer();
+  const bytes = new Uint8Array(buf);
+  const view = new DataView(buf);
+  let offset = 0;
+  while (offset < bytes.length - 30) {
+    if (view.getUint32(offset, true) !== 0x04034b50) { offset++; continue; }
+    const compression = view.getUint16(offset + 8, true);
+    const compressedSize = view.getUint32(offset + 18, true);
+    const fileNameLen = view.getUint16(offset + 26, true);
+    const extraLen = view.getUint16(offset + 28, true);
+    const fileName = new TextDecoder().decode(bytes.slice(offset + 30, offset + 30 + fileNameLen));
+    const dataStart = offset + 30 + fileNameLen + extraLen;
+    if (fileName === "word/document.xml") {
+      const data = bytes.slice(dataStart, dataStart + compressedSize);
+      if (compression === 0) return new TextDecoder().decode(data);
+      if (compression === 8) {
+        try {
+          const ds = new DecompressionStream("deflate-raw");
+          const writer = ds.writable.getWriter();
+          const reader = ds.readable.getReader();
+          writer.write(data);
+          writer.close();
+          const chunks: Uint8Array[] = [];
+          for (;;) { const r = await reader.read(); if (r.done) break; chunks.push(r.value); }
+          const total = chunks.reduce((n, c) => n + c.length, 0);
+          const merged = new Uint8Array(total);
+          let pos = 0;
+          for (const c of chunks) { merged.set(c, pos); pos += c.length; }
+          return new TextDecoder().decode(merged);
+        } catch { return ""; }
+      }
+    }
+    offset = dataStart + compressedSize;
+  }
+  return "";
+}
+
+async function analyzePlaceholders(file: File): Promise<Record<string, boolean>> {
+  const text = await extractDocxText(file);
+  const result: Record<string, boolean> = {};
+  for (const p of PLACEHOLDERS) result[p.key] = text.includes(p.key);
+  return result;
+}
+
 // ─── componente principal ─────────────────────────────────────────────────────
 export default function ContratosPage() {
   const { activeCompany } = useCompany();
@@ -117,6 +164,16 @@ export default function ContratosPage() {
 
   // Confirmação de exclusão de template
   const [deleteTmpl, setDeleteTmpl] = useState<ContractTemplate | null>(null);
+
+  // Edição de template
+  const [editTmpl, setEditTmpl] = useState<ContractTemplate | null>(null);
+  const [editNome, setEditNome] = useState("");
+  const [editDescricao, setEditDescricao] = useState("");
+  const [editFile, setEditFile] = useState<File | null>(null);
+  const [editSaving, setEditSaving] = useState(false);
+  const [phStatus, setPhStatus] = useState<Record<string, boolean> | null>(null);
+  const [phChecking, setPhChecking] = useState(false);
+  const editFileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (currentCompanyId) fetchAll();
@@ -224,6 +281,61 @@ export default function ContratosPage() {
     toast.success("Template excluído");
     setDeleteTmpl(null);
     fetchAll();
+  }
+
+  // ── Editar template ──
+  function openEdit(t: ContractTemplate) {
+    setEditTmpl(t);
+    setEditNome(t.nome);
+    setEditDescricao(t.descricao || "");
+    setEditFile(null);
+    setPhStatus(null);
+  }
+
+  async function runAnalysis(file: File) {
+    setPhChecking(true);
+    try { setPhStatus(await analyzePlaceholders(file)); }
+    finally { setPhChecking(false); }
+  }
+
+  async function checkExistingTemplate(t: ContractTemplate) {
+    setPhChecking(true);
+    try {
+      const { data, error } = await supabase.storage.from("contratos").createSignedUrl(t.storage_path, 60);
+      if (error || !data?.signedUrl) { toast.error("Não foi possível baixar o arquivo para análise"); return; }
+      const blob = await fetch(data.signedUrl).then(r => r.blob());
+      const file = new File([blob], "template.docx");
+      setPhStatus(await analyzePlaceholders(file));
+    } catch { toast.error("Erro ao analisar arquivo"); }
+    finally { setPhChecking(false); }
+  }
+
+  async function handleSaveEdit() {
+    if (!editTmpl || !editNome.trim()) return;
+    setEditSaving(true);
+    try {
+      let storagePath = editTmpl.storage_path;
+
+      if (editFile) {
+        await supabase.storage.from("contratos").remove([editTmpl.storage_path]);
+        const ext = editFile.name.split(".").pop() || "docx";
+        const safe = editNome.trim().replace(/[^a-zA-Z0-9_\- ]/g, "").replace(/\s+/g, "_");
+        storagePath = `templates/${currentCompanyId}/${Date.now()}_${safe}.${ext}`;
+        const { error: upErr } = await supabase.storage.from("contratos").upload(storagePath, editFile, { upsert: false });
+        if (upErr) { toast.error("Erro ao enviar arquivo: " + upErr.message); return; }
+      }
+
+      const { error } = await (supabase as any).from("contract_templates").update({
+        nome: editNome.trim(),
+        descricao: editDescricao.trim() || null,
+        storage_path: storagePath,
+      }).eq("id", editTmpl.id);
+
+      if (error) { toast.error("Erro ao salvar: " + error.message); return; }
+      toast.success("Template atualizado");
+      setEditTmpl(null);
+      fetchAll();
+    } finally { setEditSaving(false); }
   }
 
   // ── Gerar contrato ──
@@ -450,6 +562,9 @@ export default function ContratosPage() {
                     <Button variant="outline" size="sm" className="flex-1" onClick={() => downloadTemplate(t)}>
                       <Download className="h-3.5 w-3.5 mr-1.5" /> Baixar
                     </Button>
+                    <Button variant="ghost" size="icon" title="Editar" onClick={() => openEdit(t)}>
+                      <Pencil className="h-4 w-4" />
+                    </Button>
                     <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive" onClick={() => setDeleteTmpl(t)}>
                       <Trash2 className="h-4 w-4" />
                     </Button>
@@ -604,6 +719,120 @@ export default function ContratosPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* ── DIALOG: Editar template ── */}
+      <Dialog open={!!editTmpl} onOpenChange={open => !open && setEditTmpl(null)}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Editar Template</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-5 py-2">
+            {/* Nome */}
+            <div className="space-y-1.5">
+              <Label>Nome do template</Label>
+              <Input
+                value={editNome}
+                onChange={e => setEditNome(e.target.value)}
+                placeholder="Nome do template"
+              />
+            </div>
+
+            {/* Observações */}
+            <div className="space-y-1.5">
+              <Label>Observações <span className="text-muted-foreground text-xs">(opcional)</span></Label>
+              <Textarea
+                value={editDescricao}
+                onChange={e => setEditDescricao(e.target.value)}
+                placeholder="Descreva quando usar este template"
+                rows={2}
+              />
+            </div>
+
+            {/* Substituir arquivo */}
+            <div className="space-y-1.5">
+              <Label>Substituir arquivo DOCX <span className="text-muted-foreground text-xs">(opcional)</span></Label>
+              <div
+                className="border-2 border-dashed rounded-lg p-5 text-center cursor-pointer hover:border-primary/50 transition-colors"
+                onClick={() => editFileRef.current?.click()}
+              >
+                {editFile ? (
+                  <div className="text-sm font-medium">{editFile.name}</div>
+                ) : (
+                  <div className="text-sm text-muted-foreground">
+                    <Upload className="h-5 w-5 mx-auto mb-1.5 opacity-50" />
+                    Clique para selecionar um novo arquivo .docx
+                  </div>
+                )}
+              </div>
+              <input
+                ref={editFileRef}
+                type="file"
+                accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                className="hidden"
+                onChange={e => {
+                  const f = e.target.files?.[0] || null;
+                  setEditFile(f);
+                  setPhStatus(null);
+                  if (f) runAnalysis(f);
+                }}
+              />
+            </div>
+
+            {/* Análise de marcadores */}
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <Label>Verificar marcadores no contrato</Label>
+                {!editFile && editTmpl && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => checkExistingTemplate(editTmpl)}
+                    disabled={phChecking}
+                  >
+                    {phChecking
+                      ? <><Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> Analisando…</>
+                      : <><ScanSearch className="h-3.5 w-3.5 mr-1.5" /> Analisar arquivo atual</>
+                    }
+                  </Button>
+                )}
+                {editFile && phChecking && (
+                  <span className="text-xs text-muted-foreground flex items-center gap-1">
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" /> Analisando…
+                  </span>
+                )}
+              </div>
+
+              {phStatus ? (
+                <div className="border rounded-lg p-4 grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1.5">
+                  {PLACEHOLDERS.map(p => {
+                    const ok = phStatus[p.key];
+                    return (
+                      <div key={p.key} className="flex items-center gap-2 text-xs">
+                        {ok
+                          ? <CheckCircle2 className="h-3.5 w-3.5 text-green-600 shrink-0" />
+                          : <XCircle className="h-3.5 w-3.5 text-red-500 shrink-0" />
+                        }
+                        <code className={`font-mono shrink-0 ${ok ? "text-green-700" : "text-red-600"}`}>{p.key}</code>
+                        <span className="text-muted-foreground truncate">{p.desc}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  {editFile ? "Aguardando análise…" : "Clique em \"Analisar arquivo atual\" para verificar os marcadores do arquivo já salvo."}
+                </p>
+              )}
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditTmpl(null)} disabled={editSaving}>Cancelar</Button>
+            <Button onClick={handleSaveEdit} disabled={editSaving || !editNome.trim()}>
+              {editSaving ? <><Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> Salvando…</> : "Salvar"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

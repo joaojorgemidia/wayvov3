@@ -113,7 +113,7 @@ export interface Rental {
   kmInicio: number;
   kmFim: number | null;
   nivelCombustivel: string;
-  plano: "aluguel" | "moto_no_final" | "";
+  plano: string;
   raioCirculacao: string;
   seguroTerceiros: boolean;
   gerarCobrancaCaucao: boolean;
