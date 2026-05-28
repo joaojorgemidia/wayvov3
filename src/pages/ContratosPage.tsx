@@ -89,7 +89,7 @@ const PLACEHOLDERS = [
 // ─── componente principal ─────────────────────────────────────────────────────
 export default function ContratosPage() {
   const { currentCompanyId } = useCompany();
-  const { rentals, motorcycles, clients } = useDataCacheSnapshot();
+  const { rentals, motos, clients } = useDataCacheSnapshot();
 
   const [templates, setTemplates] = useState<ContractTemplate[]>([]);
   const [contracts, setContracts] = useState<Contract[]>([]);
@@ -122,12 +122,12 @@ export default function ContratosPage() {
     setLoading(true);
     try {
       const [tmplRes, ctrRes] = await Promise.all([
-        supabase
+        (supabase as any)
           .from("contract_templates")
           .select("*")
           .eq("company_id", currentCompanyId)
           .order("created_at", { ascending: false }),
-        supabase
+        (supabase as any)
           .from("contracts")
           .select("*")
           .eq("company_id", currentCompanyId)
@@ -158,7 +158,7 @@ export default function ContratosPage() {
       });
       if (upErr) throw upErr;
 
-      const { error: dbErr } = await supabase.from("contract_templates").insert({
+      const { error: dbErr } = await (supabase as any).from("contract_templates").insert({
         company_id: currentCompanyId,
         nome: uploadNome.trim(),
         descricao: uploadDescricao.trim() || null,
@@ -189,7 +189,7 @@ export default function ContratosPage() {
   // ── Excluir template ──
   async function handleDeleteTemplate(t: ContractTemplate) {
     await supabase.storage.from("contratos").remove([t.storage_path]);
-    await supabase.from("contract_templates").delete().eq("id", t.id);
+    await (supabase as any).from("contract_templates").delete().eq("id", t.id);
     toast.success("Template excluído");
     setDeleteTmpl(null);
     fetchAll();
@@ -237,7 +237,7 @@ export default function ContratosPage() {
 
   // Mapa auxiliar
   const rentalMap = Object.fromEntries(rentals.map(r => [r.id, r]));
-  const motoMap = Object.fromEntries(motorcycles.map(m => [m.id, m]));
+  const motoMap = Object.fromEntries(motos.map(m => [m.id, m]));
   const clientMap = Object.fromEntries(clients.map(c => [c.id, c]));
 
   const activeRentals = rentals.filter(r => r.status === "ativa");
