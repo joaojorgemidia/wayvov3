@@ -137,8 +137,10 @@ serve(async (req) => {
     const placa = entry.placa || null;
 
     // Referência da semana: caução = semana anterior (já usada); aluguel = próxima semana (a ser usada)
+    const categoria = (entry.categoria || "").toLowerCase();
+    const isCaucao = categoria === "caucao";
+    const isAluguelOuCaucao = categoria === "aluguel" || isCaucao;
     const dueRef = new Date((entry.data_prevista || entry.data) + "T00:00:00");
-    const isCaucao = (entry.categoria || "").toLowerCase() === "caucao";
     const fmt = (d: Date) =>
       `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}`;
     const MS_DAY = 86400000;
@@ -148,7 +150,9 @@ serve(async (req) => {
     const weekEnd = isCaucao
       ? new Date(dueRef.getTime() - 1 * MS_DAY)
       : new Date(dueRef.getTime() + 6 * MS_DAY);
-    const semanaRef = `${fmt(weekStart)} a ${fmt(weekEnd)}/${weekEnd.getFullYear()}`;
+    const semanaRef = isAluguelOuCaucao
+      ? `${fmt(weekStart)} a ${fmt(weekEnd)}/${weekEnd.getFullYear()}`
+      : null;
 
     // 3. Cria ou reutiliza cliente no Asaas
     let asaasCustomerId = client.asaas_customer_id;
@@ -190,7 +194,7 @@ serve(async (req) => {
       description: [
         contratoNumero != null ? `Contrato #${contratoNumero}` : null,
         placa ? `Placa ${placa}` : null,
-        `Ref. ${semanaRef}`,
+        semanaRef ? `Ref. ${semanaRef}` : null,
       ].filter(Boolean).join(" · "),
       externalReference: entry.id,
       postalService: false,
