@@ -1593,8 +1593,12 @@ export default function FinanceiroPage() {
       ? (resolved.dataPrevista || resolved.data)
       : resolved.data;
 
+    const isManutenção = resolved.categoria === "manutencao_despesa" || resolved.categoria === "manutencao_receita";
+    const cleanTags = isManutenção ? resolved.tags : (resolved.tags || []).filter(t => t !== "OS");
+
     return {
       ...resolved,
+      tags: cleanTags,
       dataPrevista: syncedPrevista,
       observacao: resolved.observacao || resolved.subcategoria || "",
       serieId: resolved.recorrente || resolved.despesaFixa ? (existing?.serieId || resolved.serieId || resolved.id) : resolved.serieId,
@@ -3075,7 +3079,7 @@ export default function FinanceiroPage() {
                             <div className="flex items-center gap-1.5">
                               <span className="text-sm font-semibold text-foreground whitespace-nowrap">{catLabel}</span>
                               {e.subcategoria && <span className="text-xs text-muted-foreground whitespace-nowrap">› {e.subcategoria}</span>}
-                              {e.tags?.includes("OS") && (
+                              {e.tags?.includes("OS") && (e.categoria === "manutencao_despesa" || e.categoria === "manutencao_receita") && (
                                 <span className="inline-flex items-center rounded-full border border-violet-400/30 bg-violet-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-violet-600">OS</span>
                               )}
                             </div>
@@ -3099,7 +3103,7 @@ export default function FinanceiroPage() {
                         {/* Tags — com badge leve */}
                         <td className="py-2 px-2">
                           <div className="flex items-center gap-1.5 flex-wrap">
-                            {(e.tags || []).map(t => (
+                            {(e.tags || []).filter(t => t !== "OS" || e.categoria === "manutencao_despesa" || e.categoria === "manutencao_receita").map(t => (
                               <span key={t} className="text-[11px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground whitespace-nowrap">{t}</span>
                             ))}
                             {e.recorrente && <span className="inline-flex" aria-label="Recorrente"><Repeat className="h-3.5 w-3.5 text-muted-foreground/60" /></span>}
