@@ -24,7 +24,7 @@ import {
   DropdownMenuTrigger, DropdownMenuLabel, DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
 import {
-  getSnoozeUntil, snoozeMoto, clearSnooze, onSnoozeChange,
+  getSnoozeUntil, snoozeMoto, clearSnooze, onSnoozeChange, isSnoozed,
 } from "@/lib/oil-snooze";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -273,29 +273,32 @@ export default function TrocaOleoPage() {
   }>({ open: false, title: "", mensagem: "", placa: "", cliente: "", telefone: "", highlights: [], templateKey: "", tokens: {} });
 
   // Snooze: adiar notificação de troca vencida → move para "em dia" por N dias.
-  // Ao expirar, volta como "vencida" com contagem zerada (1 dia vencido no retorno).
-  const SNOOZE_KEY = "wayvo:troca-oleo:snooze";
-  const [snoozeMap, setSnoozeMap] = useState<Record<string, string>>(() => {
+  // Usa oil-snooze.ts como fonte de verdade (mesma chave que SnoozeButton usa).
+  const buildSnoozeMap = () => {
+    const map: Record<string, string> = {};
     try {
-      const raw = localStorage.getItem("wayvo:troca-oleo:snooze");
-      return raw ? JSON.parse(raw) : {};
-    } catch {
-      return {};
-    }
-  });
+      const raw = localStorage.getItem("wayvo:oleo-snooze");
+      const parsed: Record<string, string> = raw ? JSON.parse(raw) : {};
+      const today = new Date().toISOString().slice(0, 10);
+      for (const [id, until] of Object.entries(parsed)) {
+        if (until >= today) map[id] = until;
+      }
+    } catch { /* ignora */ }
+    return map;
+  };
+  const [snoozeMap, setSnoozeMap] = useState<Record<string, string>>(buildSnoozeMap);
   const [snoozeDialog, setSnoozeDialog] = useState<{ open: boolean; moto: Motorcycle | null; days: number }>({
     open: false, moto: null, days: 3,
   });
 
+  // Mantém snoozeMap em sincronia quando SnoozeButton (ou outra aba) gravar
+  useEffect(() => onSnoozeChange(() => setSnoozeMap(buildSnoozeMap())), []);
+
   function handleSnooze(moto: Motorcycle, days: number) {
+    snoozeMoto(moto.id, days);          // grava na chave wayvo:oleo-snooze
+    setSnoozeMap(buildSnoozeMap());     // atualiza estado imediatamente
     const until = new Date();
     until.setDate(until.getDate() + days);
-    const iso = until.toISOString().slice(0, 10);
-    setSnoozeMap((prev) => {
-      const next = { ...prev, [moto.id]: iso };
-      try { localStorage.setItem(SNOOZE_KEY, JSON.stringify(next)); } catch { /* ignora */ }
-      return next;
-    });
     setSnoozeDialog({ open: false, moto: null, days: 3 });
     toast.success(`Adiada por ${days} dia${days !== 1 ? "s" : ""} — volta em ${until.toLocaleDateString("pt-BR")}`);
   }
@@ -494,13 +497,9 @@ export default function TrocaOleoPage() {
     setRegisterMoto(null);
     setNewDialogOpen(false);
     // Remove snooze ao registrar nova troca
-    if (snoozeMap[moto.id]) {
-      setSnoozeMap((prev) => {
-        const n = { ...prev };
-        delete n[moto.id];
-        try { localStorage.setItem(SNOOZE_KEY, JSON.stringify(n)); } catch { /* ignora */ }
-        return n;
-      });
+    if (isSnoozed(moto.id)) {
+      clearSnooze(moto.id);
+      setSnoozeMap(buildSnoozeMap());
     }
 
     const cfg = brandConfigFor(moto.modelo, brandConfig);
