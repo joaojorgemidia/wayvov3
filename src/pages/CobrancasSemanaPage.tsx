@@ -1070,7 +1070,7 @@ function RowItemView({
   const isOverdue = item.daysLate > 0;
   const isPago = item.entry.pago;
   const pagoHoje = isPago && item.entry.data === new Date().toISOString().slice(0, 10);
-  const boletoUrl = item.entry.asaasBoletoUrl || item.entry.asaasInvoiceUrl;
+  const boletoUrl = item.entry.asaasInvoiceUrl || item.entry.asaasBoletoUrl;
   const asaasStatus = item.entry.asaasStatus;
   const hasAsaas = !!item.entry.asaasPaymentId;
 

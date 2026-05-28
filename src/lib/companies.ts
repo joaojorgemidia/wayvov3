@@ -9,6 +9,7 @@ export interface AsaasConfig {
   notifyDaysBefore: number;       // 0 = desativado
   notifyOnDueDate: boolean;
   notifyDaysAfterDelay: number;   // 0 = desativado
+  gerarBoletoXDiasAntes: number;  // 0 = desativado — gera boleto automaticamente X dias antes do vencimento
 }
 
 export const DEFAULT_ASAAS_CONFIG: AsaasConfig = {
@@ -21,6 +22,7 @@ export const DEFAULT_ASAAS_CONFIG: AsaasConfig = {
   notifyDaysBefore: 2,
   notifyOnDueDate: false,
   notifyDaysAfterDelay: 0,
+  gerarBoletoXDiasAntes: 0,
 };
 
 export interface DetranConfig {

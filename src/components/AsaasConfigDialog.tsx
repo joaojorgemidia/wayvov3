@@ -164,6 +164,37 @@ export default function AsaasConfigDialog({ open, onClose, onSave, initial, comp
                 )}
               </div>
 
+              {/* Geração automática de boleto */}
+              <div className="space-y-2">
+                <Label className="text-sm font-medium">Geração automática de boleto</Label>
+                <p className="text-xs text-muted-foreground">O boleto de aluguel será gerado e enviado automaticamente ao locatário com antecedência.</p>
+                <div className="flex items-center gap-3 flex-wrap">
+                  <Switch
+                    checked={(cfg.gerarBoletoXDiasAntes ?? 0) > 0}
+                    onCheckedChange={v => set("gerarBoletoXDiasAntes", v ? 3 : 0)}
+                    id="gerar-boleto-auto"
+                  />
+                  <Label htmlFor="gerar-boleto-auto" className="text-sm cursor-pointer flex items-center gap-2 flex-wrap">
+                    Gerar boleto
+                    <Select
+                      value={String(cfg.gerarBoletoXDiasAntes || 3)}
+                      onValueChange={v => set("gerarBoletoXDiasAntes", Number(v))}
+                      disabled={!cfg.gerarBoletoXDiasAntes}
+                    >
+                      <SelectTrigger className="w-16 h-7 text-xs">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {DAYS_OPTIONS.map(d => (
+                          <SelectItem key={d} value={d}>{d}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    dias antes do vencimento
+                  </Label>
+                </div>
+              </div>
+
               {/* Notificações */}
               <div className="space-y-3 rounded-md border p-3">
                 <div className="flex gap-2 text-xs text-muted-foreground">

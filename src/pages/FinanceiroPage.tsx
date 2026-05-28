@@ -3136,9 +3136,9 @@ export default function FinanceiroPage() {
                               <TooltipProvider delayDuration={200}>
                                 <Tooltip>
                                   <TooltipTrigger asChild>
-                                    {(e.asaasBoletoUrl || e.asaasInvoiceUrl) ? (
+                                    {(e.asaasInvoiceUrl || e.asaasBoletoUrl) ? (
                                       <button
-                                        onClick={() => window.open(e.asaasBoletoUrl || e.asaasInvoiceUrl!, "_blank")}
+                                        onClick={() => window.open(e.asaasInvoiceUrl || e.asaasBoletoUrl!, "_blank")}
                                         className="text-blue-500 hover:text-blue-700 transition-colors"
                                       >
                                         <Link2 className="h-4 w-4" />
@@ -3158,7 +3158,7 @@ export default function FinanceiroPage() {
                                     )}
                                   </TooltipTrigger>
                                   <TooltipContent side="top" className="text-xs">
-                                    {(e.asaasBoletoUrl || e.asaasInvoiceUrl) ? "Ver boleto" : e.asaasPaymentId ? "Aguardando URL..." : "Gerar boleto"}
+                                    {(e.asaasInvoiceUrl || e.asaasBoletoUrl) ? "Ver boleto" : e.asaasPaymentId ? "Aguardando URL..." : "Gerar boleto"}
                                   </TooltipContent>
                                 </Tooltip>
                               </TooltipProvider>
@@ -3250,9 +3250,9 @@ export default function FinanceiroPage() {
                                 </DropdownMenuItem>
                               )}
                               {/* Asaas: ver boleto já gerado */}
-                              {e.asaasPaymentId && (e.asaasBoletoUrl || e.asaasInvoiceUrl) && (
+                              {e.asaasPaymentId && (e.asaasInvoiceUrl || e.asaasBoletoUrl) && (
                                 <DropdownMenuItem
-                                  onClick={() => window.open(e.asaasBoletoUrl || e.asaasInvoiceUrl!, "_blank")}
+                                  onClick={() => window.open(e.asaasInvoiceUrl || e.asaasBoletoUrl!, "_blank")}
                                   className="gap-2 text-xs"
                                 >
                                   <ExternalLink className="h-3.5 w-3.5" /> Ver Boleto
