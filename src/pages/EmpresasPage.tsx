@@ -13,7 +13,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
-import { Plus, Loader2, Shield, ShieldCheck, Eye, Pencil, Trash2, Building2, Users } from "lucide-react";
+import { Plus, Loader2, Shield, ShieldCheck, Eye, EyeOff, Pencil, Trash2, Building2, Users, FileSignature, CheckCircle2, XCircle } from "lucide-react";
 import { toast } from "sonner";
 import type { Company } from "@/lib/companies";
 
@@ -39,7 +39,7 @@ const ROLE_ICONS: Record<string, React.ReactNode> = {
 
 export default function EmpresasPage() {
   const { user: currentUser } = useAuth();
-  const { companies, updateCompany, removeCompany } = useCompany();
+  const { companies, updateCompany, removeCompany, updateAutentiqueConfig } = useCompany();
   const { canManageUsers } = usePermissions();
 
   const [users, setUsers] = useState<UserRow[]>([]);
@@ -76,6 +76,26 @@ export default function EmpresasPage() {
   // Delete user
   const [deleteUserTarget, setDeleteUserTarget] = useState<UserRow | null>(null);
   const [deletingUser, setDeletingUser] = useState(false);
+
+  // Autentique por empresa
+  const [autCompany, setAutCompany] = useState<Company | null>(null);
+  const [autToken, setAutToken] = useState("");
+  const [showAutToken, setShowAutToken] = useState(false);
+  const [savingAut, setSavingAut] = useState(false);
+
+  const openAutentique = (company: Company) => {
+    setAutCompany(company);
+    setAutToken(company.autentiqueConfig?.token || "");
+    setShowAutToken(false);
+  };
+
+  const handleSaveAutentique = async () => {
+    if (!autCompany) return;
+    setSavingAut(true);
+    await updateAutentiqueConfig(autCompany.id, autToken.trim() ? { token: autToken.trim() } : null);
+    setSavingAut(false);
+    setAutCompany(null);
+  };
 
   if (!canManageUsers) return <Navigate to="/dashboard" replace />;
 
@@ -266,7 +286,21 @@ export default function EmpresasPage() {
                         )}
                       </div>
                     </div>
-                    <div className="flex gap-2 shrink-0">
+                    <div className="flex gap-2 shrink-0 flex-wrap justify-end">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => openAutentique(company)}
+                        title="Configurar Autentique"
+                        className={company.autentiqueConfig?.token ? "border-green-400 text-green-700 dark:text-green-400" : ""}
+                      >
+                        <FileSignature className="h-4 w-4 mr-1" />
+                        Autentique
+                        {company.autentiqueConfig?.token
+                          ? <CheckCircle2 className="h-3.5 w-3.5 ml-1 text-green-500" />
+                          : <XCircle className="h-3.5 w-3.5 ml-1 text-muted-foreground" />
+                        }
+                      </Button>
                       <Button variant="outline" size="sm" onClick={() => openEditCompany(company)}>
                         <Pencil className="h-4 w-4 mr-1" /> Editar
                       </Button>
@@ -346,6 +380,70 @@ export default function EmpresasPage() {
           })}
         </div>
       )}
+
+      {/* Autentique Config Dialog */}
+      <Dialog open={!!autCompany} onOpenChange={o => !o && setAutCompany(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <FileSignature className="h-5 w-5" />
+              Autentique — {autCompany?.nome}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-1">
+            <p className="text-sm text-muted-foreground">
+              Cole o <strong>Bearer token</strong> da API do Autentique para esta empresa.
+              Encontrado em <strong>app.autentique.com.br → Perfil → API</strong>.
+            </p>
+            <div className="space-y-1.5">
+              <Label className="text-sm">Token da API</Label>
+              <div className="relative">
+                <Input
+                  type={showAutToken ? "text" : "password"}
+                  value={autToken}
+                  onChange={e => setAutToken(e.target.value.trim())}
+                  placeholder="Cole aqui o token do Autentique"
+                  className="pr-10 font-mono text-xs"
+                  autoComplete="off"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowAutToken(v => !v)}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  tabIndex={-1}
+                >
+                  {showAutToken ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </button>
+              </div>
+            </div>
+            {autCompany?.autentiqueConfig?.token && (
+              <div className="flex items-center gap-2 rounded-md bg-green-50 dark:bg-green-950/20 border border-green-200 dark:border-green-900/40 p-2.5 text-sm text-green-700 dark:text-green-400">
+                <CheckCircle2 className="h-4 w-4 shrink-0" />
+                Token configurado para esta empresa
+              </div>
+            )}
+          </div>
+          <div className="flex gap-2 justify-end pt-1">
+            {autCompany?.autentiqueConfig?.token && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="text-destructive hover:text-destructive mr-auto"
+                onClick={() => { setAutToken(""); }}
+                disabled={savingAut}
+              >
+                Remover token
+              </Button>
+            )}
+            <Button variant="outline" size="sm" onClick={() => setAutCompany(null)} disabled={savingAut}>
+              Cancelar
+            </Button>
+            <Button size="sm" onClick={handleSaveAutentique} disabled={savingAut}>
+              {savingAut ? <><Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> Salvando…</> : "Salvar"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Edit Company Dialog */}
       <Dialog open={editCompanyOpen} onOpenChange={setEditCompanyOpen}>
