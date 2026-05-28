@@ -3103,7 +3103,7 @@ export default function FinanceiroPage() {
                         {/* Tags — com badge leve */}
                         <td className="py-2 px-2">
                           <div className="flex items-center gap-1.5 flex-wrap">
-                            {(e.tags || []).filter(t => t !== "OS" || e.categoria === "manutencao_despesa" || e.categoria === "manutencao_receita").map(t => (
+                            {(e.tags || []).filter(t => t !== "OS").map(t => (
                               <span key={t} className="text-[11px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground whitespace-nowrap">{t}</span>
                             ))}
                             {e.recorrente && <span className="inline-flex" aria-label="Recorrente"><Repeat className="h-3.5 w-3.5 text-muted-foreground/60" /></span>}
