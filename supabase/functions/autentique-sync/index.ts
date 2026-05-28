@@ -22,19 +22,15 @@ const LIST_DOCUMENTS_QUERY = `
           name
           email
           link
-          signed {
-            created_at
-          }
-          rejected {
-            created_at
-          }
+          signed { created_at }
+          rejected { created_at }
         }
       }
     }
   }
 `;
 
-async function fetchAllDocuments(token: string): Promise<Array<{
+interface AutDoc {
   id: string;
   name: string;
   link: string;
@@ -47,39 +43,33 @@ async function fetchAllDocuments(token: string): Promise<Array<{
     signed: { created_at: string } | null;
     rejected: { created_at: string } | null;
   }>;
-}>> {
-  const all = [];
+}
+
+async function fetchAllDocuments(token: string): Promise<AutDoc[]> {
+  const all: AutDoc[] = [];
   let page = 1;
   let total = Infinity;
 
   while (all.length < total) {
     const res = await fetch(AUTENTIQUE_URL, {
       method: "POST",
-      headers: {
-        "Authorization": `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
+      headers: { "Authorization": `Bearer ${token}`, "Content-Type": "application/json" },
       body: JSON.stringify({ query: LIST_DOCUMENTS_QUERY, variables: { page } }),
     });
-
     if (!res.ok) throw new Error(`Autentique API error: ${res.status}`);
     const json = await res.json();
     if (json.errors?.length) throw new Error(json.errors[0].message);
-
     const result = json.data?.documents;
     if (!result) break;
-
     total = result.total;
     all.push(...result.data);
     if (result.data.length < 50) break;
     page++;
   }
-
   return all;
 }
 
-// Determina status do contrato a partir das assinaturas
-function resolveStatus(doc: { signatures: Array<{ signed: unknown; rejected: unknown }> }): string {
+function resolveStatus(doc: AutDoc): string {
   const sigs = doc.signatures;
   if (!sigs.length) return "enviado";
   if (sigs.some(s => s.rejected)) return "cancelado";
@@ -87,20 +77,37 @@ function resolveStatus(doc: { signatures: Array<{ signed: unknown; rejected: unk
   return "enviado";
 }
 
-// Tenta extrair número do contrato e placa do nome do documento
-// Espera padrões como: "Contrato_00001_ABC1234_..." ou "Contrato #00001 ABC-1234"
-function parseDocName(name: string): { numero: string | null; placa: string | null } {
+// Extrai número do contrato do nome do documento
+function parseNumero(name: string): string | null {
   const n = name.toUpperCase();
+  const m = n.match(/(?:#|_|CONTRATO\s*)(\d{4,6})(?:\b|_)/);
+  return m ? m[1].replace(/^0+/, "") : null;
+}
 
-  // Número do contrato: sequência de 4-6 dígitos possivelmente precedida de # ou _
-  const numMatch = n.match(/(?:#|_|CONTRATO\s*)(\d{4,6})(?:\b|_)/);
-  const numero = numMatch ? numMatch[1].replace(/^0+/, "") : null;
+// Extrai placa do nome do documento (Mercosul ou antigo)
+function parsePlaca(name: string): string | null {
+  const n = name.toUpperCase();
+  const m = n.match(/[A-Z]{3}[\-]?[0-9][A-Z0-9][0-9]{2}/);
+  return m ? m[0].replace("-", "") : null;
+}
 
-  // Placa: padrão Mercosul (ABC1D23) ou antigo (ABC-1234 / ABC1234)
-  const placaMatch = n.match(/[A-Z]{3}[\-]?[0-9][A-Z0-9][0-9]{2}/);
-  const placa = placaMatch ? placaMatch[0].replace("-", "") : null;
+// Normaliza string para comparação (sem acento, minúsculo, sem espaços duplos)
+function norm(s: string): string {
+  return s
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
 
-  return { numero, placa };
+// Verifica se a data do documento está dentro (ou próxima ±7 dias) do período da locação
+function withinRentalPeriod(docDate: string, dataInicio: string | null, dataFim: string | null): boolean {
+  if (!dataInicio) return true; // sem data de início, aceita
+  const doc = new Date(docDate).getTime();
+  const inicio = new Date(dataInicio).getTime() - 7 * 86400000; // 7 dias de tolerância antes
+  const fim = dataFim ? new Date(dataFim).getTime() + 7 * 86400000 : Date.now();
+  return doc >= inicio && doc <= fim;
 }
 
 serve(async (req) => {
@@ -114,12 +121,11 @@ serve(async (req) => {
   let body: { company_id?: string } = {};
   try { body = await req.json(); } catch { /* sem body */ }
 
-  // Busca empresas com token Autentique
-  const companyFilter = body.company_id
+  const companyQuery = body.company_id
     ? supabase.from("companies").select("id, autentique_config").eq("id", body.company_id).not("autentique_config", "is", null)
     : supabase.from("companies").select("id, autentique_config").not("autentique_config", "is", null);
 
-  const { data: companies } = await companyFilter;
+  const { data: companies } = await companyQuery;
   if (!companies?.length) {
     return new Response(JSON.stringify({ ok: true, message: "Nenhuma empresa com Autentique configurado" }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -132,67 +138,153 @@ serve(async (req) => {
     const token = company.autentique_config?.token;
     if (!token) continue;
 
-    let autDocuments;
+    // ── Busca documentos no Autentique ──
+    let autDocs: AutDoc[];
     try {
-      autDocuments = await fetchAllDocuments(token);
+      autDocs = await fetchAllDocuments(token);
     } catch (e) {
       summary.errors.push(`[${company.id}] ${e instanceof Error ? e.message : "erro Autentique"}`);
       continue;
     }
+    if (!autDocs.length) continue;
 
-    if (!autDocuments.length) continue;
-
-    // Busca contratos já existentes para esta empresa
+    // ── Dados do banco desta empresa ──
     const { data: existingContracts } = await supabase
       .from("contracts")
       .select("id, autentique_id, status, rental_id")
-      .eq("company_id", company.id) as { data: Array<{ id: string; autentique_id: string | null; status: string; rental_id: string | null }> | null };
+      .eq("company_id", company.id) as {
+        data: Array<{ id: string; autentique_id: string | null; status: string; rental_id: string | null }> | null
+      };
 
-    const autentiqueIdMap = new Map(
-      (existingContracts || [])
-        .filter(c => c.autentique_id)
-        .map(c => [c.autentique_id!, c])
+    const autIdMap = new Map(
+      (existingContracts || []).filter(c => c.autentique_id).map(c => [c.autentique_id!, c])
     );
 
-    // Busca locações e motos desta empresa para matching
+    // Locações com datas e moto
     const { data: rentals } = await supabase
       .from("rentals")
-      .select("id, numero, moto_id, company_id")
-      .eq("company_id", company.id) as { data: Array<{ id: string; numero: number | null; moto_id: string; company_id: string }> | null };
+      .select("id, numero, moto_id, cliente_id, data_inicio, data_fim_contrato, company_id")
+      .eq("company_id", company.id) as {
+        data: Array<{
+          id: string; numero: number | null; moto_id: string; cliente_id: string;
+          data_inicio: string | null; data_fim_contrato: string | null; company_id: string;
+        }> | null
+      };
 
+    // Motos
     const { data: motos } = await supabase
       .from("motorcycles")
       .select("id, placa")
-      .in("id", (rentals || []).map(r => r.moto_id)) as { data: Array<{ id: string; placa: string }> | null };
+      .in("id", [...new Set((rentals || []).map(r => r.moto_id))]) as {
+        data: Array<{ id: string; placa: string }> | null
+      };
 
+    // Clientes
+    const { data: clients } = await supabase
+      .from("clients")
+      .select("id, nome, email, cpf")
+      .in("id", [...new Set((rentals || []).map(r => r.cliente_id))]) as {
+        data: Array<{ id: string; nome: string; email: string | null; cpf: string | null }> | null
+      };
+
+    // Mapas auxiliares
     const motoById = new Map((motos || []).map(m => [m.id, m]));
+    const clientById = new Map((clients || []).map(c => [c.id, c]));
 
-    // Mapa: número do contrato → rental_id
-    const rentalByNum = new Map<string, string>();
-    // Mapa: placa normalizada → rental_id (último ativo)
-    const rentalByPlaca = new Map<string, string>();
+    // número → rentals (pode ter mais de uma locação com mesmo número em edge cases)
+    const rentalsByNum = new Map<string, typeof rentals extends null ? never[] : NonNullable<typeof rentals>>();
+    // placa normalizada → rentals
+    const rentalsByPlaca = new Map<string, NonNullable<typeof rentals>>();
+    // nome normalizado do cliente → rentals
+    const rentalsByNome = new Map<string, NonNullable<typeof rentals>>();
+    // email → rentals
+    const rentalsByEmail = new Map<string, NonNullable<typeof rentals>>();
 
     for (const r of rentals || []) {
-      if (r.numero) rentalByNum.set(String(r.numero), r.id);
+      if (r.numero) {
+        const key = String(r.numero);
+        if (!rentalsByNum.has(key)) rentalsByNum.set(key, []);
+        rentalsByNum.get(key)!.push(r);
+      }
       const moto = motoById.get(r.moto_id);
       if (moto?.placa) {
-        const placaNorm = moto.placa.replace(/[^A-Za-z0-9]/g, "").toUpperCase();
-        rentalByPlaca.set(placaNorm, r.id);
+        const key = moto.placa.replace(/[^A-Za-z0-9]/g, "").toUpperCase();
+        if (!rentalsByPlaca.has(key)) rentalsByPlaca.set(key, []);
+        rentalsByPlaca.get(key)!.push(r);
+      }
+      const client = clientById.get(r.cliente_id);
+      if (client?.nome) {
+        const key = norm(client.nome);
+        if (!rentalsByNome.has(key)) rentalsByNome.set(key, []);
+        rentalsByNome.get(key)!.push(r);
+      }
+      if (client?.email) {
+        const key = client.email.toLowerCase();
+        if (!rentalsByEmail.has(key)) rentalsByEmail.set(key, []);
+        rentalsByEmail.get(key)!.push(r);
       }
     }
 
-    for (const doc of autDocuments) {
+    // Encontra a locação com maior pontuação de match para um documento
+    function findBestRental(doc: AutDoc): string | null {
+      // Nome do primeiro assinante (locatário)
+      const signerName = doc.signatures[0]?.name ?? "";
+      const signerEmail = doc.signatures[0]?.email ?? "";
+
+      const numero = parseNumero(doc.name);
+      const placa = parsePlaca(doc.name);
+      const signerNorm = norm(signerName);
+      const signerEmailLow = signerEmail.toLowerCase();
+
+      // Scoring: cada rental recebe pontos por critério
+      const scores = new Map<string, number>();
+
+      const addScore = (list: typeof rentals, pts: number) => {
+        for (const r of list || []) {
+          scores.set(r.id, (scores.get(r.id) ?? 0) + pts);
+        }
+      };
+
+      if (numero) addScore(rentalsByNum.get(numero) ?? [], 40);
+      if (placa) addScore(rentalsByPlaca.get(placa) ?? [], 30);
+      if (signerNorm) addScore(rentalsByNome.get(signerNorm) ?? [], 25);
+      if (signerEmailLow) addScore(rentalsByEmail.get(signerEmailLow) ?? [], 25);
+
+      if (!scores.size) return null;
+
+      // Candidatos com pontuação >= 25 (pelo menos um critério além do número)
+      const candidates = [...scores.entries()]
+        .filter(([, s]) => s >= 25)
+        .sort((a, b) => b[1] - a[1]);
+
+      if (!candidates.length) return null;
+
+      // Aplica filtro de período: prefere rentals dentro do intervalo da data do documento
+      const rentalMap = new Map((rentals || []).map(r => [r.id, r]));
+      const withPeriod = candidates.filter(([id]) => {
+        const r = rentalMap.get(id);
+        if (!r) return false;
+        return withinRentalPeriod(doc.created_at, r.data_inicio, r.data_fim_contrato);
+      });
+
+      const winner = withPeriod.length ? withPeriod[0] : candidates[0];
+      return winner[0];
+    }
+
+    // ── Processa cada documento ──
+    for (const doc of autDocs) {
       const newStatus = resolveStatus(doc);
       const signedAt = doc.signatures.find(s => s.signed)?.signed?.created_at ?? null;
 
-      // Caso 1: já está vinculado — atualiza status
-      const existing = autentiqueIdMap.get(doc.id);
+      // Caso 1: já está vinculado → atualiza status se mudou
+      const existing = autIdMap.get(doc.id);
       if (existing) {
         if (existing.status !== newStatus) {
-          await supabase
-            .from("contracts")
-            .update({ status: newStatus, autentique_url: doc.link, ...(signedAt ? { signed_at: signedAt } : {}) })
-            .eq("id", existing.id);
+          await supabase.from("contracts").update({
+            status: newStatus,
+            autentique_url: doc.link,
+            ...(signedAt ? { signed_at: signedAt } : {}),
+          }).eq("id", existing.id);
           summary.updated++;
         } else {
           summary.skipped++;
@@ -200,23 +292,14 @@ serve(async (req) => {
         continue;
       }
 
-      // Caso 2: não vinculado — tenta casar com locação
-      const { numero, placa } = parseDocName(doc.name);
-      let rentalId: string | null = null;
+      // Caso 2: não vinculado → tenta casar
+      const rentalId = findBestRental(doc);
 
-      if (numero) rentalId = rentalByNum.get(numero) ?? null;
-      if (!rentalId && placa) {
-        const placaNorm = placa.replace(/[^A-Za-z0-9]/g, "").toUpperCase();
-        rentalId = rentalByPlaca.get(placaNorm) ?? null;
-      }
-
-      // Verifica se já existe contrato para essa combinação de rental + autentique_id
       const alreadyLinked = (existingContracts || []).some(
         c => c.rental_id === rentalId && c.autentique_id === doc.id
       );
       if (alreadyLinked) { summary.skipped++; continue; }
 
-      // Insere contrato vinculado (ou solto se não encontrou locação)
       const { error: insErr } = await supabase.from("contracts").insert({
         company_id: company.id,
         rental_id: rentalId,
