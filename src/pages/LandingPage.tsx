@@ -11,7 +11,6 @@ import {
   FileSignature,
   Activity,
   TrendingUp,
-  Check,
   MapPin,
   Bell,
   Users,
@@ -28,6 +27,8 @@ import {
    Wayvo — Landing Page
    Brand tokens conforme Brandbook 2025
 ============================================================ */
+
+const INSTAGRAM_URL = "https://www.instagram.com/joaojorge.midia";
 
 const COLORS = {
   canvas: "#F0FFF8",
@@ -120,13 +121,15 @@ export default function LandingPage() {
             >
               Entrar
             </Link>
-            <Link
-              to="/signup"
+            <a
+              href={INSTAGRAM_URL}
+              target="_blank"
+              rel="noopener noreferrer"
               style={{ ...fontBody, backgroundColor: COLORS.ink, color: "#fff" }}
               className="text-sm font-semibold px-4 py-2 rounded-md hover:opacity-90 transition inline-flex items-center gap-1.5"
             >
-              Criar conta <ArrowRight size={14} />
-            </Link>
+              Solicitar acesso <ArrowRight size={14} />
+            </a>
           </div>
           <button
             className="md:hidden p-2 rounded-md"
@@ -149,13 +152,15 @@ export default function LandingPage() {
                 >
                   Entrar
                 </Link>
-                <Link
-                  to="/signup"
+                <a
+                  href={INSTAGRAM_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
                   className="text-sm font-semibold px-4 py-2.5 rounded-md text-center"
                   style={{ backgroundColor: COLORS.ink, color: "#fff" }}
                 >
-                  Criar conta grátis
-                </Link>
+                  Solicitar acesso
+                </a>
               </div>
             </div>
           </div>
@@ -202,13 +207,15 @@ export default function LandingPage() {
                 com dado, no momento certo, e chegar onde grandes frotas chegam.
               </p>
               <div className="flex flex-col sm:flex-row gap-3">
-                <Link
-                  to="/signup"
+                <a
+                  href={INSTAGRAM_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
                   className="inline-flex items-center justify-center gap-2 px-6 py-3.5 rounded-md font-semibold transition hover:opacity-90"
                   style={{ ...fontBody, backgroundColor: COLORS.primary, color: "#04200F", fontSize: 15 }}
                 >
-                  Começar agora <ArrowRight size={16} />
-                </Link>
+                  Solicitar acesso <ArrowRight size={16} />
+                </a>
                 <a
                   href="#produto"
                   className="inline-flex items-center justify-center gap-2 px-6 py-3.5 rounded-md font-semibold transition hover:bg-black/5"
@@ -360,67 +367,39 @@ export default function LandingPage() {
             </p>
           </div>
 
-          <div className="grid md:grid-cols-3 gap-5">
-            {/* START */}
-            <PricingCard
-              name="Start"
-              tagline="Operação Inicial"
-              description="Para quem está validando a primeira frota."
-              price="R$ 97"
-              suffix="/mês"
-              unit="até 8 motos"
-              features={[
-                "Gestão de frota básica",
-                "Alertas essenciais",
-                "Emissão de contratos digitais",
-                "Cadastro de clientes com OCR",
-                "Suporte por e-mail",
-              ]}
-              cta="Começar grátis"
-              ctaHref="/signup"
-            />
-
-            {/* PRO */}
-            <PricingCard
-              highlight
-              name="Pro"
-              tagline="Frota Escala"
-              description="O mais vendido. Pague pelo que você opera."
-              price="R$ 1,90"
-              suffix="/moto/dia"
-              unit="frota recomendada: 10 a 30 motos"
-              features={[
-                "Tudo do Start",
-                "Cobrança recorrente automática (WhatsApp)",
-                "Unit economics por veículo",
-                "Manutenção preventiva (óleo, pneus, pastilhas)",
-                "Rastreamento GPS em tempo real",
-                "Multas e antecedentes",
-                "Suporte prioritário",
-              ]}
-              cta="Assinar Pro"
-              ctaHref="/signup"
-            />
-
-            {/* ENTERPRISE */}
-            <PricingCard
-              name="Enterprise"
-              tagline="Multi-Tenant"
-              description="Franqueadoras e frotas de elite."
-              price="Sob consulta"
-              suffix=""
-              unit="frotas acima de 50 motos"
-              features={[
-                "Tudo do Pro",
-                "Isolamento de dados por tenant",
-                "Suporte premium 24/7",
-                "Integrações via API sob demanda",
-                "Customização de regras de negócio",
-                "Onboarding dedicado",
-              ]}
-              cta="Falar com especialista"
-              ctaHref="/signup"
-            />
+          <div
+            className="max-w-xl mx-auto rounded-xl p-10 text-center space-y-6"
+            style={{ backgroundColor: COLORS.surface, border: `1px solid ${COLORS.border}` }}
+          >
+            <div
+              className="w-14 h-14 rounded-full flex items-center justify-center mx-auto"
+              style={{ backgroundColor: "rgba(0,200,106,0.1)" }}
+            >
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke={COLORS.primary} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+              </svg>
+            </div>
+            <div>
+              <p style={{ ...fontHead, color: COLORS.ink, fontSize: 22 }}>Acesso somente por convite</p>
+              <p style={{ ...fontBody, color: COLORS.muted, fontSize: 15 }} className="mt-2 leading-relaxed">
+                Os planos e preços são definidos individualmente. Entre em contato pelo Instagram para saber mais e solicitar acesso.
+              </p>
+            </div>
+            <a
+              href={INSTAGRAM_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center justify-center gap-2 px-6 py-3.5 rounded-md font-semibold transition hover:opacity-90"
+              style={{ ...fontBody, backgroundColor: COLORS.ink, color: "#fff", fontSize: 15 }}
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="2" y="2" width="20" height="20" rx="5" ry="5"/><path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"/><line x1="17.5" y1="6.5" x2="17.51" y2="6.5"/>
+              </svg>
+              @joaojorge.midia
+            </a>
+            <p style={{ ...fontBody, color: COLORS.muted, fontSize: 12.5 }}>
+              Preços sob consulta · Acesso mediante aprovação
+            </p>
           </div>
         </div>
       </section>
@@ -486,7 +465,7 @@ export default function LandingPage() {
               ["Em quanto tempo consigo colocar minha frota no ar?", "O setup leva em média 10 minutos. Você cadastra a empresa, importa suas motos (manual, planilha ou OCR do CRLV) e já começa a operar."],
               ["Como funciona a cobrança automática?", "A régua de cobrança envia avisos via WhatsApp em D-1, D+0, D+3 e D+7. Tudo configurável. Sem ação manual."],
               ["Vocês emitem contrato com validade jurídica?", "Sim. Contratos digitais com assinatura eletrônica conforme MP 2.200-2 e LGPD. Aceitos por cartórios e tribunais."],
-              ["Posso testar antes de pagar?", "Sim. O plano Start tem 14 dias grátis. Sem cartão de crédito."],
+              ["Como faço para ter acesso?", "A Wayvo está em acesso antecipado por convite. Entre em contato via Instagram (@joaojorge.midia) para solicitar acesso e receber uma proposta personalizada."],
               ["E se eu tiver mais de uma empresa/franquia?", "O plano Enterprise oferece arquitetura multi-tenant com isolamento total de dados por sub-empresa."],
               ["Vocês integram com meu sistema atual?", "Sim, via API REST no plano Enterprise. Também aceitamos importação por planilha em todos os planos."],
             ].map(([q, a], i) => (
@@ -524,16 +503,18 @@ export default function LandingPage() {
               Sua frota tem 13 motos. Quantas são lucrativas?
             </h2>
             <p style={{ ...fontBody, color: "rgba(255,255,255,0.7)", fontSize: 16 }} className="mb-8 max-w-xl mx-auto">
-              Saiba agora. Comece grátis, sem cartão de crédito, sem fidelidade.
+              Acesso somente por convite. Entre em contato para saber mais.
             </p>
             <div className="flex flex-col sm:flex-row gap-3 justify-center">
-              <Link
-                to="/signup"
+              <a
+                href={INSTAGRAM_URL}
+                target="_blank"
+                rel="noopener noreferrer"
                 className="inline-flex items-center justify-center gap-2 px-6 py-3.5 rounded-md font-semibold hover:opacity-90 transition"
                 style={{ ...fontBody, backgroundColor: COLORS.primary, color: "#04200F", fontSize: 15 }}
               >
-                Criar conta grátis <ArrowRight size={16} />
-              </Link>
+                Falar no Instagram <ArrowRight size={16} />
+              </a>
               <Link
                 to="/login"
                 className="inline-flex items-center justify-center gap-2 px-6 py-3.5 rounded-md font-semibold transition"
@@ -687,78 +668,3 @@ function ProductMock() {
   );
 }
 
-/* =========================================================
-   PricingCard
-========================================================= */
-function PricingCard({
-  name, tagline, description, price, suffix, unit, features, cta, ctaHref, highlight,
-}: {
-  name: string;
-  tagline: string;
-  description: string;
-  price: string;
-  suffix: string;
-  unit: string;
-  features: string[];
-  cta: string;
-  ctaHref: string;
-  highlight?: boolean;
-}) {
-  return (
-    <div
-      className="relative p-8 rounded-xl flex flex-col"
-      style={{
-        backgroundColor: highlight ? COLORS.ink : COLORS.surface,
-        border: highlight ? `1px solid ${COLORS.primary}` : `1px solid ${COLORS.border}`,
-        boxShadow: highlight ? "0 20px 50px -20px rgba(0,200,106,0.35)" : "none",
-      }}
-    >
-      {highlight && (
-        <div
-          className="absolute -top-3 left-1/2 -translate-x-1/2 px-3 py-1 rounded-full"
-          style={{ ...fontMono, backgroundColor: COLORS.primary, color: "#04200F", fontSize: 11 }}
-        >
-          MAIS VENDIDO
-        </div>
-      )}
-      <div className="mb-1" style={{ ...fontMono, color: highlight ? COLORS.primary : COLORS.muted, fontSize: 11 }}>
-        {tagline.toUpperCase()}
-      </div>
-      <h3 style={{ ...fontHead, color: highlight ? "#fff" : COLORS.ink, fontSize: 26 }}>{name}</h3>
-      <p style={{ ...fontBody, color: highlight ? "rgba(255,255,255,0.65)" : COLORS.muted, fontSize: 13.5 }} className="mt-1.5 mb-6">
-        {description}
-      </p>
-
-      <div className="mb-1 flex items-baseline gap-1.5">
-        <span style={{ ...fontMono, color: highlight ? "#fff" : COLORS.ink, fontSize: 34, lineHeight: 1 }}>{price}</span>
-        {suffix && (
-          <span style={{ ...fontBody, color: highlight ? "rgba(255,255,255,0.6)" : COLORS.muted, fontSize: 14 }}>{suffix}</span>
-        )}
-      </div>
-      <div style={{ ...fontBody, color: highlight ? "rgba(255,255,255,0.5)" : COLORS.muted, fontSize: 12 }} className="mb-7">
-        {unit}
-      </div>
-
-      <ul className="space-y-3 mb-8 flex-1">
-        {features.map(f => (
-          <li key={f} className="flex items-start gap-2.5">
-            <Check size={15} style={{ color: COLORS.primary, marginTop: 3, flexShrink: 0 }} />
-            <span style={{ ...fontBody, color: highlight ? "rgba(255,255,255,0.85)" : COLORS.ink, fontSize: 14 }}>{f}</span>
-          </li>
-        ))}
-      </ul>
-
-      <Link
-        to={ctaHref}
-        className="w-full inline-flex items-center justify-center gap-2 px-5 py-3 rounded-md font-semibold transition hover:opacity-90"
-        style={
-          highlight
-            ? { ...fontBody, backgroundColor: COLORS.primary, color: "#04200F", fontSize: 14 }
-            : { ...fontBody, backgroundColor: COLORS.ink, color: "#fff", fontSize: 14 }
-        }
-      >
-        {cta} <ArrowRight size={14} />
-      </Link>
-    </div>
-  );
-}

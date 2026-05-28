@@ -88,7 +88,8 @@ const PLACEHOLDERS = [
 
 // ─── componente principal ─────────────────────────────────────────────────────
 export default function ContratosPage() {
-  const { currentCompanyId } = useCompany();
+  const { activeCompany } = useCompany();
+  const currentCompanyId = activeCompany?.id;
   const { rentals, motos, clients } = useDataCacheSnapshot();
 
   const [templates, setTemplates] = useState<ContractTemplate[]>([]);
