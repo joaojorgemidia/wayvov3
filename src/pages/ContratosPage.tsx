@@ -24,7 +24,7 @@ import {
 import { toast } from "sonner";
 import {
   FileText, Upload, Download, ExternalLink, Plus, Trash2,
-  FileSignature, Info, Loader2, RefreshCw,
+  FileSignature, Info, Loader2, RefreshCw, CloudDownload, Link2Off,
 } from "lucide-react";
 
 // ─── tipos ───────────────────────────────────────────────────────────────────
@@ -104,6 +104,9 @@ export default function ContratosPage() {
   const [uploading, setUploading] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
+  // Sync Autentique
+  const [syncing, setSyncing] = useState(false);
+
   // Geração de contrato
   const [gerarOpen, setGerarOpen] = useState(false);
   const [gerarRentalId, setGerarRentalId] = useState("");
@@ -137,6 +140,29 @@ export default function ContratosPage() {
       setContracts((ctrRes.data as Contract[]) || []);
     } finally {
       setLoading(false);
+    }
+  }
+
+  // ── Sincronizar com Autentique ──
+  async function handleSync() {
+    setSyncing(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("autentique-sync", {
+        body: { company_id: currentCompanyId },
+      });
+      if (error) throw error;
+      if (data?.error) throw new Error(data.error);
+      const { updated = 0, linked = 0, skipped = 0 } = data || {};
+      toast.success(
+        linked > 0 || updated > 0
+          ? `Sincronizado: ${linked} novo(s) importado(s), ${updated} atualizado(s)`
+          : `Tudo já estava atualizado (${skipped} verificado(s))`,
+      );
+      fetchAll();
+    } catch (e: unknown) {
+      toast.error("Erro ao sincronizar: " + (e instanceof Error ? e.message : "erro"));
+    } finally {
+      setSyncing(false);
     }
   }
 
@@ -254,10 +280,14 @@ export default function ContratosPage() {
             Gere contratos a partir de templates e envie para assinatura digital.
           </p>
         </div>
-        <div className="flex gap-2">
-          <Button variant="outline" size="sm" onClick={fetchAll} disabled={loading}>
+        <div className="flex gap-2 flex-wrap justify-end">
+          <Button variant="outline" size="sm" onClick={fetchAll} disabled={loading || syncing}>
             <RefreshCw className={`h-4 w-4 mr-1.5 ${loading ? "animate-spin" : ""}`} />
             Atualizar
+          </Button>
+          <Button variant="outline" size="sm" onClick={handleSync} disabled={syncing || loading}>
+            <CloudDownload className={`h-4 w-4 mr-1.5 ${syncing ? "animate-pulse" : ""}`} />
+            {syncing ? "Sincronizando…" : "Sincronizar Autentique"}
           </Button>
           <Button size="sm" onClick={() => setGerarOpen(true)} disabled={templates.length === 0}>
             <Plus className="h-4 w-4 mr-1.5" /> Gerar Contrato
@@ -321,7 +351,12 @@ export default function ContratosPage() {
                               <div className="font-medium">{client.nome}</div>
                               <div className="text-muted-foreground text-xs">{moto?.placa || "—"}</div>
                             </div>
-                          ) : "—"}
+                          ) : (
+                            <div className="flex items-center gap-1 text-muted-foreground text-xs">
+                              <Link2Off className="h-3.5 w-3.5 shrink-0" />
+                              Sem locação vinculada
+                            </div>
+                          )}
                         </TableCell>
                         <TableCell>
                           <Badge variant={STATUS_VARIANT[c.status] || "secondary"}>
