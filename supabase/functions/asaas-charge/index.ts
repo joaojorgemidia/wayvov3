@@ -137,7 +137,8 @@ serve(async (req) => {
     const placa = entry.placa || null;
 
     // Referência da semana: caução = semana anterior (já usada); aluguel = próxima semana (a ser usada)
-    const categoria = (entry.categoria || "").toLowerCase();
+    const normCat = (s: string) => s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+    const categoria = normCat(entry.categoria || "");
     const isCaucao = categoria === "caucao";
     const isAluguelOuCaucao = categoria === "aluguel" || isCaucao;
     const dueRef = new Date((entry.data_prevista || entry.data) + "T00:00:00");
