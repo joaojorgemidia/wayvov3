@@ -1103,7 +1103,7 @@ export default function FinanceiroPage() {
     if (valueChanged) body.value = updated.valor;
     const { error } = await supabase.functions.invoke("asaas-update-payment", { body });
     if (error) toast.warning("Salvo localmente, mas não foi possível atualizar o boleto no Asaas.");
-  }, []);
+  }, [currentCompanyId]);
 
   const syncAsaasChanges = useCallback(async (updatedList: FinancialEntry[], originalList: FinancialEntry[]) => {
     const origById = new Map(originalList.map(e => [e.id, e]));
@@ -1128,9 +1128,15 @@ export default function FinanceiroPage() {
         supabase.functions.invoke("asaas-cancel-payment", { body: { asaasPaymentId: e.asaasPaymentId, companyId: currentCompanyId } }),
       ),
     );
-    const failed = results.filter(r => r.status === "rejected" || (r.status === "fulfilled" && r.value.error)).length;
-    if (failed > 0) toast.warning(`${failed} boleto(s) não puderam ser cancelados no Asaas.`);
-  }, []);
+    const failures = results.filter(r => r.status === "rejected" || (r.status === "fulfilled" && r.value.error));
+    if (failures.length > 0) {
+      const firstMsg = failures[0].status === "fulfilled"
+        ? (failures[0].value.data?.error ?? failures[0].value.error?.message ?? "")
+        : (failures[0] as PromiseRejectedResult).reason?.message ?? "";
+      const detail = firstMsg ? `: ${firstMsg}` : "";
+      toast.warning(`${failures.length} boleto(s) não puderam ser cancelados no Asaas${detail}`);
+    }
+  }, [currentCompanyId]);
 
   // Migration now handled centrally in loadFinancial()
 
@@ -3609,7 +3615,12 @@ export default function FinanceiroPage() {
                       toast.info("Despesas de manutenção são criadas pela Ordem de Serviço. Acesse o módulo Manutenções / OS.");
                       return;
                     }
-                    setForm({ ...form, categoria: cat, subcategoria: sub });
+                    const newCatTags = [
+                      ...(TAGS[cat] || []),
+                      ...Object.keys(TAGS).filter(k => k.startsWith(`${cat}:`)).flatMap(k => TAGS[k] || []),
+                    ];
+                    const filteredTags = (form.tags || []).filter(t => newCatTags.includes(t));
+                    setForm({ ...form, categoria: cat, subcategoria: sub, tags: filteredTags });
                   }}
                 />
               </div>
