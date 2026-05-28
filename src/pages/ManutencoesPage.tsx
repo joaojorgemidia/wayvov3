@@ -132,6 +132,8 @@ function buildReceitaLocatarioEntries(os: Maintenance, motos: Motorcycle[], rent
     placa: moto?.placa,
     tags: ["OS", ...(os.numeroOS ? [os.numeroOS] : [])],
     fixedOriginId: os.id,
+    // Parcelamento: recurringGroupId = os.id para agrupar na aba de parcelamentos
+    recurringGroupId: os.cobrarParcelado ? os.id : null,
   };
 
   if (!os.cobrarParcelado) {
@@ -156,7 +158,7 @@ function buildReceitaLocatarioEntries(os: Maintenance, motos: Motorcycle[], rent
     entries.push({
       ...base,
       id: crypto.randomUUID(),
-      descricao: `${descBase} – Entrada`,
+      descricao: `${descBase} – Entrada (Parcela 0/${totalParcelas})`,
       valor: entrada,
       data: baseData,
       dataPrevista: baseData,

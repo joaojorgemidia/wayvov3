@@ -33,6 +33,7 @@ import { buildAllTokens } from "@/lib/message-tokens";
 import { buildCobrancaEvent, computeSemanaPeriodo, computeSemanaNumero } from "@/lib/cobranca-week-stats";
 import { DEFAULT_COBRANCA_CONFIG } from "@/lib/companies";
 import { formatDate } from "@/lib/alerts";
+import { ParcelamentosTab } from "@/components/ParcelamentosTab";
 
 function moduleBadgeColor(m: CollectionModule) {
   switch (m) {
@@ -740,6 +741,7 @@ export default function CobrancasPage() {
             Tarefas
             <Badge variant="secondary" className="ml-2">{totals.pendentes + totals.escalados}</Badge>
           </TabsTrigger>
+          <TabsTrigger value="parcelamentos">Parcelamentos</TabsTrigger>
           <TabsTrigger value="config">Configurações</TabsTrigger>
         </TabsList>
 
@@ -965,6 +967,10 @@ export default function CobrancasPage() {
               ))}
             </section>
           )}
+        </TabsContent>
+
+        <TabsContent value="parcelamentos">
+          <ParcelamentosTab />
         </TabsContent>
 
         <TabsContent value="config" className="space-y-4 mt-4">
