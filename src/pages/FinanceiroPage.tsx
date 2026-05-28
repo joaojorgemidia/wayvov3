@@ -1128,13 +1128,15 @@ export default function FinanceiroPage() {
         supabase.functions.invoke("asaas-cancel-payment", { body: { asaasPaymentId: e.asaasPaymentId, companyId: currentCompanyId } }),
       ),
     );
-    const failures = results.filter(r => r.status === "rejected" || (r.status === "fulfilled" && r.value.error));
+    const failures = results.filter(r => r.status === "fulfilled" && r.value.error);
     if (failures.length > 0) {
-      const firstMsg = failures[0].status === "fulfilled"
-        ? (failures[0].value.data?.error ?? failures[0].value.error?.message ?? "")
-        : (failures[0] as PromiseRejectedResult).reason?.message ?? "";
-      const detail = firstMsg ? `: ${firstMsg}` : "";
-      toast.warning(`${failures.length} boleto(s) não puderam ser cancelados no Asaas${detail}`);
+      let detail = "";
+      try {
+        const err = (failures[0] as PromiseFulfilledResult<{ data: unknown; error: { context?: Response; message?: string } }>).value.error;
+        const body = await err.context?.json?.();
+        detail = body?.error ?? "";
+      } catch { /* ignora */ }
+      toast.warning(`${failures.length} boleto(s) não puderam ser cancelados no Asaas${detail ? `: ${detail}` : ""}`);
     }
   }, [currentCompanyId]);
 
