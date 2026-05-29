@@ -1181,6 +1181,14 @@ export default function LocacoesPage() {
 
         const diaAtual = refDate ? refDate.getDay() : null;
 
+        // Juros e multa por atraso (usando cobrancaConfig da empresa)
+        const isOverdue = !!nextPending && nextPending.data < todayIso;
+        const diasAtraso = isOverdue
+          ? differenceInDays(new Date(todayIso + "T00:00:00"), new Date(nextPending!.data + "T00:00:00"))
+          : 0;
+        const multa = isOverdue ? cobrancaCfg.multaAtraso : 0;
+        const juros = isOverdue ? cobrancaCfg.jurosDiario * diasAtraso : 0;
+
         const forwardDiff = (novoDiaVencimento !== null && diaAtual !== null && novoDiaVencimento !== diaAtual)
           ? (novoDiaVencimento - diaAtual + 7) % 7
           : null;
@@ -1188,10 +1196,10 @@ export default function LocacoesPage() {
         const calc = (r && refDate && forwardDiff !== null && forwardDiff > 0) ? (() => {
           const dataTransicao = addDays(refDate, forwardDiff);
           const dataPrimeiraNormal = addDays(dataTransicao, 7);
-          const valorSemanal   = r.valorDiario;
-          const valorDiarias   = (r.valorDiario / 7) * forwardDiff;
-          const valorCorrecao  = valorSemanal + valorDiarias; // único pagamento de correção
-          return { dataTransicao, dataPrimeiraNormal, valorSemanal, valorDiarias, valorCorrecao };
+          const valorSemanal  = r.valorDiario;
+          const valorDiarias  = (r.valorDiario / 7) * forwardDiff;
+          const valorCorrecao = valorSemanal + valorDiarias + multa + juros;
+          return { dataTransicao, dataPrimeiraNormal, valorSemanal, valorDiarias, valorCorrecao, multa, juros };
         })() : null;
 
         const fmt = (d: Date) => d.toLocaleDateString("pt-BR");
@@ -1230,9 +1238,34 @@ export default function LocacoesPage() {
             ren.id === r.id ? { ...ren, proximoPagamento: primeiraNormalStr } : ren
           );
 
-          saveFinancial(updatedFinancial);
+          await saveFinancial(updatedFinancial);
           persist(updatedRentals);
-          toast.success("Troca de vencimento aplicada com sucesso");
+
+          const correctionId = pendingEntries[0].id;
+          const asaasEnabled = activeCompany?.asaasConfig?.enabled && activeCompany?.asaasConfig?.apiKey;
+          if (asaasEnabled) {
+            try {
+              const { data: asaasData, error: asaasError } = await supabase.functions.invoke("asaas-charge", {
+                body: { entryId: correctionId },
+              });
+              if (!asaasError && asaasData && !asaasData.error) {
+                const withAsaas = updatedFinancial.map(e =>
+                  e.id === correctionId
+                    ? { ...e, asaasPaymentId: asaasData.paymentId, asaasStatus: asaasData.status, asaasBoletoUrl: asaasData.boletoUrl, asaasInvoiceUrl: asaasData.invoiceUrl }
+                    : e
+                );
+                await saveFinancial(withAsaas);
+                toast.success("Troca aplicada e cobrança enviada ao cliente!");
+              } else {
+                toast.success("Troca aplicada. Não foi possível enviar a cobrança Asaas.");
+              }
+            } catch {
+              toast.success("Troca aplicada. Não foi possível enviar a cobrança Asaas.");
+            }
+          } else {
+            toast.success("Troca de vencimento aplicada com sucesso");
+          }
+
           setTrocaVencimentoRental(null);
           setNovoDiaVencimento(null);
         };
@@ -1279,10 +1312,12 @@ export default function LocacoesPage() {
                     {refDate && (
                       <div className="flex justify-between">
                         <span className="text-muted-foreground">
-                          Próximo vencimento
-                          {nextPending && <span className="ml-1 text-[10px] text-blue-500">(cobrança real)</span>}
+                          {isOverdue ? "Vencimento em atraso" : "Próximo vencimento"}
                         </span>
-                        <span className="font-medium">{fmt(refDate)}</span>
+                        <span className={`font-medium ${isOverdue ? "text-destructive" : ""}`}>
+                          {fmt(refDate)}
+                          {isOverdue && <span className="ml-1 text-xs">({diasAtraso}d)</span>}
+                        </span>
                       </div>
                     )}
                   </div>
@@ -1350,6 +1385,18 @@ export default function LocacoesPage() {
                               <span>+ {forwardDiff} diária(s) de correção (R$ {(r.valorDiario / 7).toFixed(2)}/dia)</span>
                               <span className="font-medium">R$ {calc.valorDiarias.toFixed(2)}</span>
                             </div>
+                            {calc.multa > 0 && (
+                              <div className="flex justify-between text-destructive">
+                                <span>+ Multa por atraso</span>
+                                <span className="font-medium">R$ {calc.multa.toFixed(2)}</span>
+                              </div>
+                            )}
+                            {calc.juros > 0 && (
+                              <div className="flex justify-between text-destructive">
+                                <span>+ Juros ({diasAtraso}d × R$ {cobrancaCfg.jurosDiario.toFixed(2)}/dia)</span>
+                                <span className="font-medium">R$ {calc.juros.toFixed(2)}</span>
+                              </div>
+                            )}
                           </div>
                         </div>
 
