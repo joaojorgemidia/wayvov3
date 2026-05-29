@@ -283,7 +283,13 @@ export default function LocacoesPage() {
 
     if (rental.gerarCobrancaPagamento && rental.valorDiario > 0 && rental.dataFimContrato) {
       const startDate = parseISO(rental.dataInicio);
-      const endDate = parseISO(rental.dataFimContrato);
+      const contratoEnd = parseISO(rental.dataFimContrato);
+      // Locações "só aluguel" têm renovação automática: garante cobranças até pelo menos 12 meses à frente
+      const horizonte12m = addMonths(new Date(), 12);
+      const endDate = (rental.plano === "aluguel" || !rental.plano || rental.plano === "")
+        && rental.status === "ativa"
+        ? (contratoEnd > horizonte12m ? contratoEnd : horizonte12m)
+        : contratoEnd;
       const freq = rental.frequenciaPagamento;
       const aluguelSerieId = `aluguel-${rental.id}`;
       const prePaga = !!rental.cobrancaPrePaga;
