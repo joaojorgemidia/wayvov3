@@ -1158,13 +1158,25 @@ export default function LocacoesPage() {
         const DIAS_FULL  = ["Domingo", "Segunda-feira", "Terça-feira", "Quarta-feira", "Quinta-feira", "Sexta-feira", "Sábado"];
 
         const r = trocaVencimentoRental;
-        const refDateStr = r?.proximoPagamento || r?.dataInicio;
-
-        // Advance stale proximoPagamento to the next future occurrence of the same weekday
+        const todayIso = new Date().toISOString().split("T")[0];
         const today = new Date(); today.setHours(0, 0, 0, 0);
-        let refDate = refDateStr ? new Date(refDateStr + "T00:00:00") : null;
-        if (refDate && refDate < today) {
-          while (refDate < today) refDate = addDays(refDate, 7);
+
+        // Usa a primeira cobrança de aluguel pendente real do DB como referência
+        const nextPending = r
+          ? cache.financial
+              .filter(e => e.rentalId === r.id && e.categoria === "aluguel" && !e.pago && e.data >= todayIso)
+              .sort((a, b) => a.data.localeCompare(b.data))[0]
+          : null;
+
+        let refDate: Date | null = null;
+        if (nextPending) {
+          refDate = new Date(nextPending.data + "T00:00:00");
+        } else {
+          const fallbackStr = r?.proximoPagamento || r?.dataInicio;
+          refDate = fallbackStr ? new Date(fallbackStr + "T00:00:00") : null;
+          if (refDate && refDate < today) {
+            while (refDate < today) refDate = addDays(refDate, 7);
+          }
         }
 
         const diaAtual = refDate ? refDate.getDay() : null;
@@ -1265,7 +1277,10 @@ export default function LocacoesPage() {
                     )}
                     {refDate && (
                       <div className="flex justify-between">
-                        <span className="text-muted-foreground">Próximo vencimento</span>
+                        <span className="text-muted-foreground">
+                          Próximo vencimento
+                          {nextPending && <span className="ml-1 text-[10px] text-blue-500">(cobrança real)</span>}
+                        </span>
                         <span className="font-medium">{fmt(refDate)}</span>
                       </div>
                     )}
@@ -1323,23 +1338,29 @@ export default function LocacoesPage() {
                           <span className="text-muted-foreground">Dias na transição</span>
                           <span className="font-medium">× {forwardDiff} dias</span>
                         </div>
-                        <div className="flex justify-between items-center px-3 py-2.5 bg-blue-100/60 dark:bg-blue-900/40">
-                          <div>
-                            <span className="font-semibold text-blue-800 dark:text-blue-200">Cobrança de transição</span>
-                            <span className="ml-2 text-[11px] text-muted-foreground">{fmt(calc.dataTransicao)}</span>
+
+                        {/* 1ª cobrança — transição */}
+                        <div className="px-3 py-2.5 bg-blue-100/60 dark:bg-blue-900/40">
+                          <div className="flex justify-between items-baseline">
+                            <div>
+                              <span className="text-[10px] text-blue-600 dark:text-blue-400 font-bold uppercase tracking-wide">1ª cobrança</span>
+                              <span className="ml-1.5 text-[11px] text-muted-foreground">{fmt(calc.dataTransicao)}</span>
+                            </div>
+                            <span className="text-2xl font-extrabold text-blue-700 dark:text-blue-300">R$ {calc.valorTransicao.toFixed(2)}</span>
                           </div>
-                          <span className="text-2xl font-extrabold text-blue-700 dark:text-blue-300">R$ {calc.valorTransicao.toFixed(2)}</span>
+                          <p className="text-[11px] text-muted-foreground mt-0.5">Semana de transição · {forwardDiff} dias proporcionais</p>
                         </div>
-                        <div className="flex justify-between items-center px-3 py-2">
-                          <span className="text-muted-foreground">Valor semanal</span>
-                          <span className="font-medium">R$ {calc.valorSemanal.toFixed(2)}</span>
-                        </div>
-                        <div className="flex justify-between items-center px-3 py-2.5 bg-muted/40">
-                          <div>
-                            <span className="font-semibold">Total próximo pagamento</span>
-                            <span className="ml-2 text-[11px] text-muted-foreground">vence {fmt(calc.dataTransicao)}</span>
+
+                        {/* 2ª cobrança em diante — semana normal */}
+                        <div className="px-3 py-2.5 bg-muted/30">
+                          <div className="flex justify-between items-baseline">
+                            <div>
+                              <span className="text-[10px] text-muted-foreground font-bold uppercase tracking-wide">2ª cobrança em diante</span>
+                              <span className="ml-1.5 text-[11px] text-muted-foreground">{fmt(calc.dataPrimeiraNormal)}</span>
+                            </div>
+                            <span className="font-semibold text-base">R$ {calc.valorSemanal.toFixed(2)}</span>
                           </div>
-                          <span className="font-bold text-base">R$ {(calc.valorTransicao + calc.valorSemanal).toFixed(2)}</span>
+                          <p className="text-[11px] text-muted-foreground mt-0.5">Semana normal · toda {DIAS_FULL[novoDiaVencimento]}</p>
                         </div>
                       </div>
 
