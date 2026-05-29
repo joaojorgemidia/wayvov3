@@ -1234,8 +1234,8 @@ export default function LocacoesPage() {
         const calc = (r && refDate && forwardDiff !== null && forwardDiff > 0) ? (() => {
           const dataTransicao = addDays(refDate, forwardDiff);
           const dataPrimeiraNormal = addDays(dataTransicao, 7);
-          const valorTransicao = forwardDiff * r.valorDiario;
-          const valorSemanal   = 7 * r.valorDiario;
+          const valorSemanal   = r.valorDiario;
+          const valorTransicao = (r.valorDiario / 7) * forwardDiff;
           return { dataTransicao, dataPrimeiraNormal, valorTransicao, valorSemanal };
         })() : null;
 
@@ -1307,8 +1307,8 @@ export default function LocacoesPage() {
                     <div className="flex justify-between">
                       <span className="text-muted-foreground">Valor semanal</span>
                       <span className="font-medium">
-                        R$ {(r.valorDiario * 7).toFixed(2)}
-                        <span className="ml-1 text-xs text-muted-foreground">(R$ {r.valorDiario.toFixed(2)} × 7)</span>
+                        R$ {r.valorDiario.toFixed(2)}
+                        <span className="ml-1 text-xs text-muted-foreground">(R$ {(r.valorDiario / 7).toFixed(2)}/dia)</span>
                       </span>
                     </div>
                     <div className="flex justify-between">
@@ -1374,7 +1374,7 @@ export default function LocacoesPage() {
                           <span className="text-muted-foreground">Valor da cobrança de transição</span>
                           <span className="font-bold text-blue-700 dark:text-blue-400">
                             R$ {calc.valorTransicao.toFixed(2)}
-                            <span className="ml-1 text-xs font-normal text-muted-foreground">(R$ {r.valorDiario.toFixed(2)} × {forwardDiff})</span>
+                            <span className="ml-1 text-xs font-normal text-muted-foreground">(R$ {(r.valorDiario / 7).toFixed(2)}/dia × {forwardDiff})</span>
                           </span>
                         </div>
                         <div className="flex justify-between">
