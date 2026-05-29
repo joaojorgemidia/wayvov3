@@ -1353,9 +1353,9 @@ export default function FinanceiroPage() {
           : contaFilter === "__cards__"
             ? creditCards.some(c => c.nome === (e.conta || ""))
             : (e.conta || "") === contaFilter;
-      // Placa filter
-      const motoPlaca = e.motoId ? (motos.find(m => m.id === e.motoId)?.placa || e.placa || "") : (e.placa || "");
-      const matchPlaca = !placaFilter || motoPlaca === placaFilter || motoPlaca.toLowerCase().includes(placaFilter.toLowerCase());
+      // Placa filter — comparação exata (dropdown sempre fornece placa completa)
+      const motoPlaca = (e.motoId ? (motos.find(m => m.id === e.motoId)?.placa || e.placa || "") : (e.placa || "")).trim();
+      const matchPlaca = !placaFilter || motoPlaca === placaFilter;
       // Locatário filter
       const clientName = e.clienteId ? (clients.find(c => c.id === e.clienteId)?.nome || e.clienteNome || "") : (e.clienteNome || "");
       const matchLocatario = !locatarioFilter || clientName === locatarioFilter || clientName.toLowerCase().includes(locatarioFilter.toLowerCase());
