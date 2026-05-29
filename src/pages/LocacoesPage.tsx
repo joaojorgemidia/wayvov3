@@ -1214,7 +1214,7 @@ export default function LocacoesPage() {
           const todayStr = new Date().toISOString().split("T")[0];
 
           const pendingEntries = allFinancial
-            .filter(e => e.rentalId === r.id && !e.pago && e.categoria === "aluguel" && e.data >= todayStr)
+            .filter(e => e.rentalId === r.id && !e.pago && e.categoria === "aluguel")
             .sort((a, b) => a.data.localeCompare(b.data));
 
           if (pendingEntries.length === 0) {
