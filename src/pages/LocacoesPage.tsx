@@ -16,7 +16,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Table, TableHeader, TableBody, TableHead, TableRow, TableCell } from "@/components/ui/table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Plus, Search, FileText, Eye, Trash2, Pencil, XCircle, History, CheckCircle2, MoreHorizontal, Wallet } from "lucide-react";
+import { Plus, Search, FileText, Eye, Trash2, Pencil, XCircle, History, CheckCircle2, MoreHorizontal, Wallet, AlertTriangle, Flag } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuLabel, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import RentalWizard from "@/components/locacoes/RentalWizard";
@@ -28,6 +28,51 @@ import { usePermissions } from "@/hooks/usePermissions";
 const statusLabel: Record<string, string> = { ativa: "Ativa", finalizada: "Finalizada", cancelada: "Cancelada" };
 const statusColor: Record<string, string> = { ativa: "bg-success/10 text-success", finalizada: "bg-muted text-muted-foreground", cancelada: "bg-destructive/10 text-destructive" };
 const planoLabel: Record<string, string> = { aluguel: "Só Aluguel", moto_no_final: "Moto no Final" };
+
+// Calcula total de pagamentos esperados para o plano "Moto no Final"
+function totalPagamentosEsperados(rental: Rental): number | null {
+  if (!rental.tempoMinimoContrato || !rental.frequenciaPagamento) return null;
+  const meses = rental.tempoMinimoContrato;
+  if (rental.frequenciaPagamento === "semanal")    return Math.round(meses * 4.345);
+  if (rental.frequenciaPagamento === "quinzenal")  return Math.round(meses * 2.17);
+  if (rental.frequenciaPagamento === "mensal")     return meses;
+  return null;
+}
+
+// Retorna alertas relevantes para exibição nas locações ativas
+function computeContratoAlerta(
+  rental: Rental,
+  pagas: number,
+): { tipo: "periodo_encerrado" | "ultima_parcela" | "plano_concluido"; texto: string; diasExpirado?: number } | null {
+  const today = new Date().toISOString().slice(0, 10);
+
+  if (rental.plano === "aluguel" || !rental.plano || (rental.plano !== "moto_no_final" && rental.plano !== "aluguel")) {
+    // Só Aluguel (e qualquer plano não reconhecido): avisa quando período contratado terminou
+    if (rental.dataFimContrato && today >= rental.dataFimContrato) {
+      const dias = differenceInDays(new Date(today + "T00:00:00"), new Date(rental.dataFimContrato + "T00:00:00"));
+      return { tipo: "periodo_encerrado", texto: "Período do contrato encerrado", diasExpirado: dias };
+    }
+  }
+
+  if (rental.plano === "moto_no_final") {
+    const total = totalPagamentosEsperados(rental);
+    if (total != null) {
+      if (pagas >= total) {
+        return { tipo: "plano_concluido", texto: "Plano concluído" };
+      }
+      if (pagas === total - 1) {
+        return { tipo: "ultima_parcela", texto: `Última parcela (${pagas + 1}/${total})` };
+      }
+    }
+    // Também avisa pelo prazo de data fim
+    if (rental.dataFimContrato && today >= rental.dataFimContrato) {
+      const dias = differenceInDays(new Date(today + "T00:00:00"), new Date(rental.dataFimContrato + "T00:00:00"));
+      return { tipo: "periodo_encerrado", texto: "Período do contrato encerrado", diasExpirado: dias };
+    }
+  }
+
+  return null;
+}
 
 const MOTIVOS_ENCERRAMENTO = [
   "Fim do contrato",
@@ -555,7 +600,26 @@ export default function LocacoesPage() {
                 <TableCell className="font-mono text-xs text-muted-foreground">{getNumero(r)}</TableCell>
                 <TableCell className="font-mono font-bold text-xs">{getMotoPlaca(r.motoId)}</TableCell>
                 <TableCell className="text-xs">{getRentalClientLabel(r)}</TableCell>
-                <TableCell className="text-xs">{planoLabel[r.plano] || r.plano || "—"}</TableCell>
+                <TableCell className="text-xs">
+                  <div className="space-y-0.5">
+                    <div>{planoLabel[r.plano] || r.plano || "—"}</div>
+                    {r.status === "ativa" && (() => {
+                      const s = semanasPorRental.get(r.id) || { pagas: 0, pendentes: 0 };
+                      const alerta = computeContratoAlerta(r, s.pagas);
+                      if (!alerta) return null;
+                      const isRed = alerta.tipo === "plano_concluido" || alerta.tipo === "ultima_parcela";
+                      return (
+                        <div className={`flex items-center gap-1 text-[10px] font-medium ${isRed ? "text-amber-600" : "text-orange-600"}`}>
+                          {alerta.tipo === "ultima_parcela" || alerta.tipo === "plano_concluido"
+                            ? <Flag className="h-3 w-3 shrink-0" />
+                            : <AlertTriangle className="h-3 w-3 shrink-0" />}
+                          {alerta.texto}
+                          {alerta.diasExpirado != null && alerta.diasExpirado > 0 && ` (há ${alerta.diasExpirado}d)`}
+                        </div>
+                      );
+                    })()}
+                  </div>
+                </TableCell>
                 <TableCell className="text-xs">{(() => { const d = new Date(r.dataInicio + "T00:00:00"); const dias = ["Dom","Seg","Ter","Qua","Qui","Sex","Sáb"]; return `${dias[d.getDay()]} ${d.toLocaleDateString("pt-BR")}`; })()}</TableCell>
                 <TableCell className="text-xs">{(() => { const d = r.status === "ativa" ? r.dataFimContrato : r.dataFim; return d ? new Date(d + "T00:00:00").toLocaleDateString("pt-BR") : "—"; })()}</TableCell>
                 <TableCell className="text-xs text-right font-medium">R$ {r.valorDiario.toFixed(2)}</TableCell>
@@ -930,7 +994,22 @@ export default function LocacoesPage() {
                 <div><span className="text-muted-foreground">Moto:</span> <span className="font-bold">{getMotoPlaca(viewRental.motoId)}</span></div>
                 <div><span className="text-muted-foreground">Cliente:</span> <span className="font-bold">{getRentalClientLabel(viewRental)}</span></div>
                 <div><span className="text-muted-foreground">Vendedor:</span> {viewRental.vendedor || "—"}</div>
-                <div><span className="text-muted-foreground">Plano:</span> {planoLabel[viewRental.plano] || viewRental.plano}</div>
+                <div><span className="text-muted-foreground">Plano:</span> {planoLabel[viewRental.plano] || viewRental.plano}
+                  {viewRental.status === "ativa" && (() => {
+                    const financial = cache.financial;
+                    const pagasView = financial.filter(e => e.categoria === "aluguel" && e.rentalId === viewRental.id && e.pago).length;
+                    const alerta = computeContratoAlerta(viewRental, pagasView);
+                    if (!alerta) return null;
+                    const isFlag = alerta.tipo === "ultima_parcela" || alerta.tipo === "plano_concluido";
+                    return (
+                      <span className={`ml-2 inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded ${isFlag ? "bg-amber-100 text-amber-700" : "bg-orange-100 text-orange-700"}`}>
+                        {isFlag ? <Flag className="h-3 w-3" /> : <AlertTriangle className="h-3 w-3" />}
+                        {alerta.texto}
+                        {alerta.diasExpirado != null && alerta.diasExpirado > 0 && ` · ${alerta.diasExpirado}d`}
+                      </span>
+                    );
+                  })()}
+                </div>
                 <div><span className="text-muted-foreground">Início:</span> {new Date(viewRental.dataInicio + "T00:00:00").toLocaleDateString("pt-BR")} {viewRental.horaInicio}</div>
                 <div><span className="text-muted-foreground">Fim contrato:</span> {(() => { const d = viewRental.status === "ativa" ? viewRental.dataFimContrato : viewRental.dataFim; return d ? new Date(d + "T00:00:00").toLocaleDateString("pt-BR") : "—"; })()}</div>
                 <div><span className="text-muted-foreground">Valor:</span> R$ {viewRental.valorDiario.toFixed(2)}</div>
