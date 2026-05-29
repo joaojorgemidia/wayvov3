@@ -16,7 +16,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Table, TableHeader, TableBody, TableHead, TableRow, TableCell } from "@/components/ui/table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Plus, Search, FileText, Eye, Trash2, Pencil, XCircle, History, CheckCircle2, MoreHorizontal, Wallet, AlertTriangle, Flag } from "lucide-react";
+import { Plus, Search, FileText, Eye, Trash2, Pencil, XCircle, History, CheckCircle2, MoreHorizontal, Wallet, AlertTriangle, Flag, CalendarClock } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuLabel, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import RentalWizard from "@/components/locacoes/RentalWizard";
@@ -137,6 +137,10 @@ export default function LocacoesPage() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const toggleSelection = (id: string) =>
     setSelectedIds(prev => { const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next; });
+
+  // Simulação de troca de vencimento
+  const [trocaVencimentoRental, setTrocaVencimentoRental] = useState<Rental | null>(null);
+  const [novoDiaVencimento, setNovoDiaVencimento] = useState<number | null>(null);
 
   // Finalizar individual (simples)
   const [finalizarTarget, setFinalizarTarget] = useState<Rental | null>(null);
@@ -670,6 +674,16 @@ export default function LocacoesPage() {
                         <XCircle className="h-3.5 w-3.5" />
                       </Button>
                     )}
+                    {showActions === "ativa" && r.frequenciaPagamento === "semanal" && (
+                      <Button
+                        variant="ghost" size="sm"
+                        className="h-7 w-7 p-0 text-blue-500 hover:text-blue-600"
+                        title="Simular troca de vencimento"
+                        onClick={() => { setTrocaVencimentoRental(r); setNovoDiaVencimento(null); }}
+                      >
+                        <CalendarClock className="h-3.5 w-3.5" />
+                      </Button>
+                    )}
                     {canDelete && (
                       <Button
                         variant="ghost" size="sm"
@@ -1189,6 +1203,157 @@ export default function LocacoesPage() {
         clients={clients}
         onSaved={(rental) => persist([...rentals, rental])}
       />
+
+      {/* Simulação de Troca de Vencimento */}
+      {(() => {
+        const DIAS_LABEL = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
+        const DIAS_FULL  = ["Domingo", "Segunda-feira", "Terça-feira", "Quarta-feira", "Quinta-feira", "Sexta-feira", "Sábado"];
+
+        const r = trocaVencimentoRental;
+        const refDateStr = r?.proximoPagamento || r?.dataInicio;
+        const refDate = refDateStr ? new Date(refDateStr + "T00:00:00") : null;
+        const diaAtual = refDate ? refDate.getDay() : null;
+
+        const forwardDiff = (novoDiaVencimento !== null && diaAtual !== null && novoDiaVencimento !== diaAtual)
+          ? (novoDiaVencimento - diaAtual + 7) % 7
+          : null;
+
+        const calc = (r && refDate && forwardDiff !== null && forwardDiff > 0) ? (() => {
+          const dataTransicao = addDays(refDate, forwardDiff);
+          const dataPrimeiraNormal = addDays(dataTransicao, 7);
+          const valorTransicao = forwardDiff * r.valorDiario;
+          const valorSemanal   = 7 * r.valorDiario;
+          return { dataTransicao, dataPrimeiraNormal, valorTransicao, valorSemanal };
+        })() : null;
+
+        const fmt = (d: Date) => d.toLocaleDateString("pt-BR");
+
+        return (
+          <Dialog open={!!r} onOpenChange={open => { if (!open) { setTrocaVencimentoRental(null); setNovoDiaVencimento(null); } }}>
+            <DialogContent className="sm:max-w-md">
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-2">
+                  <CalendarClock className="h-5 w-5 text-blue-500" />
+                  Simulação — Troca de Vencimento
+                </DialogTitle>
+              </DialogHeader>
+
+              {r && (
+                <div className="space-y-4">
+                  {/* Resumo da locação */}
+                  <div className="rounded-lg border bg-muted/30 px-3 py-2 text-sm space-y-0.5">
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Locatário</span>
+                      <span className="font-medium">{getRentalClientLabel(r)}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Placa</span>
+                      <span className="font-mono font-bold">{getMotoPlaca(r.motoId)}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Valor semanal</span>
+                      <span className="font-medium">R$ {(r.valorDiario * 7).toFixed(2)}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Cobrança</span>
+                      <span className="font-medium">{r.cobrancaPrePaga ? "Antecipada" : "Pós-paga"}</span>
+                    </div>
+                    {diaAtual !== null && (
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Vence toda</span>
+                        <span className="font-medium text-blue-600">{DIAS_FULL[diaAtual]}</span>
+                      </div>
+                    )}
+                    {refDate && (
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Próximo vencimento</span>
+                        <span className="font-medium">{fmt(refDate)}</span>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Seletor do novo dia */}
+                  <div className="space-y-2">
+                    <Label className="text-sm font-medium">Novo dia de vencimento</Label>
+                    <div className="grid grid-cols-7 gap-1">
+                      {DIAS_LABEL.map((d, i) => (
+                        <button
+                          key={i}
+                          type="button"
+                          disabled={i === diaAtual}
+                          onClick={() => setNovoDiaVencimento(i)}
+                          className={[
+                            "rounded-md py-1.5 text-xs font-medium border transition-colors",
+                            i === diaAtual
+                              ? "opacity-30 cursor-not-allowed bg-muted text-muted-foreground border-border"
+                              : novoDiaVencimento === i
+                              ? "bg-blue-600 text-white border-blue-600"
+                              : "bg-background hover:bg-accent border-border",
+                          ].join(" ")}
+                        >
+                          {d}
+                        </button>
+                      ))}
+                    </div>
+                    {diaAtual !== null && (
+                      <p className="text-[11px] text-muted-foreground">
+                        Dia atual ({DIAS_LABEL[diaAtual]}) desabilitado
+                      </p>
+                    )}
+                  </div>
+
+                  {/* Resultado */}
+                  {calc && novoDiaVencimento !== null && (
+                    <div className="rounded-lg border border-blue-200 bg-blue-50 dark:bg-blue-950/30 dark:border-blue-900 p-3 space-y-2">
+                      <p className="text-xs font-semibold text-blue-700 dark:text-blue-400 uppercase tracking-wide">
+                        Resultado da simulação
+                      </p>
+                      <div className="space-y-1.5 text-sm">
+                        <div className="flex justify-between">
+                          <span className="text-muted-foreground">Dias na transição</span>
+                          <span className="font-bold">{forwardDiff} dias</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-muted-foreground">Valor da cobrança de transição</span>
+                          <span className="font-bold text-blue-700 dark:text-blue-400">
+                            R$ {calc.valorTransicao.toFixed(2)}
+                          </span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-muted-foreground">Data da cobrança de transição</span>
+                          <span className="font-medium">
+                            {fmt(calc.dataTransicao)} ({DIAS_FULL[novoDiaVencimento]})
+                          </span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-muted-foreground">1º pagamento normal</span>
+                          <span className="font-medium">{fmt(calc.dataPrimeiraNormal)} — R$ {calc.valorSemanal.toFixed(2)}</span>
+                        </div>
+                      </div>
+                      <p className="text-[11px] text-muted-foreground border-t border-blue-200 dark:border-blue-800 pt-2 mt-2">
+                        {r.cobrancaPrePaga
+                          ? `Cobrança antecipada: o locatário pagará R$ ${calc.valorTransicao.toFixed(2)} em ${fmt(calc.dataTransicao)} para cobrir os ${forwardDiff} dias até o início do novo ciclo.`
+                          : `Cobrança pós-paga: o locatário pagará R$ ${calc.valorTransicao.toFixed(2)} em ${fmt(calc.dataTransicao)} pelos ${forwardDiff} dias utilizados desde o último vencimento.`
+                        }
+                      </p>
+                    </div>
+                  )}
+
+                  {novoDiaVencimento !== null && !calc && novoDiaVencimento === diaAtual && (
+                    <p className="text-sm text-center text-muted-foreground">Selecione um dia diferente do atual.</p>
+                  )}
+                </div>
+              )}
+
+              <DialogFooter>
+                <Button variant="outline" onClick={() => { setTrocaVencimentoRental(null); setNovoDiaVencimento(null); }}>
+                  Fechar
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+        );
+      })()}
     </div>
   );
 }
