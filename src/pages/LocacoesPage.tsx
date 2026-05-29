@@ -142,10 +142,6 @@ export default function LocacoesPage() {
   const [trocaVencimentoRental, setTrocaVencimentoRental] = useState<Rental | null>(null);
   const [novoDiaVencimento, setNovoDiaVencimento] = useState<number | null>(null);
 
-  // Finalizar individual (simples)
-  const [finalizarTarget, setFinalizarTarget] = useState<Rental | null>(null);
-  const [finalizarData, setFinalizarData] = useState(new Date().toISOString().split("T")[0]);
-
   // Excluir individual (com modal)
   const [deleteTarget, setDeleteTarget] = useState<Rental | null>(null);
 
@@ -480,17 +476,6 @@ export default function LocacoesPage() {
     setEncerrarSelectedIds(new Set());
   };
 
-  const handleFinalizar = (rental: Rental, date: string) => {
-    persist(rentals.map(r => r.id === rental.id ? { ...r, status: "finalizada" as const, dataFim: date } : r));
-    if (rental.motoId) {
-      const allMotos = loadMotos();
-      saveMotos(allMotos.map(m => m.id === rental.motoId ? { ...m, status: "disponivel" as const } : m));
-    }
-    setSelectedIds(prev => { const next = new Set(prev); next.delete(rental.id); return next; });
-    setFinalizarTarget(null);
-    toast.success("Locação finalizada.");
-  };
-
   const handleDelete = (rental: Rental) => {
     persist(rentals.filter(r => r.id !== rental.id));
     const allEntries = loadFinancial();
@@ -658,16 +643,6 @@ export default function LocacoesPage() {
                     {showActions === "ativa" && canEdit && (
                       <Button variant="ghost" size="sm" className="h-7 w-7 p-0" title="Editar locação" onClick={() => openEdit(r)}>
                         <Pencil className="h-3.5 w-3.5" />
-                      </Button>
-                    )}
-                    {showActions === "ativa" && canEdit && (
-                      <Button
-                        variant="ghost" size="sm"
-                        className="h-7 w-7 p-0 text-success hover:text-success"
-                        title="Finalizar locação"
-                        onClick={() => { setFinalizarTarget(r); setFinalizarData(new Date().toISOString().split("T")[0]); }}
-                      >
-                        <CheckCircle2 className="h-3.5 w-3.5" />
                       </Button>
                     )}
                     {showActions === "ativa" && canEdit && (
@@ -1092,39 +1067,6 @@ export default function LocacoesPage() {
               )}
             </div>
           )}
-        </DialogContent>
-      </Dialog>
-
-      {/* Finalizar Locação (simples) */}
-      <Dialog open={!!finalizarTarget} onOpenChange={o => { if (!o) setFinalizarTarget(null); }}>
-        <DialogContent className="sm:max-w-sm">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <CheckCircle2 className="h-5 w-5 text-success" />
-              Finalizar Locação {finalizarTarget ? getNumero(finalizarTarget) : ""}
-            </DialogTitle>
-          </DialogHeader>
-          {finalizarTarget && (
-            <div className="space-y-4">
-              <div className="rounded-md bg-muted/50 p-3 text-sm space-y-1">
-                <p><span className="text-muted-foreground">Placa:</span> <span className="font-mono font-bold">{getMotoPlaca(finalizarTarget.motoId)}</span></p>
-                <p><span className="text-muted-foreground">Cliente:</span> {getRentalClientLabel(finalizarTarget)}</p>
-              </div>
-              <div className="space-y-2">
-                <Label>Data de encerramento</Label>
-                <Input type="date" value={finalizarData} onChange={e => setFinalizarData(e.target.value)} />
-              </div>
-            </div>
-          )}
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setFinalizarTarget(null)}>Cancelar</Button>
-            <Button
-              className="gap-2"
-              onClick={() => finalizarTarget && handleFinalizar(finalizarTarget, finalizarData)}
-            >
-              <CheckCircle2 className="h-4 w-4" /> Confirmar
-            </Button>
-          </DialogFooter>
         </DialogContent>
       </Dialog>
 
