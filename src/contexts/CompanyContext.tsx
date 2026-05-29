@@ -23,6 +23,8 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
   const { allowedCompanies, user, isAdmin, refreshAccess } = useAuth();
   const [companies, setCompanies] = useState<Company[]>(loadCompanies);
   const [activeId, setActiveId] = useState<string>(getActiveCompanyId);
+  // Impede fallbacks com UUID como nome antes de o banco responder
+  const [dbFetched, setDbFetched] = useState(false);
 
   const createFallbackCompany = useCallback((id: string): Company => {
     const metadata = user?.user_metadata ?? {};
@@ -53,30 +55,34 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
     let cancelled = false;
     (async () => {
       const { data, error } = await supabase.from("companies").select("id, nome, cnpj, asaas_config, detran_config, cobranca_config, autentique_config");
-      if (cancelled || error || !data) return;
-      const dbCompanies: Company[] = data.map((c: any) => ({ id: c.id, nome: c.nome, cnpj: c.cnpj, asaasConfig: c.asaas_config ?? null, detranConfig: c.detran_config ?? null, cobrancaConfig: c.cobranca_config ?? null, autentiqueConfig: c.autentique_config ?? null }));
+      if (cancelled) return;
+      if (!error && data) {
+        const dbCompanies: Company[] = data.map((c: any) => ({ id: c.id, nome: c.nome, cnpj: c.cnpj, asaasConfig: c.asaas_config ?? null, detranConfig: c.detran_config ?? null, cobrancaConfig: c.cobranca_config ?? null, autentiqueConfig: c.autentique_config ?? null }));
 
-      // One-time seed: if admin has local companies that aren't in DB yet, upload them
-      if (isAdmin) {
-        const local = loadCompanies();
-        const dbIds = new Set(dbCompanies.map(c => c.id));
-        const missing = local.filter(c => !dbIds.has(c.id));
-        if (missing.length > 0) {
-          await supabase.from("companies").upsert(missing.map(c => ({
-            id: c.id, nome: c.nome || c.id, cnpj: c.cnpj || "",
-          })));
-          dbCompanies.push(...missing);
+        // One-time seed: if admin has local companies that aren't in DB yet, upload them
+        if (isAdmin) {
+          const local = loadCompanies();
+          const dbIds = new Set(dbCompanies.map(c => c.id));
+          const missing = local.filter(c => !dbIds.has(c.id));
+          if (missing.length > 0) {
+            await supabase.from("companies").upsert(missing.map(c => ({
+              id: c.id, nome: c.nome || c.id, cnpj: c.cnpj || "",
+            })));
+            dbCompanies.push(...missing);
+          }
         }
-      }
 
-      setCompanies(dbCompanies);
-      saveCompanies(dbCompanies);
+        setCompanies(dbCompanies);
+        saveCompanies(dbCompanies);
+      }
+      // Libera fallbacks só depois da tentativa (com ou sem sucesso)
+      setDbFetched(true);
     })();
     return () => { cancelled = true; };
   }, [user, isAdmin, allowedCompanies]);
 
   useEffect(() => {
-    if (!user || allowedCompanies.length === 0) return;
+    if (!user || allowedCompanies.length === 0 || !dbFetched) return;
 
     const missing = allowedCompanies.filter((id) => !companies.some((company) => company.id === id));
     if (missing.length === 0) return;
@@ -93,10 +99,11 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
       saveCompanies(next);
       return next;
     });
-  }, [user, allowedCompanies, companies, createFallbackCompany]);
+  }, [user, allowedCompanies, companies, createFallbackCompany, dbFetched]);
 
   const resolvedCompanies = useMemo(() => {
     if (!user || allowedCompanies.length === 0) return companies;
+    if (!dbFetched) return companies;
 
     const existingIds = new Set(companies.map((company) => company.id));
     const fallbackCompanies = allowedCompanies
@@ -104,7 +111,7 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
       .map(createFallbackCompany);
 
     return fallbackCompanies.length > 0 ? [...companies, ...fallbackCompanies] : companies;
-  }, [user, allowedCompanies, companies, createFallbackCompany]);
+  }, [user, allowedCompanies, companies, createFallbackCompany, dbFetched]);
 
   // Filter companies based on user access (if authenticated and has restrictions)
   const visibleCompanies = user && allowedCompanies.length > 0
