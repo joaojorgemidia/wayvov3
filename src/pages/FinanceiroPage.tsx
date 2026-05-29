@@ -767,6 +767,11 @@ export default function FinanceiroPage() {
   const clients = liveClients;
   const rentals = liveRentals;
 
+  // Reset imediato ao trocar de empresa para evitar dados obsoletos renderizando
+  useEffect(() => {
+    setEntries([]);
+  }, [currentCompanyId]);
+
   useEffect(() => {
     if (!cache.initialized) return;
 
@@ -1458,7 +1463,15 @@ export default function FinanceiroPage() {
 
   // CC / non-CC split for transaction list
   const ccCardNames = useMemo(() => new Set(creditCards.map((c: any) => c.nome)), [creditCards]);
-  const filteredNonCC = useMemo(() => filtered.filter(e => !ccCardNames.has(e.conta || "")), [filtered, ccCardNames]);
+  const filteredNonCC = useMemo(() => {
+    const seen = new Set<string>();
+    return filtered.filter(e => {
+      if (ccCardNames.has(e.conta || "")) return false;
+      if (seen.has(e.id)) return false;
+      seen.add(e.id);
+      return true;
+    });
+  }, [filtered, ccCardNames]);
   const filteredCC = useMemo(() => filtered.filter(e => !e.ignorada && ccCardNames.has(e.conta || "") && e.tipo === "despesa"), [filtered, ccCardNames]);
 
   // Comparison period totals
