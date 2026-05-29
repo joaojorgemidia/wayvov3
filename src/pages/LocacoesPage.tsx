@@ -173,6 +173,17 @@ export default function LocacoesPage() {
   const ativas = useMemo(() => rentals.filter(r => r.status === "ativa" && matchSearch(r)), [rentals, search, motos, clients]);
   const finalizadas = useMemo(() => rentals.filter(r => (r.status === "finalizada" || r.status === "cancelada") && matchSearch(r)), [rentals, search, motos, clients]);
 
+  const todayStr = new Date().toISOString().split("T")[0];
+  const kpis = useMemo(() => {
+    const ativasIds = new Set(ativas.map(r => r.id));
+    const motosEmUso = new Set(ativas.map(r => r.motoId)).size;
+    const pendentesTotal = cache.financial.filter(
+      e => e.categoria === "aluguel" && !e.pago && e.rentalId && ativasIds.has(e.rentalId)
+    ).length;
+    const atrasadasCount = ativas.filter(r => r.proximoPagamento && r.proximoPagamento < todayStr).length;
+    return { motosEmUso, pendentesTotal, atrasadasCount };
+  }, [ativas, cache.financial]);
+
   const handleSaveRental = async (rental: Rental, client: Client) => {
     const allClients = loadClients();
     if (!allClients.find(c => c.id === client.id)) {
@@ -545,7 +556,6 @@ export default function LocacoesPage() {
         setSelectedIds(prev => { const next = new Set(prev); data.forEach(r => next.add(r.id)); return next; });
       }
     };
-    // Conta semanas de aluguel pagas vs pendentes por locação
     const semanasPorRental = (() => {
       const m = new Map<string, { pagas: number; pendentes: number }>();
       for (const e of cache.financial) {
@@ -556,129 +566,182 @@ export default function LocacoesPage() {
       }
       return m;
     })();
+    const colSpan = showActions === "ativa" ? 8 : 9;
     return (
-      <div className="rounded-md border">
+      <div className="rounded-lg border overflow-hidden">
         <Table>
           <TableHeader>
-            <TableRow>
+            <TableRow className="bg-muted/40 hover:bg-muted/40">
               <TableHead className="w-10">
                 <Checkbox
                   checked={allSelected ? true : someSelected ? "indeterminate" : false}
                   onCheckedChange={toggleAll}
                 />
               </TableHead>
-              <TableHead className="w-[90px]">Nº</TableHead>
-              <TableHead className="w-[90px]">Placa</TableHead>
+              <TableHead className="w-[110px]">Locação</TableHead>
               <TableHead>Cliente</TableHead>
               <TableHead>Plano</TableHead>
-              <TableHead>Início</TableHead>
-              <TableHead>Fim Contrato</TableHead>
-              <TableHead className="text-right">Valor</TableHead>
-              <TableHead className="text-center" title="Semanas pagas / pendentes">Pagas/Pend.</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead className="text-right">Ações</TableHead>
+              {showActions === "ativa"
+                ? <TableHead>Próx. Venc.</TableHead>
+                : <TableHead>Período</TableHead>}
+              <TableHead className="text-right">Valor/sem</TableHead>
+              <TableHead className="text-center" title="Cobranças de aluguel pagas e pendentes">Cobranças</TableHead>
+              {showActions === "finalizada" && <TableHead>Status</TableHead>}
+              <TableHead className="text-right w-[120px]">Ações</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {data.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={11} className="text-center py-8 text-muted-foreground">
-                  <FileText className="h-8 w-8 mx-auto mb-2 opacity-50" />
-                  Nenhuma locação encontrada
+                <TableCell colSpan={colSpan} className="text-center py-12 text-muted-foreground">
+                  <FileText className="h-10 w-10 mx-auto mb-3 opacity-30" />
+                  <p className="font-medium">Nenhuma locação encontrada</p>
+                  <p className="text-sm mt-1">Tente ajustar a busca ou adicione uma nova locação.</p>
                 </TableCell>
               </TableRow>
-            ) : data.map(r => (
-              <TableRow key={r.id} className="cursor-pointer" onClick={() => setViewRental(r)}>
-                <TableCell onClick={e => e.stopPropagation()}>
-                  <Checkbox checked={selectedIds.has(r.id)} onCheckedChange={() => toggleSelection(r.id)} />
-                </TableCell>
-                <TableCell className="font-mono text-xs text-muted-foreground">{getNumero(r)}</TableCell>
-                <TableCell className="font-mono font-bold text-xs">{getMotoPlaca(r.motoId)}</TableCell>
-                <TableCell className="text-xs">{getRentalClientLabel(r)}</TableCell>
-                <TableCell className="text-xs">
-                  <div className="space-y-0.5">
-                    <div>{planoLabel[r.plano] || r.plano || "—"}</div>
-                    {r.status === "ativa" && (() => {
-                      const s = semanasPorRental.get(r.id) || { pagas: 0, pendentes: 0 };
-                      const alerta = computeContratoAlerta(r, s.pagas);
-                      if (!alerta) return null;
-                      const isRed = alerta.tipo === "plano_concluido" || alerta.tipo === "ultima_parcela";
-                      return (
-                        <div className={`flex items-center gap-1 text-[10px] font-medium ${isRed ? "text-amber-600" : "text-orange-600"}`}>
+            ) : data.map(r => {
+              const s = semanasPorRental.get(r.id) || { pagas: 0, pendentes: 0 };
+              const alerta = showActions === "ativa" ? computeContratoAlerta(r, s.pagas) : null;
+              const isOverdue = showActions === "ativa" && !!r.proximoPagamento && r.proximoPagamento < todayStr;
+              const diasAtrasado = isOverdue
+                ? differenceInDays(new Date(todayStr + "T00:00:00"), new Date(r.proximoPagamento! + "T00:00:00"))
+                : 0;
+              return (
+                <TableRow
+                  key={r.id}
+                  className={`cursor-pointer transition-colors ${isOverdue ? "bg-red-50/60 dark:bg-red-950/10 hover:bg-red-50 dark:hover:bg-red-950/20" : ""}`}
+                  onClick={() => setViewRental(r)}
+                >
+                  <TableCell onClick={e => e.stopPropagation()}>
+                    <Checkbox checked={selectedIds.has(r.id)} onCheckedChange={() => toggleSelection(r.id)} />
+                  </TableCell>
+
+                  {/* Placa + Nº */}
+                  <TableCell>
+                    <div>
+                      <div className="font-mono font-bold text-sm">{getMotoPlaca(r.motoId)}</div>
+                      <div className="font-mono text-[10px] text-muted-foreground mt-0.5">{getNumero(r)}</div>
+                    </div>
+                  </TableCell>
+
+                  {/* Cliente */}
+                  <TableCell>
+                    <span className="text-sm">{getRentalClientLabel(r)}</span>
+                  </TableCell>
+
+                  {/* Plano + Modalidade + Alerta */}
+                  <TableCell>
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="text-xs font-medium">{planoLabel[r.plano] || r.plano || "—"}</span>
+                        {r.frequenciaPagamento && (
+                          <span className="text-[10px] bg-muted px-1.5 py-0.5 rounded text-muted-foreground capitalize">
+                            {r.frequenciaPagamento}
+                          </span>
+                        )}
+                        <span className={`text-[10px] px-1.5 py-0.5 rounded font-semibold ${r.cobrancaPrePaga
+                          ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400"
+                          : "bg-orange-100 text-orange-700 dark:bg-orange-950/40 dark:text-orange-400"}`}>
+                          {r.cobrancaPrePaga ? "Pré" : "Pós"}
+                        </span>
+                      </div>
+                      {alerta && (
+                        <div className={`flex items-center gap-1 text-[10px] font-medium ${alerta.tipo === "plano_concluido" || alerta.tipo === "ultima_parcela" ? "text-amber-600" : "text-orange-600"}`}>
                           {alerta.tipo === "ultima_parcela" || alerta.tipo === "plano_concluido"
                             ? <Flag className="h-3 w-3 shrink-0" />
                             : <AlertTriangle className="h-3 w-3 shrink-0" />}
                           {alerta.texto}
                           {alerta.diasExpirado != null && alerta.diasExpirado > 0 && ` (há ${alerta.diasExpirado}d)`}
                         </div>
-                      );
-                    })()}
-                  </div>
-                </TableCell>
-                <TableCell className="text-xs">{(() => { const d = new Date(r.dataInicio + "T00:00:00"); const dias = ["Dom","Seg","Ter","Qua","Qui","Sex","Sáb"]; return `${dias[d.getDay()]} ${d.toLocaleDateString("pt-BR")}`; })()}</TableCell>
-                <TableCell className="text-xs">{(() => { const d = r.status === "ativa" ? r.dataFimContrato : r.dataFim; return d ? new Date(d + "T00:00:00").toLocaleDateString("pt-BR") : "—"; })()}</TableCell>
-                <TableCell className="text-xs text-right font-medium">R$ {r.valorDiario.toFixed(2)}</TableCell>
-                <TableCell className="text-xs text-center">
-                  {(() => {
-                    const s = semanasPorRental.get(r.id) || { pagas: 0, pendentes: 0 };
-                    return (
-                      <span className="font-mono">
-                        <span className="text-success">{s.pagas}</span>
-                        <span className="text-muted-foreground">/</span>
-                        <span className={s.pendentes > 0 ? "text-warning" : "text-muted-foreground"}>{s.pendentes}</span>
+                      )}
+                    </div>
+                  </TableCell>
+
+                  {/* Próx. Venc. (ativas) ou Período (finalizadas) */}
+                  {showActions === "ativa" ? (
+                    <TableCell>
+                      {r.proximoPagamento ? (
+                        <div>
+                          <div className={`text-sm font-medium ${isOverdue ? "text-destructive" : ""}`}>
+                            {new Date(r.proximoPagamento + "T00:00:00").toLocaleDateString("pt-BR")}
+                          </div>
+                          {isOverdue ? (
+                            <div className="text-[10px] font-semibold text-destructive">{diasAtrasado}d atrasado</div>
+                          ) : (
+                            <div className="text-[10px] text-muted-foreground">
+                              {["Dom","Seg","Ter","Qua","Qui","Sex","Sáb"][new Date(r.proximoPagamento + "T00:00:00").getDay()]}
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">—</span>
+                      )}
+                    </TableCell>
+                  ) : (
+                    <TableCell className="text-xs text-muted-foreground">
+                      <div>{new Date(r.dataInicio + "T00:00:00").toLocaleDateString("pt-BR")}</div>
+                      {(r.dataFim || r.dataFimContrato) && (
+                        <div>até {new Date(((r.dataFim || r.dataFimContrato)!) + "T00:00:00").toLocaleDateString("pt-BR")}</div>
+                      )}
+                    </TableCell>
+                  )}
+
+                  {/* Valor/sem */}
+                  <TableCell className="text-right">
+                    <span className="text-sm font-semibold">R$ {r.valorDiario.toFixed(2)}</span>
+                  </TableCell>
+
+                  {/* Cobranças pagas / pendentes */}
+                  <TableCell className="text-center">
+                    <div className="inline-flex items-center gap-1.5 font-mono text-sm">
+                      <span className="text-success font-semibold">{s.pagas}</span>
+                      <span className="text-muted-foreground text-[10px]">pag</span>
+                      <span className="text-muted-foreground">·</span>
+                      <span className={`font-semibold ${s.pendentes > 0 ? "text-amber-600" : "text-muted-foreground"}`}>{s.pendentes}</span>
+                      <span className="text-muted-foreground text-[10px]">pend</span>
+                    </div>
+                  </TableCell>
+
+                  {/* Status — só finalizadas */}
+                  {showActions === "finalizada" && (
+                    <TableCell>
+                      <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium ${statusColor[r.status]}`}>
+                        {statusLabel[r.status]}
                       </span>
-                    );
-                  })()}
-                </TableCell>
-                <TableCell>
-                  <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium ${statusColor[r.status]}`}>
-                    {statusLabel[r.status]}
-                  </span>
-                </TableCell>
-                <TableCell className="text-right" onClick={e => e.stopPropagation()}>
-                  <div className="flex items-center justify-end gap-1">
-                    <Button variant="ghost" size="sm" className="h-7 w-7 p-0" title="Ver detalhes" onClick={() => setViewRental(r)}>
-                      <Eye className="h-3.5 w-3.5" />
-                    </Button>
-                    {showActions === "ativa" && canEdit && (
-                      <Button variant="ghost" size="sm" className="h-7 w-7 p-0" title="Editar locação" onClick={() => openEdit(r)}>
-                        <Pencil className="h-3.5 w-3.5" />
+                    </TableCell>
+                  )}
+
+                  {/* Ações */}
+                  <TableCell className="text-right" onClick={e => e.stopPropagation()}>
+                    <div className="flex items-center justify-end gap-1">
+                      <Button variant="ghost" size="sm" className="h-7 w-7 p-0" title="Ver detalhes" onClick={() => setViewRental(r)}>
+                        <Eye className="h-3.5 w-3.5" />
                       </Button>
-                    )}
-                    {showActions === "ativa" && canEdit && (
-                      <Button
-                        variant="ghost" size="sm"
-                        className="h-7 w-7 p-0 text-destructive hover:text-destructive"
-                        title="Encerrar locação (completo)"
-                        onClick={() => openEncerrar(r)}
-                      >
-                        <XCircle className="h-3.5 w-3.5" />
-                      </Button>
-                    )}
-                    {showActions === "ativa" && r.frequenciaPagamento === "semanal" && (
-                      <Button
-                        variant="ghost" size="sm"
-                        className="h-7 w-7 p-0 text-blue-500 hover:text-blue-600"
-                        title="Simular troca de vencimento"
-                        onClick={() => { setTrocaVencimentoRental(r); setNovoDiaVencimento(null); }}
-                      >
-                        <CalendarClock className="h-3.5 w-3.5" />
-                      </Button>
-                    )}
-                    {canDelete && (
-                      <Button
-                        variant="ghost" size="sm"
-                        className="h-7 w-7 p-0 text-destructive hover:text-destructive"
-                        title="Excluir locação"
-                        onClick={() => setDeleteTarget(r)}
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </Button>
-                    )}
-                  </div>
-                </TableCell>
-              </TableRow>
-            ))}
+                      {showActions === "ativa" && canEdit && (
+                        <Button variant="ghost" size="sm" className="h-7 w-7 p-0" title="Editar" onClick={() => openEdit(r)}>
+                          <Pencil className="h-3.5 w-3.5" />
+                        </Button>
+                      )}
+                      {showActions === "ativa" && canEdit && (
+                        <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-destructive hover:text-destructive" title="Encerrar locação" onClick={() => openEncerrar(r)}>
+                          <XCircle className="h-3.5 w-3.5" />
+                        </Button>
+                      )}
+                      {showActions === "ativa" && r.frequenciaPagamento === "semanal" && (
+                        <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-blue-500 hover:text-blue-600" title="Simular troca de vencimento" onClick={() => { setTrocaVencimentoRental(r); setNovoDiaVencimento(null); }}>
+                          <CalendarClock className="h-3.5 w-3.5" />
+                        </Button>
+                      )}
+                      {canDelete && (
+                        <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-destructive hover:text-destructive" title="Excluir" onClick={() => setDeleteTarget(r)}>
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </Button>
+                      )}
+                    </div>
+                  </TableCell>
+                </TableRow>
+              );
+            })}
           </TableBody>
         </Table>
       </div>
@@ -725,6 +788,30 @@ export default function LocacoesPage() {
           <Button variant="outline" onClick={() => setHistoricalOpen(true)} className="gap-2">
             <History className="h-4 w-4" /> Locação Encerrada
           </Button>
+        </div>
+      </div>
+
+      {/* KPIs */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <div className="rounded-lg border bg-card px-4 py-3 space-y-0.5">
+          <p className="text-[11px] text-muted-foreground uppercase tracking-wide font-medium">Locações ativas</p>
+          <p className="text-2xl font-bold">{ativas.length}</p>
+          <p className="text-xs text-muted-foreground">{kpis.motosEmUso} moto(s) em uso</p>
+        </div>
+        <div className="rounded-lg border bg-card px-4 py-3 space-y-0.5">
+          <p className="text-[11px] text-muted-foreground uppercase tracking-wide font-medium">Cobranças pendentes</p>
+          <p className="text-2xl font-bold">{kpis.pendentesTotal}</p>
+          <p className="text-xs text-muted-foreground">nas locações ativas</p>
+        </div>
+        <div className={`rounded-lg border px-4 py-3 space-y-0.5 ${kpis.atrasadasCount > 0 ? "border-destructive/30 bg-destructive/5" : "bg-card"}`}>
+          <p className="text-[11px] text-muted-foreground uppercase tracking-wide font-medium">Com atraso</p>
+          <p className={`text-2xl font-bold ${kpis.atrasadasCount > 0 ? "text-destructive" : ""}`}>{kpis.atrasadasCount}</p>
+          <p className="text-xs text-muted-foreground">pagamento vencido</p>
+        </div>
+        <div className="rounded-lg border bg-card px-4 py-3 space-y-0.5">
+          <p className="text-[11px] text-muted-foreground uppercase tracking-wide font-medium">Histórico</p>
+          <p className="text-2xl font-bold">{finalizadas.length}</p>
+          <p className="text-xs text-muted-foreground">encerradas</p>
         </div>
       </div>
 
