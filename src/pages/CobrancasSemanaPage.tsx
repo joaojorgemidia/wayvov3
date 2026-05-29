@@ -104,6 +104,9 @@ interface RowItem {
   placa: string | null;
   modelo: string | null;
   motoId: string | null;
+  totalPendente: number;
+  semanasEmAtraso: number;
+  ultimoPagamento: string | null;
 }
 
 const MSG_TYPES: MsgType[] = [
@@ -212,6 +215,26 @@ export default function CobrancasSemanaPage() {
   );
 
   const pending: RowItem[] = useMemo(() => {
+    // Passo 1: estatísticas por locação (dívida total, semanas em atraso, último pagamento)
+    const rentalStats = new Map<string, { totalPendente: number; semanasEmAtraso: number; ultimoPagamento: string | null }>();
+    for (const e of cache.financial) {
+      if (!e.rentalId || e.ignorada) continue;
+      if (e.tipo === "receita" && !e.pago) {
+        const st = rentalStats.get(e.rentalId) || { totalPendente: 0, semanasEmAtraso: 0, ultimoPagamento: null };
+        st.totalPendente += e.valor || 0;
+        if (e.categoria === "aluguel") {
+          const due = parseISO(e.dataPrevista || e.data);
+          if (due && diffDays(today, due) > 0) st.semanasEmAtraso++;
+        }
+        rentalStats.set(e.rentalId, st);
+      } else if (e.tipo === "receita" && e.pago && e.data) {
+        const st = rentalStats.get(e.rentalId) || { totalPendente: 0, semanasEmAtraso: 0, ultimoPagamento: null };
+        if (!st.ultimoPagamento || e.data > st.ultimoPagamento) st.ultimoPagamento = e.data;
+        rentalStats.set(e.rentalId, st);
+      }
+    }
+
+    // Passo 2: monta a lista de itens pendentes
     const out: RowItem[] = [];
     for (const e of cache.financial) {
       if (e.tipo !== "receita") continue;
@@ -223,13 +246,11 @@ export default function CobrancasSemanaPage() {
       let moto = e.motoId || null;
       if (!cli && e.rentalId) {
         const r = rentalsById.get(e.rentalId);
-        if (r) {
-          cli = r.clienteId;
-          moto = moto || r.motoId;
-        }
+        if (r) { cli = r.clienteId; moto = moto || r.motoId; }
       }
       const cliente = cli ? clientsById.get(cli) : null;
       const m = moto ? motosById.get(moto) : null;
+      const st = e.rentalId ? rentalStats.get(e.rentalId) : null;
       out.push({
         entry: e,
         due,
@@ -241,6 +262,9 @@ export default function CobrancasSemanaPage() {
         placa: m?.placa || e.placa || null,
         modelo: m?.modelo || null,
         motoId: m?.id || null,
+        totalPendente: st?.totalPendente ?? (e.valor || 0),
+        semanasEmAtraso: st?.semanasEmAtraso ?? (daysLate > 0 && (e.categoria || "").toLowerCase() === "aluguel" ? 1 : 0),
+        ultimoPagamento: st?.ultimoPagamento ?? null,
       });
     }
     return out.sort((a, b) => {
@@ -254,6 +278,8 @@ export default function CobrancasSemanaPage() {
   const weekItems = pending.filter(
     (i) => i.due && i.due >= monday && i.due <= sunday && i.daysLate <= 0,
   );
+  const todayItems = weekItems.filter(i => i.daysLate === 0);
+  const upcomingItems = weekItems.filter(i => i.daysLate < 0);
   const overdueItems = pending.filter((i) => i.daysLate > 0);
 
   // Faixa de dias: Seg–Dom com contagem e total por dia
@@ -297,22 +323,33 @@ export default function CobrancasSemanaPage() {
   };
 
   const filteredOverdue = overdueItems.filter(filterFn);
+  const filteredToday = todayItems.filter((i) => {
+    if (!filterFn(i)) return false;
+    if (dayFilter === "all") return true;
+    return i.due!.getDay() === dayFilter;
+  });
+  const filteredUpcoming = upcomingItems.filter((i) => {
+    if (!filterFn(i)) return false;
+    if (dayFilter === "all") return true;
+    return i.due!.getDay() === dayFilter;
+  });
+  // Mantido para compatibilidade com KPIs e day strip
   const filteredWeek = weekItems.filter((i) => {
     if (!filterFn(i)) return false;
     if (dayFilter === "all") return true;
     return i.due!.getDay() === dayFilter;
   });
 
-  // Agrupar semana filtrada por dia (ordem Seg–Dom)
-  const groupedWeek = useMemo(() => {
+  // Agrupar próximas cobranças por dia (Seg–Dom, excluindo hoje)
+  const groupedUpcoming = useMemo(() => {
     const groups: { dow: number; date: Date; items: RowItem[] }[] = [];
     for (const dow of WEEK_ORDER) {
-      const items = filteredWeek.filter((i) => i.due!.getDay() === dow);
+      const items = filteredUpcoming.filter((i) => i.due!.getDay() === dow);
       if (items.length === 0) continue;
       groups.push({ dow, date: items[0].due!, items });
     }
     return groups;
-  }, [filteredWeek]);
+  }, [filteredUpcoming]);
 
   // ── KPIs ──────────────────────────────────────────────────────────
   const totalsByCat = useMemo(() => {
@@ -965,39 +1002,56 @@ export default function CobrancasSemanaPage() {
 
         {/* Em atraso */}
         {filteredOverdue.length > 0 && (
-          <div className="rounded-[10px] overflow-hidden border border-destructive/25">
-            <div className="bg-destructive/[.06] border-b border-destructive/15 px-3.5 py-2 flex items-center justify-between">
-              <div className="flex items-center">
-                <AlertTriangle className="h-3 w-3 text-destructive" />
-                <span className="text-[9px] font-bold uppercase tracking-[.6px] text-destructive ml-1.5">Em atraso</span>
-                <span className="text-[9px] font-bold bg-destructive/15 text-destructive rounded-full px-1.5 ml-2">
+          <div className="rounded-[10px] overflow-hidden border border-destructive/30 shadow-sm">
+            <div className="bg-destructive/[.08] border-b border-destructive/20 px-3.5 py-2.5 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <AlertTriangle className="h-3.5 w-3.5 text-destructive" />
+                <span className="text-[10px] font-bold uppercase tracking-[.6px] text-destructive">Em atraso</span>
+                <span className="text-[10px] font-bold bg-destructive text-destructive-foreground rounded-full px-1.5 py-px leading-none">
                   {filteredOverdue.length}
                 </span>
               </div>
-              <span className="text-[11px] font-semibold text-destructive tabular-nums">
+              <span className="text-[13px] font-bold text-destructive tabular-nums">
                 {fmtBRL(filteredOverdue.reduce((s, i) => s + (i.entry.valor || 0), 0))}
               </span>
             </div>
             <div className="bg-background divide-y divide-border/50">
               {filteredOverdue.map((it) => (
-                <RowItemView
-                  key={it.entry.id}
-                  item={it}
-                  onConfirm={openConfirm}
-                  onMessage={handleMessage}
-                  onWhatsApp={openWhatsApp}
-                  onCopy={copyText}
-                  onRescheduleQuick={quickReschedule}
-                  onRescheduleCustom={openReschedule}
-                  onIgnore={handleIgnore}
-                />
+                <RowItemView key={it.entry.id} item={it} onConfirm={openConfirm} onMessage={handleMessage}
+                  onWhatsApp={openWhatsApp} onCopy={copyText} onRescheduleQuick={quickReschedule}
+                  onRescheduleCustom={openReschedule} onIgnore={handleIgnore} />
               ))}
             </div>
           </div>
         )}
 
-        {/* Semana agrupada por dia */}
-        {filteredWeek.length === 0 && filteredOverdue.length === 0 ? (
+        {/* Hoje */}
+        {filteredToday.length > 0 && (
+          <div className="rounded-[10px] overflow-hidden border border-primary/30 shadow-sm">
+            <div className="bg-primary/[.07] border-b border-primary/20 px-3.5 py-2.5 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="w-2 h-2 rounded-full bg-primary animate-pulse" />
+                <span className="text-[10px] font-bold uppercase tracking-[.6px] text-primary">Hoje</span>
+                <span className="text-[10px] font-bold bg-primary text-primary-foreground rounded-full px-1.5 py-px leading-none">
+                  {filteredToday.length}
+                </span>
+              </div>
+              <span className="text-[13px] font-bold text-primary tabular-nums">
+                {fmtBRL(filteredToday.reduce((s, i) => s + (i.entry.valor || 0), 0))}
+              </span>
+            </div>
+            <div className="bg-background divide-y divide-border/50">
+              {filteredToday.map((it) => (
+                <RowItemView key={it.entry.id} item={it} onConfirm={openConfirm} onMessage={handleMessage}
+                  onWhatsApp={openWhatsApp} onCopy={copyText} onRescheduleQuick={quickReschedule}
+                  onRescheduleCustom={openReschedule} onIgnore={handleIgnore} />
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Próximas cobranças desta semana */}
+        {filteredToday.length === 0 && filteredUpcoming.length === 0 && filteredOverdue.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-12 gap-2">
             <CalendarDays className="h-8 w-8 text-muted-foreground/30" />
             <p className="text-[13px] text-muted-foreground/50">
@@ -1007,45 +1061,36 @@ export default function CobrancasSemanaPage() {
               {weekItems.length === 0 ? "As cobranças agendadas aparecem aqui" : "Tente remover os filtros"}
             </p>
           </div>
-        ) : filteredWeek.length === 0 ? null : (
-          groupedWeek.map((g) => {
-            const isToday = diffDays(today, g.date) === 0;
-            const dayTotal = g.items.reduce((s, i) => s + (i.entry.valor || 0), 0);
-            return (
-              <div key={g.dow}>
-                <div className="flex justify-between items-center px-0.5 pt-1 pb-1.5">
-                  <div className="flex items-center gap-2">
+        ) : filteredUpcoming.length === 0 ? null : (
+          <div className="flex flex-col gap-2">
+            {filteredToday.length > 0 && (
+              <p className="text-[10px] font-semibold uppercase tracking-[.5px] text-muted-foreground/50 px-0.5 pt-1">
+                Próximas
+              </p>
+            )}
+            {groupedUpcoming.map((g) => {
+              const dayTotal = g.items.reduce((s, i) => s + (i.entry.valor || 0), 0);
+              return (
+                <div key={g.dow}>
+                  <div className="flex justify-between items-center px-0.5 pb-1.5">
                     <span className="text-[11px] font-semibold uppercase tracking-[.4px] text-muted-foreground">
                       {WEEK_LONG[g.dow]} {g.date.getDate()}/{g.date.getMonth() + 1}
                     </span>
-                    {isToday && (
-                      <span className="text-[9px] font-bold bg-primary/10 text-primary rounded-full px-1.5 py-px">
-                        HOJE
-                      </span>
-                    )}
+                    <span className="text-[10px] text-muted-foreground/60 tabular-nums">
+                      {g.items.length} · {fmtBRL(dayTotal)}
+                    </span>
                   </div>
-                  <span className="text-[10px] text-muted-foreground/60 tabular-nums">
-                    {g.items.length} · {fmtBRL(dayTotal)}
-                  </span>
+                  <div className="rounded-[10px] border border-border/60 overflow-hidden divide-y divide-border/50 bg-card">
+                    {g.items.map((it) => (
+                      <RowItemView key={it.entry.id} item={it} onConfirm={openConfirm} onMessage={handleMessage}
+                        onWhatsApp={openWhatsApp} onCopy={copyText} onRescheduleQuick={quickReschedule}
+                        onRescheduleCustom={openReschedule} onIgnore={handleIgnore} />
+                    ))}
+                  </div>
                 </div>
-                <div className="rounded-[10px] border border-border/60 overflow-hidden divide-y divide-border/50 bg-card">
-                  {g.items.map((it) => (
-                    <RowItemView
-                      key={it.entry.id}
-                      item={it}
-                      onConfirm={openConfirm}
-                      onMessage={handleMessage}
-                      onWhatsApp={openWhatsApp}
-                      onCopy={copyText}
-                      onRescheduleQuick={quickReschedule}
-                      onRescheduleCustom={openReschedule}
-                      onIgnore={handleIgnore}
-                    />
-                  ))}
-                </div>
-              </div>
-            );
-          })
+              );
+            })}
+          </div>
         )}
       </div>
 
@@ -1284,43 +1329,59 @@ function RowItemView({
   const msgAtraso   = MSG_TYPES.find((m) => m.key === "pagamento-atraso")!;
 
   return (
-    <div className="flex items-stretch hover:bg-muted/30 transition-colors">
+    <div className={`flex items-stretch transition-colors ${isOverdue ? "hover:bg-destructive/[.03]" : "hover:bg-muted/30"}`}>
       {/* Listro lateral */}
-      <div className={`w-[2.5px] self-stretch flex-shrink-0 ${listroCor}`} />
+      <div className={`w-[3px] self-stretch flex-shrink-0 ${listroCor}`} />
 
       {/* Bloco info */}
-      <div className="flex-1 min-w-0 px-3 py-2.5">
-        {/* Linha 1: nome + valor */}
-        <div className="flex items-baseline justify-between gap-2">
-          <span className="text-[12px] font-medium truncate flex-1">{item.clienteNome}</span>
-          <span className={`text-[13px] font-medium tabular-nums flex-shrink-0 ${
-            isPago ? "text-emerald-600" : isOverdue ? "text-destructive" : ""
+      <div className="flex-1 min-w-0 px-3 py-3">
+        {/* Linha 1: cat badge + valor */}
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-1.5 min-w-0 flex-wrap">
+            <span className={`text-[9px] font-bold uppercase tracking-[.4px] rounded-[4px] px-2 py-0.5 shrink-0 ${catBadge}`}>
+              {catLabel}
+            </span>
+            {isOverdue && (
+              <span className="text-[9px] font-bold bg-destructive/10 text-destructive rounded-[4px] px-1.5 py-0.5 shrink-0">
+                {item.daysLate}d atraso
+              </span>
+            )}
+            {pagoHoje && (
+              <span className="text-[9px] font-bold bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-400 rounded-[4px] px-1.5 py-0.5 shrink-0">
+                Pago hoje
+              </span>
+            )}
+            {asaasBadge}
+          </div>
+          <span className={`text-[15px] font-bold tabular-nums flex-shrink-0 ${
+            isPago ? "text-emerald-600" : isOverdue ? "text-destructive" : "text-foreground"
           }`}>
             {isPago && "✓ "}{fmtBRL(item.entry.valor || 0)}
           </span>
         </div>
-        {/* Linha 2: badges */}
-        <div className="flex items-center gap-1.5 mt-[3px] flex-wrap">
-          <span className={`text-[9px] font-semibold uppercase tracking-[.3px] rounded-[3px] px-1.5 py-px ${catBadge}`}>
-            {catLabel}
-          </span>
+
+        {/* Linha 2: nome + placa */}
+        <div className="flex items-center justify-between gap-2 mt-1.5">
+          <span className="text-[13px] font-semibold truncate flex-1 leading-none">{item.clienteNome}</span>
           {item.placa && (
-            <span className="font-mono text-[9px] bg-muted/70 border border-border/50 rounded-[3px] px-1.5 py-px tracking-[.5px] text-muted-foreground">
+            <span className="font-mono text-[9px] bg-muted/70 border border-border/50 rounded-[3px] px-1.5 py-px tracking-[.5px] text-muted-foreground flex-shrink-0">
               {item.placa}
             </span>
           )}
-          {isOverdue && (
-            <span className="text-[9px] font-semibold bg-destructive/10 text-destructive rounded-[3px] px-1.5 py-px">
-              {item.daysLate}d atraso
-            </span>
-          )}
-          {pagoHoje && (
-            <span className="text-[9px] font-semibold bg-emerald-50 text-emerald-700 rounded-[3px] px-1.5 py-px dark:bg-emerald-950/30 dark:text-emerald-400">
-              Pago hoje
-            </span>
-          )}
-          {asaasBadge}
         </div>
+
+        {/* Linha 3: dívida total / último pagamento (somente em atraso) */}
+        {isOverdue && item.semanasEmAtraso > 1 && (
+          <div className="mt-1.5 flex items-center gap-1 text-[10px] text-destructive font-semibold">
+            <AlertTriangle className="h-3 w-3 shrink-0" />
+            <span>{item.semanasEmAtraso} semanas em débito · {fmtBRL(item.totalPendente)} total</span>
+          </div>
+        )}
+        {isOverdue && item.ultimoPagamento && (
+          <p className="mt-1 text-[10px] text-muted-foreground">
+            Últ. pagamento: {new Date(item.ultimoPagamento + "T00:00:00").toLocaleDateString("pt-BR")}
+          </p>
+        )}
       </div>
 
       {/* Ações — desabilitadas se pago (exceto "...") */}
@@ -1362,10 +1423,10 @@ function RowItemView({
 
         {/* Confirmar pagamento */}
         <button
-          className="h-[30px] px-2.5 rounded-[7px] border border-emerald-200 bg-emerald-50 text-emerald-700 text-[11px] font-semibold flex items-center gap-1 hover:bg-emerald-100 dark:bg-emerald-950/20 dark:border-emerald-800 dark:text-emerald-400 transition-colors"
+          className="h-[30px] px-3 rounded-[7px] bg-emerald-500 text-white text-[11px] font-bold flex items-center gap-1.5 hover:bg-emerald-600 transition-colors shadow-sm"
           onClick={() => onConfirm(item)}
         >
-          <Check className="h-[10px] w-[10px]" />
+          <Check className="h-[11px] w-[11px]" />
           Pago
         </button>
       </div>
