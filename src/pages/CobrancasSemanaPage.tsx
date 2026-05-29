@@ -38,24 +38,30 @@ const MONTH_SHORT = ["jan","fev","mar","abr","mai","jun","jul","ago","set","out"
 const WEEK_ORDER = [1, 2, 3, 4, 5, 6, 0];
 
 const CAT_META: Record<string, { label: string; icon: any; tone: { bg: string; text: string; border: string; stripe: string } }> = {
-  aluguel: { label: "Aluguel", icon: Wallet,
-    tone: { bg: "bg-primary/10", text: "text-primary", border: "border-primary/30", stripe: "bg-primary" } },
-  caucao: { label: "Caução", icon: ShieldCheck,
-    tone: { bg: "bg-accent/30", text: "text-accent-foreground", border: "border-accent", stripe: "bg-accent-foreground" } },
-  multa_transito_receita: { label: "Multa repassada", icon: Receipt,
-    tone: { bg: "bg-destructive/10", text: "text-destructive", border: "border-destructive/30", stripe: "bg-destructive" } },
-  multa: { label: "Multa repassada", icon: Receipt,
-    tone: { bg: "bg-destructive/10", text: "text-destructive", border: "border-destructive/30", stripe: "bg-destructive" } },
-  outro: { label: "Outras receitas", icon: Coins,
-    tone: { bg: "bg-success/10", text: "text-success", border: "border-success/30", stripe: "bg-success" } },
+  aluguel:                  { label: "Aluguel",            icon: Wallet,     tone: { bg: "bg-primary/10",     text: "text-primary",     border: "border-primary/30",     stripe: "bg-primary" } },
+  caucao:                   { label: "Caução",             icon: ShieldCheck, tone: { bg: "bg-accent/30",      text: "text-accent-foreground", border: "border-accent", stripe: "bg-accent-foreground" } },
+  multa_transito_receita:   { label: "Multa de trânsito",  icon: Receipt,    tone: { bg: "bg-destructive/10", text: "text-destructive", border: "border-destructive/30", stripe: "bg-destructive" } },
+  multa_transito:           { label: "Multa de trânsito",  icon: Receipt,    tone: { bg: "bg-destructive/10", text: "text-destructive", border: "border-destructive/30", stripe: "bg-destructive" } },
+  multa:                    { label: "Multa repassada",    icon: Receipt,    tone: { bg: "bg-destructive/10", text: "text-destructive", border: "border-destructive/30", stripe: "bg-destructive" } },
+  manutencao_receita:       { label: "Manutenção",         icon: Wrench,     tone: { bg: "bg-amber-50 dark:bg-amber-950/20", text: "text-amber-700 dark:text-amber-400", border: "border-amber-200 dark:border-amber-800", stripe: "bg-amber-500" } },
+  manutencao_despesa:       { label: "Manutenção",         icon: Wrench,     tone: { bg: "bg-amber-50 dark:bg-amber-950/20", text: "text-amber-700 dark:text-amber-400", border: "border-amber-200 dark:border-amber-800", stripe: "bg-amber-500" } },
+  venda_moto:               { label: "Venda de moto",      icon: TrendingUp, tone: { bg: "bg-success/10",     text: "text-success",     border: "border-success/30",     stripe: "bg-success" } },
+  pecas_receita:            { label: "Peças",              icon: Coins,      tone: { bg: "bg-muted/50",       text: "text-foreground",  border: "border-border",         stripe: "bg-muted-foreground" } },
+  juros_atraso:             { label: "Juros por atraso",   icon: Receipt,    tone: { bg: "bg-destructive/10", text: "text-destructive", border: "border-destructive/30", stripe: "bg-destructive" } },
+  ajuste_saldo:             { label: "Ajuste de saldo",    icon: Coins,      tone: { bg: "bg-muted/50",       text: "text-foreground",  border: "border-border",         stripe: "bg-muted-foreground" } },
+  outro_receita:            { label: "Outros",             icon: Coins,      tone: { bg: "bg-success/10",     text: "text-success",     border: "border-success/30",     stripe: "bg-success" } },
+  outro:                    { label: "Outras receitas",    icon: Coins,      tone: { bg: "bg-success/10",     text: "text-success",     border: "border-success/30",     stripe: "bg-success" } },
 };
 
 function metaFor(catKey: string) {
-  return CAT_META[catKey] || {
-    label: catKey || "Receita",
-    icon: Tag,
-    tone: { bg: "bg-muted/50", text: "text-foreground", border: "border-border", stripe: "bg-muted-foreground" },
-  };
+  if (!catKey) return { label: "Receita", icon: Tag, tone: { bg: "bg-muted/50", text: "text-foreground", border: "border-border", stripe: "bg-muted-foreground" } };
+  if (CAT_META[catKey]) return CAT_META[catKey];
+  // Limpa chave bruta: remove prefixo "custom_", substitui _ por espaço e capitaliza
+  const label = catKey
+    .replace(/^custom_/, "")
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, c => c.toUpperCase());
+  return { label, icon: Tag, tone: { bg: "bg-muted/50", text: "text-foreground", border: "border-border", stripe: "bg-muted-foreground" } };
 }
 
 const fmtBRL = (v: number) =>
@@ -687,15 +693,43 @@ export default function CobrancasSemanaPage() {
               {weekItems.length} pendente{weekItems.length !== 1 ? "s" : ""}
             </div>
           </div>
-          <div className="px-3.5 py-2.5">
+          <div className={`px-3.5 py-2.5 transition-colors ${overdueItems.length > 0 ? "bg-destructive/[.06]" : ""}`}>
             <div className="text-[9px] font-semibold uppercase tracking-[.5px] text-muted-foreground/70 mb-1">Em atraso</div>
-            <div className="text-[17px] font-medium tabular-nums tracking-tight leading-none text-destructive">
-              {fmtBRL(totalAtrasado)}
+            <div className={`text-[17px] font-medium tabular-nums tracking-tight leading-none ${overdueItems.length > 0 ? "text-destructive" : "text-emerald-600"}`}>
+              {overdueItems.length > 0 ? fmtBRL(totalAtrasado) : "Em dia"}
             </div>
-            <div className="text-[10px] mt-1 text-muted-foreground">
-              {overdueItems.length} cobrança{overdueItems.length !== 1 ? "s" : ""}
+            <div className={`text-[10px] mt-1 ${overdueItems.length > 0 ? "text-destructive/70" : "text-muted-foreground"}`}>
+              {overdueItems.length > 0
+                ? `${overdueItems.length} cobrança${overdueItems.length !== 1 ? "s" : ""}`
+                : "sem atrasos"}
             </div>
           </div>
+        </div>
+
+        {/* Banner de saúde */}
+        <div className={`px-4 py-2 border-b flex items-center gap-2 text-[11px] font-semibold transition-colors ${
+          overdueItems.length > 0
+            ? "bg-destructive/[.07] text-destructive border-destructive/15"
+            : missingRentals.length > 0
+              ? "bg-amber-50 text-amber-700 border-amber-200/60 dark:bg-amber-950/20 dark:text-amber-400 dark:border-amber-800/30"
+              : "bg-emerald-50/60 text-emerald-700 border-emerald-100 dark:bg-emerald-950/20 dark:text-emerald-400 dark:border-emerald-900/30"
+        }`}>
+          {overdueItems.length > 0 ? (
+            <>
+              <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+              <span>{overdueItems.length} cobrança{overdueItems.length !== 1 ? "s" : ""} em atraso · {fmtBRL(totalAtrasado)}</span>
+            </>
+          ) : missingRentals.length > 0 ? (
+            <>
+              <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+              <span>{missingRentals.length} locaç{missingRentals.length === 1 ? "ão" : "ões"} sem cobrança esta semana</span>
+            </>
+          ) : (
+            <>
+              <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
+              <span>Tudo dentro do esperado · sem atrasos</span>
+            </>
+          )}
         </div>
 
         {/* Sub-seção 3: barra de progresso tripartida + legenda */}
