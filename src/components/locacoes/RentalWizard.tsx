@@ -23,7 +23,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useCompany } from "@/contexts/CompanyContext";
 
 
-const TEMPO_MINIMO_OPTIONS = [3, 6, 12, 24, 26, 28, 30, 32, 34, 36];
+const TEMPO_MINIMO_OPTIONS = [1, 2, 3, 6, 12, 24, 26, 28, 30, 32, 34, 36];
 const VENDEDORES = ["João Jorge", "Carlos Eduardo"];
 const FREQUENCIA_OPTIONS: { value: Rental["frequenciaPagamento"]; label: string }[] = [
   { value: "semanal", label: "Semanal" },
