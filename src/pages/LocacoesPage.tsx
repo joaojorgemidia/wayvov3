@@ -1217,7 +1217,14 @@ export default function LocacoesPage() {
 
         const r = trocaVencimentoRental;
         const refDateStr = r?.proximoPagamento || r?.dataInicio;
-        const refDate = refDateStr ? new Date(refDateStr + "T00:00:00") : null;
+
+        // Advance stale proximoPagamento to the next future occurrence of the same weekday
+        const today = new Date(); today.setHours(0, 0, 0, 0);
+        let refDate = refDateStr ? new Date(refDateStr + "T00:00:00") : null;
+        if (refDate && refDate < today) {
+          while (refDate < today) refDate = addDays(refDate, 7);
+        }
+
         const diaAtual = refDate ? refDate.getDay() : null;
 
         const forwardDiff = (novoDiaVencimento !== null && diaAtual !== null && novoDiaVencimento !== diaAtual)
@@ -1233,6 +1240,47 @@ export default function LocacoesPage() {
         })() : null;
 
         const fmt = (d: Date) => d.toLocaleDateString("pt-BR");
+        const toIso = (d: Date) => d.toISOString().split("T")[0];
+
+        const handleAplicarTroca = async () => {
+          if (!r || !calc || novoDiaVencimento === null) return;
+
+          const allFinancial = loadFinancial();
+          const todayStr = new Date().toISOString().split("T")[0];
+
+          const pendingEntries = allFinancial
+            .filter(e => e.rentalId === r.id && !e.pago && e.categoria === "aluguel" && e.data >= todayStr)
+            .sort((a, b) => a.data.localeCompare(b.data));
+
+          if (pendingEntries.length === 0) {
+            toast.error("Nenhuma cobrança pendente encontrada para esta locação");
+            return;
+          }
+
+          const transicaoStr = toIso(calc.dataTransicao);
+          const primeiraNormalStr = toIso(calc.dataPrimeiraNormal);
+          const pendingIds = new Set(pendingEntries.map(e => e.id));
+
+          const updatedFinancial = allFinancial.map(e => {
+            if (!pendingIds.has(e.id)) return e;
+            const rank = pendingEntries.findIndex(p => p.id === e.id);
+            if (rank === 0) {
+              return { ...e, valor: calc.valorTransicao, data: transicaoStr, dataPrevista: transicaoStr };
+            }
+            const newDate = addDays(calc.dataPrimeiraNormal, (rank - 1) * 7);
+            return { ...e, data: toIso(newDate), dataPrevista: toIso(newDate) };
+          });
+
+          const updatedRentals = rentals.map(ren =>
+            ren.id === r.id ? { ...ren, proximoPagamento: primeiraNormalStr } : ren
+          );
+
+          saveFinancial(updatedFinancial);
+          persist(updatedRentals);
+          toast.success("Troca de vencimento aplicada com sucesso");
+          setTrocaVencimentoRental(null);
+          setNovoDiaVencimento(null);
+        };
 
         return (
           <Dialog open={!!r} onOpenChange={open => { if (!open) { setTrocaVencimentoRental(null); setNovoDiaVencimento(null); } }}>
@@ -1258,7 +1306,10 @@ export default function LocacoesPage() {
                     </div>
                     <div className="flex justify-between">
                       <span className="text-muted-foreground">Valor semanal</span>
-                      <span className="font-medium">R$ {(r.valorDiario * 7).toFixed(2)}</span>
+                      <span className="font-medium">
+                        R$ {(r.valorDiario * 7).toFixed(2)}
+                        <span className="ml-1 text-xs text-muted-foreground">(R$ {r.valorDiario.toFixed(2)} × 7)</span>
+                      </span>
                     </div>
                     <div className="flex justify-between">
                       <span className="text-muted-foreground">Cobrança</span>
@@ -1323,6 +1374,7 @@ export default function LocacoesPage() {
                           <span className="text-muted-foreground">Valor da cobrança de transição</span>
                           <span className="font-bold text-blue-700 dark:text-blue-400">
                             R$ {calc.valorTransicao.toFixed(2)}
+                            <span className="ml-1 text-xs font-normal text-muted-foreground">(R$ {r.valorDiario.toFixed(2)} × {forwardDiff})</span>
                           </span>
                         </div>
                         <div className="flex justify-between">
@@ -1355,6 +1407,12 @@ export default function LocacoesPage() {
                 <Button variant="outline" onClick={() => { setTrocaVencimentoRental(null); setNovoDiaVencimento(null); }}>
                   Fechar
                 </Button>
+                {calc && novoDiaVencimento !== null && (
+                  <Button onClick={handleAplicarTroca} className="gap-2">
+                    <CalendarClock className="h-4 w-4" />
+                    Aplicar troca
+                  </Button>
+                )}
               </DialogFooter>
             </DialogContent>
           </Dialog>
