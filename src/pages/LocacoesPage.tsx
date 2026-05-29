@@ -424,7 +424,20 @@ export default function LocacoesPage() {
     setEncerrarSelectedIds(new Set(pendentes.map(e => e.id)));
   };
 
-  const confirmEncerrar = () => {
+  const ASAAS_TERMINAL = ["RECEIVED", "CANCELLED", "REFUNDED", "REFUND_REQUESTED"];
+  const cancelAsaasEntries = async (entriesToCancel: FinancialEntry[]) => {
+    const cancellable = entriesToCancel.filter(e => !!e.asaasPaymentId && !ASAAS_TERMINAL.includes(e.asaasStatus || ""));
+    if (cancellable.length === 0) return;
+    await Promise.allSettled(
+      cancellable.map(e =>
+        supabase.functions.invoke("asaas-cancel-payment", {
+          body: { asaasPaymentId: e.asaasPaymentId, companyId: activeCompany?.id },
+        }),
+      ),
+    );
+  };
+
+  const confirmEncerrar = async () => {
     if (!encerrarRental) return;
     if (!encerrarMotivo) {
       toast.error("Selecione o motivo do encerramento");
@@ -462,9 +475,13 @@ export default function LocacoesPage() {
 
     // Excluir apenas as pendências selecionadas pelo usuário
     const allEntries = loadFinancial();
+    const toRemove = allEntries.filter(e => encerrarSelectedIds.has(e.id));
     const remaining = allEntries.filter(e => !encerrarSelectedIds.has(e.id));
-    const removedCount = allEntries.length - remaining.length;
-    if (removedCount > 0) saveFinancial(remaining);
+    const removedCount = toRemove.length;
+    if (removedCount > 0) {
+      await cancelAsaasEntries(toRemove);
+      saveFinancial(remaining);
+    }
 
     toast.success(
       removedCount > 0
@@ -476,11 +493,15 @@ export default function LocacoesPage() {
     setEncerrarSelectedIds(new Set());
   };
 
-  const handleDelete = (rental: Rental) => {
+  const handleDelete = async (rental: Rental) => {
     persist(rentals.filter(r => r.id !== rental.id));
     const allEntries = loadFinancial();
+    const toRemove = allEntries.filter(e => e.rentalId === rental.id);
     const remaining = allEntries.filter(e => e.rentalId !== rental.id);
-    if (remaining.length !== allEntries.length) saveFinancial(remaining);
+    if (toRemove.length > 0) {
+      await cancelAsaasEntries(toRemove);
+      saveFinancial(remaining);
+    }
     if (rental.status === "ativa" && rental.motoId) {
       const allMotos = loadMotos();
       saveMotos(allMotos.map(m => m.id === rental.motoId ? { ...m, status: "disponivel" as const } : m));
@@ -513,14 +534,18 @@ export default function LocacoesPage() {
     toast.success(`${targets.length} locação(ões) marcada(s) como ${prePaga ? "Pré-paga" : "Pós-paga"}.`);
   };
 
-  const handleBulkDelete = () => {
+  const handleBulkDelete = async () => {
     const toDelete = rentals.filter(r => selectedIds.has(r.id));
     const activeMotoIds = toDelete.filter(r => r.status === "ativa").map(r => r.motoId).filter(Boolean);
     const deleteIds = new Set(toDelete.map(r => r.id));
     persist(rentals.filter(r => !deleteIds.has(r.id)));
     const allEntries = loadFinancial();
+    const toRemove = allEntries.filter(e => deleteIds.has(e.rentalId || ""));
     const remaining = allEntries.filter(e => !deleteIds.has(e.rentalId || ""));
-    if (remaining.length !== allEntries.length) saveFinancial(remaining);
+    if (toRemove.length > 0) {
+      await cancelAsaasEntries(toRemove);
+      saveFinancial(remaining);
+    }
     if (activeMotoIds.length > 0) {
       const allMotos = loadMotos();
       saveMotos(allMotos.map(m => activeMotoIds.includes(m.id) ? { ...m, status: "disponivel" as const } : m));
