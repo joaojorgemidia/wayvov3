@@ -120,6 +120,12 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     }
   }, [user]);
 
+  // Limpa o cache imediatamente ao trocar de empresa para evitar dados
+  // da empresa anterior aparecerem em qualquer página durante o carregamento
+  useEffect(() => {
+    if (cid) clearDataCache();
+  }, [cid]);
+
   // Set up the save callback
   const runQueuedMutation = useCallback((table: string, mutation: () => Promise<void>): Promise<void> => {
     const previous = mutationQueueRef.current[table] || Promise.resolve();
