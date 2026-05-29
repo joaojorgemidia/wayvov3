@@ -1308,31 +1308,44 @@ export default function LocacoesPage() {
                         Resultado da simulação
                       </p>
 
-                      {/* Destaque principal — valor da cobrança de transição */}
-                      <div className="rounded-md bg-white dark:bg-blue-950/60 border border-blue-300 dark:border-blue-700 px-4 py-3 text-center">
-                        <p className="text-[11px] text-muted-foreground uppercase tracking-wide mb-0.5">Cobrança de transição</p>
-                        <p className="text-3xl font-extrabold text-blue-700 dark:text-blue-300 leading-none">
-                          R$ {calc.valorTransicao.toFixed(2)}
-                        </p>
-                        <p className="text-[11px] text-muted-foreground mt-1">
-                          R$ {(r.valorDiario / 7).toFixed(2)}/dia × {forwardDiff} dias &nbsp;·&nbsp; {fmt(calc.dataTransicao)} ({DIAS_FULL[novoDiaVencimento]})
-                        </p>
+                      {/* Motivo */}
+                      <p className="text-xs text-muted-foreground leading-snug">
+                        Para trocar o vencimento de <strong className="text-foreground">{DIAS_FULL[diaAtual!]}</strong> para <strong className="text-foreground">{DIAS_FULL[novoDiaVencimento]}</strong>, será cobrado um período proporcional de <strong className="text-foreground">{forwardDiff} {forwardDiff === 1 ? "dia" : "dias"}</strong> no lugar da semana normal.
+                      </p>
+
+                      {/* Breakdown */}
+                      <div className="rounded-md bg-white dark:bg-blue-950/60 border border-blue-200 dark:border-blue-700 divide-y divide-blue-100 dark:divide-blue-800 text-sm overflow-hidden">
+                        <div className="flex justify-between items-center px-3 py-2">
+                          <span className="text-muted-foreground">Valor diário</span>
+                          <span className="font-medium">R$ {(r.valorDiario / 7).toFixed(2)}</span>
+                        </div>
+                        <div className="flex justify-between items-center px-3 py-2">
+                          <span className="text-muted-foreground">Dias na transição</span>
+                          <span className="font-medium">× {forwardDiff} dias</span>
+                        </div>
+                        <div className="flex justify-between items-center px-3 py-2.5 bg-blue-100/60 dark:bg-blue-900/40">
+                          <div>
+                            <span className="font-semibold text-blue-800 dark:text-blue-200">Cobrança de transição</span>
+                            <span className="ml-2 text-[11px] text-muted-foreground">{fmt(calc.dataTransicao)}</span>
+                          </div>
+                          <span className="text-2xl font-extrabold text-blue-700 dark:text-blue-300">R$ {calc.valorTransicao.toFixed(2)}</span>
+                        </div>
+                        <div className="flex justify-between items-center px-3 py-2">
+                          <div>
+                            <span className="text-muted-foreground">Semana normal (a partir de {fmt(calc.dataPrimeiraNormal)})</span>
+                          </div>
+                          <span className="font-medium">R$ {calc.valorSemanal.toFixed(2)}</span>
+                        </div>
+                        <div className="flex justify-between items-center px-3 py-2.5 bg-muted/40">
+                          <span className="font-semibold">Total próximas 2 cobranças</span>
+                          <span className="font-bold text-base">R$ {(calc.valorTransicao + calc.valorSemanal).toFixed(2)}</span>
+                        </div>
                       </div>
 
-                      <div className="space-y-1.5 text-sm">
-                        <div className="flex justify-between">
-                          <span className="text-muted-foreground">Dias na transição</span>
-                          <span className="font-bold">{forwardDiff} dias</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-muted-foreground">1º pagamento normal</span>
-                          <span className="font-medium">{fmt(calc.dataPrimeiraNormal)} — R$ {calc.valorSemanal.toFixed(2)}</span>
-                        </div>
-                      </div>
-                      <p className="text-[11px] text-muted-foreground border-t border-blue-200 dark:border-blue-800 pt-2">
+                      <p className="text-[11px] text-muted-foreground">
                         {r.cobrancaPrePaga
-                          ? `Cobrança antecipada: o locatário pagará R$ ${calc.valorTransicao.toFixed(2)} em ${fmt(calc.dataTransicao)} para cobrir os ${forwardDiff} dias até o início do novo ciclo.`
-                          : `Cobrança pós-paga: o locatário pagará R$ ${calc.valorTransicao.toFixed(2)} em ${fmt(calc.dataTransicao)} pelos ${forwardDiff} dias utilizados desde o último vencimento.`
+                          ? `Cobrança antecipada: o locatário paga adiantado pelos próximos dias de uso.`
+                          : `Cobrança pós-paga: o locatário paga pelos dias já utilizados.`
                         }
                       </p>
                     </div>
