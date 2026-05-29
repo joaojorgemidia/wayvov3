@@ -1181,13 +1181,15 @@ export default function LocacoesPage() {
 
         const diaAtual = refDate ? refDate.getDay() : null;
 
-        // Juros e multa por atraso (usando cobrancaConfig da empresa)
+        // Juros e multa por atraso — lidos da própria locação (definidos no contrato)
         const isOverdue = !!nextPending && nextPending.data < todayIso;
         const diasAtraso = isOverdue
           ? differenceInDays(new Date(todayIso + "T00:00:00"), new Date(nextPending!.data + "T00:00:00"))
           : 0;
-        const multa = isOverdue ? cobrancaCfg.multaAtraso : 0;
-        const juros = isOverdue ? cobrancaCfg.jurosDiario * diasAtraso : 0;
+        const multa = isOverdue && r ? r.multaAtraso : 0;
+        // jurosAtrasoMes é % ao mês → taxa diária = %/100/30
+        const taxaDiaria = r ? r.jurosAtrasoMes / 100 / 30 : 0;
+        const juros = isOverdue && r ? r.valorDiario * taxaDiaria * diasAtraso : 0;
 
         const forwardDiff = (novoDiaVencimento !== null && diaAtual !== null && novoDiaVencimento !== diaAtual)
           ? (novoDiaVencimento - diaAtual + 7) % 7
@@ -1391,9 +1393,9 @@ export default function LocacoesPage() {
                                 <span className="font-medium">R$ {calc.multa.toFixed(2)}</span>
                               </div>
                             )}
-                            {calc.juros > 0 && (
+                            {calc.juros > 0 && r && (
                               <div className="flex justify-between text-destructive">
-                                <span>+ Juros ({diasAtraso}d × R$ {cobrancaCfg.jurosDiario.toFixed(2)}/dia)</span>
+                                <span>+ Juros ({r.jurosAtrasoMes}%/mês × {diasAtraso}d)</span>
                                 <span className="font-medium">R$ {calc.juros.toFixed(2)}</span>
                               </div>
                             )}
