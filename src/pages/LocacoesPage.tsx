@@ -1303,34 +1303,33 @@ export default function LocacoesPage() {
 
                   {/* Resultado */}
                   {calc && novoDiaVencimento !== null && (
-                    <div className="rounded-lg border border-blue-200 bg-blue-50 dark:bg-blue-950/30 dark:border-blue-900 p-3 space-y-2">
+                    <div className="rounded-lg border border-blue-200 bg-blue-50 dark:bg-blue-950/30 dark:border-blue-900 p-3 space-y-3">
                       <p className="text-xs font-semibold text-blue-700 dark:text-blue-400 uppercase tracking-wide">
                         Resultado da simulação
                       </p>
+
+                      {/* Destaque principal — valor da cobrança de transição */}
+                      <div className="rounded-md bg-white dark:bg-blue-950/60 border border-blue-300 dark:border-blue-700 px-4 py-3 text-center">
+                        <p className="text-[11px] text-muted-foreground uppercase tracking-wide mb-0.5">Cobrança de transição</p>
+                        <p className="text-3xl font-extrabold text-blue-700 dark:text-blue-300 leading-none">
+                          R$ {calc.valorTransicao.toFixed(2)}
+                        </p>
+                        <p className="text-[11px] text-muted-foreground mt-1">
+                          R$ {(r.valorDiario / 7).toFixed(2)}/dia × {forwardDiff} dias &nbsp;·&nbsp; {fmt(calc.dataTransicao)} ({DIAS_FULL[novoDiaVencimento]})
+                        </p>
+                      </div>
+
                       <div className="space-y-1.5 text-sm">
                         <div className="flex justify-between">
                           <span className="text-muted-foreground">Dias na transição</span>
                           <span className="font-bold">{forwardDiff} dias</span>
                         </div>
                         <div className="flex justify-between">
-                          <span className="text-muted-foreground">Valor da cobrança de transição</span>
-                          <span className="font-bold text-blue-700 dark:text-blue-400">
-                            R$ {calc.valorTransicao.toFixed(2)}
-                            <span className="ml-1 text-xs font-normal text-muted-foreground">(R$ {(r.valorDiario / 7).toFixed(2)}/dia × {forwardDiff})</span>
-                          </span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-muted-foreground">Data da cobrança de transição</span>
-                          <span className="font-medium">
-                            {fmt(calc.dataTransicao)} ({DIAS_FULL[novoDiaVencimento]})
-                          </span>
-                        </div>
-                        <div className="flex justify-between">
                           <span className="text-muted-foreground">1º pagamento normal</span>
                           <span className="font-medium">{fmt(calc.dataPrimeiraNormal)} — R$ {calc.valorSemanal.toFixed(2)}</span>
                         </div>
                       </div>
-                      <p className="text-[11px] text-muted-foreground border-t border-blue-200 dark:border-blue-800 pt-2 mt-2">
+                      <p className="text-[11px] text-muted-foreground border-t border-blue-200 dark:border-blue-800 pt-2">
                         {r.cobrancaPrePaga
                           ? `Cobrança antecipada: o locatário pagará R$ ${calc.valorTransicao.toFixed(2)} em ${fmt(calc.dataTransicao)} para cobrir os ${forwardDiff} dias até o início do novo ciclo.`
                           : `Cobrança pós-paga: o locatário pagará R$ ${calc.valorTransicao.toFixed(2)} em ${fmt(calc.dataTransicao)} pelos ${forwardDiff} dias utilizados desde o último vencimento.`
