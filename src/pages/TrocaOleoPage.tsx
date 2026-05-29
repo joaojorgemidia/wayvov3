@@ -348,11 +348,11 @@ export default function TrocaOleoPage() {
       const snoozeUntil = snoozeMap[m.id];
       if (snoozeUntil && status.situation === "vencida") {
         const snoozeMs = new Date(snoozeUntil).setHours(0, 0, 0, 0);
-        if (todayMs < snoozeMs) {
-          // Ainda no período de adiamento → exibe como "em dia"
+        if (todayMs <= snoozeMs) {
+          // Ainda no período de adiamento (inclusive o último dia) → exibe como "em dia"
           status = { ...status, situation: "ok", label: `Adiada até ${formatDate(snoozeUntil)}` };
         } else {
-          // Adiamento expirou → dias de atraso contam a partir da expiração (1 dia no retorno)
+          // Adiamento expirou → dias de atraso contam a partir do dia seguinte ao prazo
           const diasAposSnooze = Math.floor((todayMs - snoozeMs) / msDia) + 1;
           const kmPart = status.kmAtraso > 0 ? ` · +${status.kmAtraso.toLocaleString("pt-BR")} km` : "";
           status = {
