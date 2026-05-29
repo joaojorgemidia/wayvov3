@@ -19,7 +19,7 @@ import {
   Wallet, ShieldCheck, Receipt, Coins, Tag, MessageCircle,
   Bell, Wrench, MoreHorizontal, Phone, Copy,
   CalendarClock, ExternalLink, Search, TrendingUp,
-  LayoutDashboard, SlidersHorizontal, Check,
+  LayoutDashboard, SlidersHorizontal, Check, ChevronDown, ChevronUp, AlertCircle,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useDataCacheSnapshot } from "@/lib/data-cache";
@@ -174,6 +174,7 @@ export default function CobrancasSemanaPage() {
   const [dayFilter, setDayFilter] = useState<number | "all">("all");
   const [reschedItem, setReschedItem] = useState<RowItem | null>(null);
   const [reschedDate, setReschedDate] = useState("");
+  const [missingExpanded, setMissingExpanded] = useState(false);
 
   const handleMessage = (item: RowItem, type: MsgType) => setMsgState({ item, type });
 
@@ -371,6 +372,41 @@ export default function CobrancasSemanaPage() {
     }
     return result;
   }, [totalsByCat]);
+
+  // Locações ativas sem nenhuma cobrança de aluguel pendente ou em atraso
+  const missingRentals = useMemo(() => {
+    const active = cache.rentals.filter(r => r.status === "ativa");
+    const coveredIds = new Set<string>();
+    for (const e of cache.financial) {
+      if (e.tipo !== "receita" || e.ignorada || e.categoria !== "aluguel") continue;
+      if (!e.rentalId) continue;
+      if (!e.pago) {
+        coveredIds.add(e.rentalId); // pendente esta semana ou em atraso
+      } else {
+        const pd = parseISO(e.data);
+        if (pd && pd >= monday && pd <= sunday) coveredIds.add(e.rentalId); // pago esta semana
+      }
+    }
+    return active
+      .filter(r => !coveredIds.has(r.id))
+      .map(r => {
+        const moto = motosById.get(r.motoId);
+        const client = clientsById.get(r.clienteId);
+        const lastPaid = cache.financial
+          .filter(e => e.rentalId === r.id && e.pago && e.categoria === "aluguel")
+          .sort((a, b) => (b.data || "").localeCompare(a.data || ""))[0];
+        const diasSemPagamento = lastPaid ? diffDays(today, parseISO(lastPaid.data)!) : null;
+        return {
+          rental: r,
+          placa: moto?.placa || "—",
+          modelo: moto?.modelo || "",
+          clienteNome: client?.nome || "—",
+          telefone: client?.telefone || null,
+          diasSemPagamento,
+        };
+      })
+      .sort((a, b) => (b.diasSemPagamento ?? 9999) - (a.diasSemPagamento ?? 9999));
+  }, [cache.rentals, cache.financial, clientsById, motosById, monday, sunday, today]);
 
   // ── Ações ──────────────────────────────────────────────────────────
   const openConfirm = (item: RowItem) => {
@@ -623,16 +659,14 @@ export default function CobrancasSemanaPage() {
         {/* Sub-seção 2: métricas em 4 células */}
         <div className="grid grid-cols-4 divide-x border-t border-b border-border/50">
           <div className="px-3.5 py-2.5">
-            <div className="text-[9px] font-semibold uppercase tracking-[.5px] text-muted-foreground/70 mb-1">Locações</div>
+            <div className="text-[9px] font-semibold uppercase tracking-[.5px] text-muted-foreground/70 mb-1">Locações ativas</div>
             <div className="text-[17px] font-medium tabular-nums tracking-tight leading-none text-foreground">
               {aluguelStats.totalActive}
             </div>
-            <div className="text-[10px] mt-1 text-muted-foreground">
-              {aluguelStats.desbalanco === 0
-                ? "todas com cobrança"
-                : aluguelStats.desbalanco > 0
-                  ? `${aluguelStats.desbalanco} sem cobrança`
-                  : `${Math.abs(aluguelStats.desbalanco)} a mais`}
+            <div className={`text-[10px] mt-1 font-medium ${missingRentals.length > 0 ? "text-amber-600 dark:text-amber-400" : "text-muted-foreground"}`}>
+              {missingRentals.length > 0
+                ? `⚠ ${missingRentals.length} sem cobrança`
+                : "todas com cobrança"}
             </div>
           </div>
           <div className="px-3.5 py-2.5">
@@ -778,24 +812,120 @@ export default function CobrancasSemanaPage() {
       {/* ── CONTENT ──────────────────────────────────────────────── */}
       <div className="px-4 pt-3 pb-6 flex flex-col gap-2.5">
 
-        {/* Outros recebimentos (caução, multas, etc.) */}
-        {outrosRecebimentos.length > 0 && (
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-[9px] font-semibold uppercase tracking-[.5px] text-muted-foreground/60">Outros:</span>
-            {outrosRecebimentos.map(({ catKey, count, valor, paidCount, paidValor }) => {
-              const meta = metaFor(catKey);
-              const Icon = meta.icon;
-              const totalCount = count + paidCount;
-              const totalValor = valor + paidValor;
-              return (
-                <div key={catKey} className={`inline-flex items-center gap-1.5 rounded-lg border ${meta.tone.border} ${meta.tone.bg} px-2.5 py-1.5`}>
-                  <Icon className={`h-3 w-3 ${meta.tone.text}`} />
-                  <span className={`text-[9px] font-semibold uppercase tracking-[.3px] ${meta.tone.text}`}>{meta.label}</span>
-                  <span className="text-[11px] font-bold tabular-nums">{totalCount}</span>
-                  <span className="text-[10px] text-muted-foreground">{fmtBRL(totalValor)}</span>
+        {/* ── Breakdown por categoria ── */}
+        <div className="rounded-[10px] border border-border/60 overflow-hidden divide-y divide-border/40">
+          {/* Aluguel fixo */}
+          <div className="flex items-center gap-2 px-3.5 py-2.5 bg-card">
+            <Wallet className="h-3.5 w-3.5 text-primary/70 flex-shrink-0" />
+            <span className="text-[11px] font-semibold flex-1">Aluguel fixo</span>
+            <div className="flex items-center gap-3 text-[11px] tabular-nums">
+              {aluguelStats.pagas > 0 && (
+                <span className="text-emerald-600 font-medium">✓ {aluguelStats.pagas} · {fmtBRL(aluguelStats.valorPago)}</span>
+              )}
+              {aluguelStats.pendentes > 0 && (
+                <span className="text-primary font-medium">{aluguelStats.pendentes} pendente{aluguelStats.pendentes !== 1 ? "s" : ""} · {fmtBRL(aluguelStats.valorPendente)}</span>
+              )}
+              {aluguelStats.pagas === 0 && aluguelStats.pendentes === 0 && (
+                <span className="text-muted-foreground">nenhum esta semana</span>
+              )}
+            </div>
+          </div>
+
+          {/* Em atraso — aluguel */}
+          {overdueItems.filter(i => i.catKey === "aluguel").length > 0 && (() => {
+            const overdueAluguel = overdueItems.filter(i => i.catKey === "aluguel");
+            return (
+              <div className="flex items-center gap-2 px-3.5 py-2.5 bg-destructive/[.03]">
+                <AlertTriangle className="h-3.5 w-3.5 text-destructive/70 flex-shrink-0" />
+                <span className="text-[11px] font-semibold flex-1 text-destructive/80">Aluguel em atraso</span>
+                <span className="text-[11px] tabular-nums text-destructive font-medium">
+                  {overdueAluguel.length} · {fmtBRL(overdueAluguel.reduce((s, i) => s + (i.entry.valor || 0), 0))}
+                </span>
+              </div>
+            );
+          })()}
+
+          {/* Extras por categoria */}
+          {outrosRecebimentos.map(({ catKey, count, valor, paidCount, paidValor }) => {
+            const meta = metaFor(catKey);
+            const Icon = meta.icon;
+            const totalCount = count + paidCount;
+            const totalValor = valor + paidValor;
+            // Exclui atrasos não-aluguel que já aparecem no overdueItems
+            const overdueNaoAluguel = overdueItems.filter(i => i.catKey === catKey).reduce((s, i) => s + (i.entry.valor || 0), 0);
+            return (
+              <div key={catKey} className="flex items-center gap-2 px-3.5 py-2.5 bg-card">
+                <Icon className={`h-3.5 w-3.5 ${meta.tone.text} flex-shrink-0`} />
+                <span className="text-[11px] font-semibold flex-1">{meta.label}</span>
+                <div className="flex items-center gap-3 text-[11px] tabular-nums">
+                  {paidCount > 0 && (
+                    <span className="text-emerald-600 font-medium">✓ {paidCount} · {fmtBRL(paidValor)}</span>
+                  )}
+                  {count > 0 && (
+                    <span className={`font-medium ${meta.tone.text}`}>{count} pendente{count !== 1 ? "s" : ""} · {fmtBRL(valor)}</span>
+                  )}
                 </div>
-              );
-            })}
+              </div>
+            );
+          })}
+
+          {/* Sem cobrança */}
+          {missingRentals.length > 0 && (
+            <div
+              className="flex items-center gap-2 px-3.5 py-2.5 bg-amber-50/60 dark:bg-amber-950/10 cursor-pointer select-none"
+              onClick={() => setMissingExpanded(v => !v)}
+            >
+              <AlertCircle className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400 flex-shrink-0" />
+              <span className="text-[11px] font-semibold flex-1 text-amber-700 dark:text-amber-400">
+                Sem cobrança esta semana
+              </span>
+              <span className="text-[11px] font-bold text-amber-700 dark:text-amber-400 tabular-nums mr-1">
+                {missingRentals.length} locaç{missingRentals.length === 1 ? "ão" : "ões"}
+              </span>
+              {missingExpanded
+                ? <ChevronUp className="h-3 w-3 text-amber-500" />
+                : <ChevronDown className="h-3 w-3 text-amber-500" />}
+            </div>
+          )}
+        </div>
+
+        {/* Painel expandido: locações sem cobrança */}
+        {missingExpanded && missingRentals.length > 0 && (
+          <div className="rounded-[10px] border border-amber-200 dark:border-amber-800 overflow-hidden divide-y divide-amber-100 dark:divide-amber-900">
+            <div className="px-3.5 py-2 bg-amber-50/80 dark:bg-amber-950/20">
+              <p className="text-[10px] text-amber-700 dark:text-amber-400">
+                Estas locações não têm nenhum aluguel pendente nem em atraso. Verifique se a cobrança foi gerada corretamente.
+              </p>
+            </div>
+            {missingRentals.map(({ rental, placa, modelo, clienteNome, telefone, diasSemPagamento }) => (
+              <div key={rental.id} className="flex items-center gap-3 px-3.5 py-2.5 bg-background hover:bg-amber-50/30 dark:hover:bg-amber-950/10 transition-colors">
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-baseline gap-2">
+                    <span className="text-[12px] font-medium truncate">{clienteNome}</span>
+                    <span className="font-mono text-[9px] bg-muted border border-border/50 rounded-[3px] px-1.5 py-px tracking-[.5px] text-muted-foreground flex-shrink-0">
+                      {placa}
+                    </span>
+                  </div>
+                  <p className="text-[10px] text-muted-foreground mt-px">
+                    {modelo && `${modelo} · `}
+                    {diasSemPagamento !== null
+                      ? `Último pagamento: ${diasSemPagamento}d atrás`
+                      : "Nunca pagou"}
+                  </p>
+                </div>
+                {telefone && (
+                  <a
+                    href={`https://wa.me/55${telefone.replace(/\D/g, "")}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="w-7 h-7 rounded-[7px] border border-emerald-200 flex items-center justify-center text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/20 transition-colors flex-shrink-0"
+                    onClick={e => e.stopPropagation()}
+                  >
+                    <MessageCircle className="h-3.5 w-3.5" />
+                  </a>
+                )}
+              </div>
+            ))}
           </div>
         )}
 
@@ -1085,14 +1215,19 @@ function RowItemView({
           ? "bg-muted-foreground/30"
           : "bg-border";
 
-  // Category badge
-  const catBadge = item.catKey === "aluguel"
-    ? "bg-blue-50 text-blue-700 dark:bg-blue-950/30 dark:text-blue-400"
-    : item.catKey === "caucao"
-      ? "bg-muted text-muted-foreground border border-border/60"
-      : (item.catKey === "multa_transito_receita" || item.catKey === "multa")
-        ? "bg-red-50 text-red-700 dark:bg-red-950/30 dark:text-red-400"
-        : "bg-muted/50 text-muted-foreground";
+  // Category badge — aluguel em atraso tem estilo e label distintos
+  const catLabel = (item.catKey === "aluguel" && isOverdue)
+    ? "Aluguel em atraso"
+    : meta.label;
+  const catBadge = (item.catKey === "aluguel" && isOverdue)
+    ? "bg-destructive/10 text-destructive"
+    : item.catKey === "aluguel"
+      ? "bg-blue-50 text-blue-700 dark:bg-blue-950/30 dark:text-blue-400"
+      : item.catKey === "caucao"
+        ? "bg-muted text-muted-foreground border border-border/60"
+        : (item.catKey === "multa_transito_receita" || item.catKey === "multa")
+          ? "bg-red-50 text-red-700 dark:bg-red-950/30 dark:text-red-400"
+          : "bg-muted/50 text-muted-foreground";
 
   // Asaas status badge
   const asaasBadge = hasAsaas && !isPago ? (
@@ -1133,7 +1268,7 @@ function RowItemView({
         {/* Linha 2: badges */}
         <div className="flex items-center gap-1.5 mt-[3px] flex-wrap">
           <span className={`text-[9px] font-semibold uppercase tracking-[.3px] rounded-[3px] px-1.5 py-px ${catBadge}`}>
-            {meta.label}
+            {catLabel}
           </span>
           {item.placa && (
             <span className="font-mono text-[9px] bg-muted/70 border border-border/50 rounded-[3px] px-1.5 py-px tracking-[.5px] text-muted-foreground">
