@@ -48,9 +48,12 @@ const CAT_META: Record<string, { label: string; icon: any; tone: { bg: string; t
   venda_moto:               { label: "Venda de moto",      icon: TrendingUp, tone: { bg: "bg-success/10",     text: "text-success",     border: "border-success/30",     stripe: "bg-success" } },
   pecas_receita:            { label: "Peças",              icon: Coins,      tone: { bg: "bg-muted/50",       text: "text-foreground",  border: "border-border",         stripe: "bg-muted-foreground" } },
   juros_atraso:             { label: "Juros por atraso",   icon: Receipt,    tone: { bg: "bg-destructive/10", text: "text-destructive", border: "border-destructive/30", stripe: "bg-destructive" } },
-  ajuste_saldo:             { label: "Ajuste de saldo",    icon: Coins,      tone: { bg: "bg-muted/50",       text: "text-foreground",  border: "border-border",         stripe: "bg-muted-foreground" } },
-  outro_receita:            { label: "Outros",             icon: Coins,      tone: { bg: "bg-success/10",     text: "text-success",     border: "border-success/30",     stripe: "bg-success" } },
-  outro:                    { label: "Outras receitas",    icon: Coins,      tone: { bg: "bg-success/10",     text: "text-success",     border: "border-success/30",     stripe: "bg-success" } },
+  ajuste_saldo:             { label: "Ajuste de saldo",        icon: Coins,      tone: { bg: "bg-muted/50",       text: "text-foreground",  border: "border-border",         stripe: "bg-muted-foreground" } },
+  outro_receita:            { label: "Outros",                 icon: Coins,      tone: { bg: "bg-success/10",     text: "text-success",     border: "border-success/30",     stripe: "bg-success" } },
+  outro:                    { label: "Outras receitas",        icon: Coins,      tone: { bg: "bg-success/10",     text: "text-success",     border: "border-success/30",     stripe: "bg-success" } },
+  // Categorias customizadas com typo no banco
+  custom_ecerramento_de_contrato:   { label: "Encerramento de contrato", icon: Receipt, tone: { bg: "bg-muted/50", text: "text-foreground", border: "border-border", stripe: "bg-muted-foreground" } },
+  custom_encerramento_de_contrato:  { label: "Encerramento de contrato", icon: Receipt, tone: { bg: "bg-muted/50", text: "text-foreground", border: "border-border", stripe: "bg-muted-foreground" } },
 };
 
 function metaFor(catKey: string) {
