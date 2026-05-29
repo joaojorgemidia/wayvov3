@@ -1331,13 +1331,14 @@ export default function LocacoesPage() {
                           <span className="text-2xl font-extrabold text-blue-700 dark:text-blue-300">R$ {calc.valorTransicao.toFixed(2)}</span>
                         </div>
                         <div className="flex justify-between items-center px-3 py-2">
-                          <div>
-                            <span className="text-muted-foreground">Semana normal (a partir de {fmt(calc.dataPrimeiraNormal)})</span>
-                          </div>
+                          <span className="text-muted-foreground">Valor semanal</span>
                           <span className="font-medium">R$ {calc.valorSemanal.toFixed(2)}</span>
                         </div>
                         <div className="flex justify-between items-center px-3 py-2.5 bg-muted/40">
-                          <span className="font-semibold">Total próximas 2 cobranças</span>
+                          <div>
+                            <span className="font-semibold">Total próximo pagamento</span>
+                            <span className="ml-2 text-[11px] text-muted-foreground">vence {fmt(calc.dataTransicao)}</span>
+                          </div>
                           <span className="font-bold text-base">R$ {(calc.valorTransicao + calc.valorSemanal).toFixed(2)}</span>
                         </div>
                       </div>
