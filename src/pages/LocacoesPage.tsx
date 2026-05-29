@@ -1161,10 +1161,10 @@ export default function LocacoesPage() {
         const todayIso = new Date().toISOString().split("T")[0];
         const today = new Date(); today.setHours(0, 0, 0, 0);
 
-        // Usa a primeira cobrança de aluguel pendente real do DB como referência
+        // Usa o primeiro pagamento pendente ou em atraso como referência
         const nextPending = r
           ? cache.financial
-              .filter(e => e.rentalId === r.id && e.categoria === "aluguel" && !e.pago && e.data >= todayIso)
+              .filter(e => e.rentalId === r.id && e.categoria === "aluguel" && !e.pago)
               .sort((a, b) => a.data.localeCompare(b.data))[0]
           : null;
 
@@ -1189,8 +1189,9 @@ export default function LocacoesPage() {
           const dataTransicao = addDays(refDate, forwardDiff);
           const dataPrimeiraNormal = addDays(dataTransicao, 7);
           const valorSemanal   = r.valorDiario;
-          const valorTransicao = (r.valorDiario / 7) * forwardDiff;
-          return { dataTransicao, dataPrimeiraNormal, valorTransicao, valorSemanal };
+          const valorDiarias   = (r.valorDiario / 7) * forwardDiff;
+          const valorCorrecao  = valorSemanal + valorDiarias; // único pagamento de correção
+          return { dataTransicao, dataPrimeiraNormal, valorSemanal, valorDiarias, valorCorrecao };
         })() : null;
 
         const fmt = (d: Date) => d.toLocaleDateString("pt-BR");
@@ -1219,7 +1220,7 @@ export default function LocacoesPage() {
             if (!pendingIds.has(e.id)) return e;
             const rank = pendingEntries.findIndex(p => p.id === e.id);
             if (rank === 0) {
-              return { ...e, valor: calc.valorTransicao, data: transicaoStr, dataPrevista: transicaoStr };
+              return { ...e, valor: calc.valorCorrecao, data: transicaoStr, dataPrevista: transicaoStr };
             }
             const newDate = addDays(calc.dataPrimeiraNormal, (rank - 1) * 7);
             return { ...e, data: toIso(newDate), dataPrevista: toIso(newDate) };
@@ -1330,37 +1331,38 @@ export default function LocacoesPage() {
 
                       {/* Breakdown */}
                       <div className="rounded-md bg-white dark:bg-blue-950/60 border border-blue-200 dark:border-blue-700 divide-y divide-blue-100 dark:divide-blue-800 text-sm overflow-hidden">
-                        <div className="flex justify-between items-center px-3 py-2">
-                          <span className="text-muted-foreground">Valor diário</span>
-                          <span className="font-medium">R$ {(r.valorDiario / 7).toFixed(2)}</span>
-                        </div>
-                        <div className="flex justify-between items-center px-3 py-2">
-                          <span className="text-muted-foreground">Dias na transição</span>
-                          <span className="font-medium">× {forwardDiff} dias</span>
-                        </div>
 
-                        {/* 1ª cobrança — transição */}
-                        <div className="px-3 py-2.5 bg-blue-100/60 dark:bg-blue-900/40">
-                          <div className="flex justify-between items-baseline">
+                        {/* Pagamento de correção (único) */}
+                        <div className="px-3 py-3 bg-blue-100/60 dark:bg-blue-900/40">
+                          <div className="flex justify-between items-baseline mb-2">
                             <div>
-                              <span className="text-[10px] text-blue-600 dark:text-blue-400 font-bold uppercase tracking-wide">1ª cobrança</span>
+                              <span className="text-[10px] text-blue-600 dark:text-blue-400 font-bold uppercase tracking-wide">Pagamento de correção</span>
                               <span className="ml-1.5 text-[11px] text-muted-foreground">{fmt(calc.dataTransicao)}</span>
                             </div>
-                            <span className="text-2xl font-extrabold text-blue-700 dark:text-blue-300">R$ {calc.valorTransicao.toFixed(2)}</span>
+                            <span className="text-2xl font-extrabold text-blue-700 dark:text-blue-300">R$ {calc.valorCorrecao.toFixed(2)}</span>
                           </div>
-                          <p className="text-[11px] text-muted-foreground mt-0.5">Semana de transição · {forwardDiff} dias proporcionais</p>
+                          <div className="space-y-0.5 text-[11px] text-muted-foreground border-t border-blue-200 dark:border-blue-700 pt-1.5">
+                            <div className="flex justify-between">
+                              <span>Semana normal</span>
+                              <span className="font-medium">R$ {calc.valorSemanal.toFixed(2)}</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span>+ {forwardDiff} diária(s) de correção (R$ {(r.valorDiario / 7).toFixed(2)}/dia)</span>
+                              <span className="font-medium">R$ {calc.valorDiarias.toFixed(2)}</span>
+                            </div>
+                          </div>
                         </div>
 
-                        {/* 2ª cobrança em diante — semana normal */}
+                        {/* Pagamentos seguintes */}
                         <div className="px-3 py-2.5 bg-muted/30">
                           <div className="flex justify-between items-baseline">
                             <div>
-                              <span className="text-[10px] text-muted-foreground font-bold uppercase tracking-wide">2ª cobrança em diante</span>
-                              <span className="ml-1.5 text-[11px] text-muted-foreground">{fmt(calc.dataPrimeiraNormal)}</span>
+                              <span className="text-[10px] text-muted-foreground font-bold uppercase tracking-wide">Pagamentos seguintes</span>
+                              <span className="ml-1.5 text-[11px] text-muted-foreground">a partir de {fmt(calc.dataPrimeiraNormal)}</span>
                             </div>
                             <span className="font-semibold text-base">R$ {calc.valorSemanal.toFixed(2)}</span>
                           </div>
-                          <p className="text-[11px] text-muted-foreground mt-0.5">Semana normal · toda {DIAS_FULL[novoDiaVencimento]}</p>
+                          <p className="text-[11px] text-muted-foreground mt-0.5">Toda {DIAS_FULL[novoDiaVencimento]}</p>
                         </div>
                       </div>
 
