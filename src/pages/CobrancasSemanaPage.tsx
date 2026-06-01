@@ -98,8 +98,9 @@ interface MsgType {
 
 interface RowItem {
   entry: FinancialEntry;
-  due: Date | null;
-  daysLate: number;
+  due: Date | null;       // data de ação (dataPrevista ou data)
+  daysLate: number;       // baseado na data de ação (para display)
+  originalDaysLate: number; // baseado na data original (para classificar atraso real)
   catKey: string;
   clienteNome: string;
   clienteId: string | null;
@@ -187,6 +188,7 @@ export default function CobrancasSemanaPage() {
   const [reschedItem, setReschedItem] = useState<RowItem | null>(null);
   const [reschedDate, setReschedDate] = useState("");
   const [missingExpanded, setMissingExpanded] = useState(false);
+  const [snoozedExpanded, setSnoozedExpanded] = useState(false);
 
   const handleMessage = (item: RowItem, type: MsgType) => setMsgState({ item, type });
 
@@ -254,10 +256,14 @@ export default function CobrancasSemanaPage() {
       const cliente = cli ? clientsById.get(cli) : null;
       const m = moto ? motosById.get(moto) : null;
       const st = e.rentalId ? rentalStats.get(e.rentalId) : null;
+      // Atraso real: sempre baseado na data original (e.data), independente de adiamento
+      const origDate = parseISO(e.data);
+      const originalDaysLate = origDate ? diffDays(today, origDate) : daysLate;
       out.push({
         entry: e,
         due,
         daysLate,
+        originalDaysLate,
         catKey: (e.categoria || "outro").toLowerCase(),
         clienteNome: cliente?.nome || e.clienteNome || "Sem locatário",
         clienteId: cli || null,
@@ -279,11 +285,15 @@ export default function CobrancasSemanaPage() {
   }, [cache.financial, clientsById, motosById, rentalsById, today]);
 
   const weekItems = pending.filter(
-    (i) => i.due && i.due >= monday && i.due <= sunday && i.daysLate <= 0,
+    (i) => i.originalDaysLate <= 0 && i.due && i.due >= monday && i.due <= sunday && i.daysLate <= 0,
   );
   const todayItems = weekItems.filter(i => i.daysLate === 0);
   const upcomingItems = weekItems.filter(i => i.daysLate < 0);
-  const overdueItems = pending.filter((i) => i.daysLate > 0);
+  const overdueItems = pending.filter((i) => i.originalDaysLate > 0);
+  // Vencidos também na data de ação → aparecem por padrão
+  const overdueVisible = overdueItems.filter((i) => i.daysLate > 0);
+  // Adiados → data de ação ainda no futuro, ocultos até vencer de novo
+  const overdueSnoozed = overdueItems.filter((i) => i.daysLate <= 0);
 
   // Faixa de dias: Seg–Dom com contagem e total por dia
   const weekStrip = useMemo(() => {
@@ -325,7 +335,8 @@ export default function CobrancasSemanaPage() {
     return true;
   };
 
-  const filteredOverdue = overdueItems.filter(filterFn);
+  const filteredOverdueVisible = overdueVisible.filter(filterFn);
+  const filteredOverdueSnoozed = overdueSnoozed.filter(filterFn);
   const filteredToday = todayItems.filter((i) => {
     if (!filterFn(i)) return false;
     if (dayFilter === "all") return true;
@@ -396,7 +407,7 @@ export default function CobrancasSemanaPage() {
   }, [cache.rentals, totalsByCat, monday, sunday]);
 
   const totalSemanaPendente = weekItems.reduce((s, i) => s + (i.entry.valor || 0), 0);
-  const totalAtrasado = overdueItems.reduce((s, i) => s + (i.entry.valor || 0), 0);
+  const totalAtrasado = overdueVisible.reduce((s, i) => s + (i.entry.valor || 0), 0);
 
   // Previsão total da semana (todas categorias, pago + pendente)
   const weekPrevisao = useMemo(() => {
@@ -686,8 +697,11 @@ export default function CobrancasSemanaPage() {
             <p className="text-[11px] text-muted-foreground mt-0.5">
               {monday.getDate()} {MONTH_SHORT[monday.getMonth()]} – {sunday.getDate()} {MONTH_SHORT[sunday.getMonth()]}
               {" · "}{weekItems.length} agendadas
-              {overdueItems.length > 0 && (
-                <span className="text-destructive"> · {overdueItems.length} em atraso</span>
+              {overdueVisible.length > 0 && (
+                <span className="text-destructive"> · {overdueVisible.length} em atraso</span>
+              )}
+              {overdueVisible.length === 0 && overdueSnoozed.length > 0 && (
+                <span className="text-amber-600 dark:text-amber-400"> · {overdueSnoozed.length} adiada{overdueSnoozed.length !== 1 ? "s" : ""}</span>
               )}
             </p>
           </div>
@@ -733,31 +747,55 @@ export default function CobrancasSemanaPage() {
               {weekItems.length} pendente{weekItems.length !== 1 ? "s" : ""}
             </div>
           </div>
-          <div className={`px-3.5 py-2.5 transition-colors ${overdueItems.length > 0 ? "bg-destructive/[.06]" : ""}`}>
-            <div className="text-[9px] font-semibold uppercase tracking-[.5px] text-muted-foreground/70 mb-1">Em atraso</div>
-            <div className={`text-[17px] font-medium tabular-nums tracking-tight leading-none ${overdueItems.length > 0 ? "text-destructive" : "text-emerald-600"}`}>
-              {overdueItems.length > 0 ? fmtBRL(totalAtrasado) : "Em dia"}
+          <button
+            className={`px-3.5 py-2.5 text-left transition-colors w-full ${
+              overdueSnoozed.length > 0
+                ? "bg-amber-50/80 dark:bg-amber-950/20 hover:bg-amber-100/60 dark:hover:bg-amber-950/30 cursor-pointer"
+                : "cursor-default"
+            }`}
+            onClick={() => overdueSnoozed.length > 0 && setSnoozedExpanded(v => !v)}
+            disabled={overdueSnoozed.length === 0}
+          >
+            <div className="text-[9px] font-semibold uppercase tracking-[.5px] text-muted-foreground/70 mb-1 flex items-center gap-1">
+              Adiadas
+              {overdueSnoozed.length > 0 && (
+                <AlertTriangle className="h-2.5 w-2.5 text-amber-500" />
+              )}
             </div>
-            <div className={`text-[10px] mt-1 ${overdueItems.length > 0 ? "text-destructive/70" : "text-muted-foreground"}`}>
-              {overdueItems.length > 0
-                ? `${overdueItems.length} cobrança${overdueItems.length !== 1 ? "s" : ""}`
-                : "sem atrasos"}
+            <div className={`text-[17px] font-medium tabular-nums tracking-tight leading-none ${
+              overdueSnoozed.length > 0 ? "text-amber-700 dark:text-amber-400" : "text-emerald-600"
+            }`}>
+              {overdueSnoozed.length > 0
+                ? fmtBRL(overdueSnoozed.reduce((s, i) => s + (i.entry.valor || 0), 0))
+                : "Nenhuma"}
             </div>
-          </div>
+            <div className={`text-[10px] mt-1 flex items-center gap-1 ${
+              overdueSnoozed.length > 0 ? "text-amber-600/80 dark:text-amber-500/80" : "text-muted-foreground"
+            }`}>
+              {overdueSnoozed.length > 0
+                ? <>{overdueSnoozed.length} cobrança{overdueSnoozed.length !== 1 ? "s" : ""} · {snoozedExpanded ? "▲" : "▼"}</>
+                : "sem adiamentos"}
+            </div>
+          </button>
         </div>
 
         {/* Banner de saúde */}
         <div className={`px-4 py-2 border-b flex items-center gap-2 text-[11px] font-semibold transition-colors ${
-          overdueItems.length > 0
+          overdueVisible.length > 0
             ? "bg-destructive/[.07] text-destructive border-destructive/15"
-            : missingRentals.length > 0
+            : overdueSnoozed.length > 0 || missingRentals.length > 0
               ? "bg-amber-50 text-amber-700 border-amber-200/60 dark:bg-amber-950/20 dark:text-amber-400 dark:border-amber-800/30"
               : "bg-emerald-50/60 text-emerald-700 border-emerald-100 dark:bg-emerald-950/20 dark:text-emerald-400 dark:border-emerald-900/30"
         }`}>
-          {overdueItems.length > 0 ? (
+          {overdueVisible.length > 0 ? (
             <>
               <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
-              <span>{overdueItems.length} cobrança{overdueItems.length !== 1 ? "s" : ""} em atraso · {fmtBRL(totalAtrasado)}</span>
+              <span>{overdueVisible.length} cobrança{overdueVisible.length !== 1 ? "s" : ""} em atraso · {fmtBRL(totalAtrasado)}{overdueSnoozed.length > 0 ? ` · ${overdueSnoozed.length} adiada${overdueSnoozed.length !== 1 ? "s" : ""}` : ""}</span>
+            </>
+          ) : overdueSnoozed.length > 0 ? (
+            <>
+              <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+              <span>{overdueSnoozed.length} cobrança{overdueSnoozed.length !== 1 ? "s" : ""} adiada{overdueSnoozed.length !== 1 ? "s" : ""} · vence{overdueSnoozed.length !== 1 ? "m" : ""} em breve</span>
             </>
           ) : missingRentals.length > 0 ? (
             <>
@@ -1004,26 +1042,96 @@ export default function CobrancasSemanaPage() {
         )}
 
         {/* Em atraso */}
-        {filteredOverdue.length > 0 && (
+        {(filteredOverdueVisible.length > 0 || filteredOverdueSnoozed.length > 0) && (
           <div className="rounded-[10px] overflow-hidden border border-destructive/30 shadow-sm">
-            <div className="bg-destructive/[.08] border-b border-destructive/20 px-3.5 py-2.5 flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <AlertTriangle className="h-3.5 w-3.5 text-destructive" />
-                <span className="text-[10px] font-bold uppercase tracking-[.6px] text-destructive">Em atraso</span>
-                <span className="text-[10px] font-bold bg-destructive text-destructive-foreground rounded-full px-1.5 py-px leading-none">
-                  {filteredOverdue.length}
+            {/* Cabeçalho — só aparece quando há itens visíveis */}
+            {filteredOverdueVisible.length > 0 && (
+              <div className="bg-destructive/[.08] border-b border-destructive/20 px-3.5 py-2.5 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <AlertTriangle className="h-3.5 w-3.5 text-destructive" />
+                  <span className="text-[10px] font-bold uppercase tracking-[.6px] text-destructive">Em atraso</span>
+                  <span className="text-[10px] font-bold bg-destructive text-destructive-foreground rounded-full px-1.5 py-px leading-none">
+                    {filteredOverdueVisible.length}
+                  </span>
+                </div>
+                <span className="text-[13px] font-bold text-destructive tabular-nums">
+                  {fmtBRL(filteredOverdueVisible.reduce((s, i) => s + (i.entry.valor || 0), 0))}
                 </span>
               </div>
-              <span className="text-[13px] font-bold text-destructive tabular-nums">
-                {fmtBRL(filteredOverdue.reduce((s, i) => s + (i.entry.valor || 0), 0))}
+            )}
+            <div className="bg-background">
+              {/* Grupos de urgência — apenas itens vencidos na data de ação */}
+              {filteredOverdueVisible.length > 0 && [
+                { label: "1–3 dias",  min: 1, max: 3,        subBg: "bg-amber-50/80 dark:bg-amber-950/10",    subBorder: "border-amber-200/60 dark:border-amber-900/30",    textCls: "text-amber-700 dark:text-amber-400" },
+                { label: "4–7 dias",  min: 4, max: 7,        subBg: "bg-orange-50/80 dark:bg-orange-950/10",  subBorder: "border-orange-200/60 dark:border-orange-900/30",  textCls: "text-orange-700 dark:text-orange-400" },
+                { label: "+7 dias",   min: 8, max: Infinity,  subBg: "bg-destructive/[.05]",                   subBorder: "border-destructive/15",                           textCls: "text-destructive" },
+              ].map(({ label, min, max, subBg, subBorder, textCls }) => {
+                const grp = filteredOverdueVisible.filter(i => i.originalDaysLate >= min && i.originalDaysLate <= max);
+                if (grp.length === 0) return null;
+                return (
+                  <div key={label} className="border-t border-border/40">
+                    <div className={`px-3.5 py-1.5 flex items-center justify-between border-b ${subBg} ${subBorder}`}>
+                      <span className={`text-[9px] font-bold uppercase tracking-[.5px] ${textCls}`}>{label}</span>
+                      <span className={`text-[9px] font-semibold tabular-nums ${textCls}`}>
+                        {grp.length} · {fmtBRL(grp.reduce((s, i) => s + (i.entry.valor || 0), 0))}
+                      </span>
+                    </div>
+                    <div className="divide-y divide-border/50">
+                      {grp.map((it) => (
+                        <RowItemView key={it.entry.id} item={it} onConfirm={openConfirm} onMessage={handleMessage}
+                          onWhatsApp={openWhatsApp} onCopy={copyText} onRescheduleQuick={quickReschedule}
+                          onRescheduleCustom={openReschedule} onIgnore={handleIgnore} />
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+
+            </div>
+          </div>
+        )}
+
+        {/* Adiadas — expandido via KPI */}
+        {snoozedExpanded && filteredOverdueSnoozed.length > 0 && (
+          <div className="rounded-[10px] overflow-hidden border border-amber-300 dark:border-amber-800 shadow-sm">
+            <div className="bg-amber-50 dark:bg-amber-950/30 border-b border-amber-200 dark:border-amber-800 px-3.5 py-2.5 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <AlertTriangle className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400" />
+                <span className="text-[10px] font-bold uppercase tracking-[.6px] text-amber-700 dark:text-amber-400">Adiadas · risco de inadimplência</span>
+                <span className="text-[10px] font-bold bg-amber-500 text-white rounded-full px-1.5 py-px leading-none">
+                  {filteredOverdueSnoozed.length}
+                </span>
+              </div>
+              <span className="text-[13px] font-bold text-amber-700 dark:text-amber-400 tabular-nums">
+                {fmtBRL(filteredOverdueSnoozed.reduce((s, i) => s + (i.entry.valor || 0), 0))}
               </span>
             </div>
-            <div className="bg-background divide-y divide-border/50">
-              {filteredOverdue.map((it) => (
-                <RowItemView key={it.entry.id} item={it} onConfirm={openConfirm} onMessage={handleMessage}
-                  onWhatsApp={openWhatsApp} onCopy={copyText} onRescheduleQuick={quickReschedule}
-                  onRescheduleCustom={openReschedule} onIgnore={handleIgnore} />
-              ))}
+            <div className="bg-background">
+              {[
+                { label: "1–3 dias",  min: 1, max: 3,        subBg: "bg-amber-50/80 dark:bg-amber-950/10",    subBorder: "border-amber-200/60 dark:border-amber-900/30",    textCls: "text-amber-700 dark:text-amber-400" },
+                { label: "4–7 dias",  min: 4, max: 7,        subBg: "bg-orange-50/80 dark:bg-orange-950/10",  subBorder: "border-orange-200/60 dark:border-orange-900/30",  textCls: "text-orange-700 dark:text-orange-400" },
+                { label: "+7 dias",   min: 8, max: Infinity,  subBg: "bg-destructive/[.05]",                   subBorder: "border-destructive/15",                           textCls: "text-destructive" },
+              ].map(({ label, min, max, subBg, subBorder, textCls }) => {
+                const grp = filteredOverdueSnoozed.filter(i => i.originalDaysLate >= min && i.originalDaysLate <= max);
+                if (grp.length === 0) return null;
+                return (
+                  <div key={label} className="border-t border-border/40">
+                    <div className={`px-3.5 py-1.5 flex items-center justify-between border-b ${subBg} ${subBorder}`}>
+                      <span className={`text-[9px] font-bold uppercase tracking-[.5px] ${textCls}`}>{label}</span>
+                      <span className={`text-[9px] font-semibold tabular-nums ${textCls}`}>
+                        {grp.length} · {fmtBRL(grp.reduce((s, i) => s + (i.entry.valor || 0), 0))}
+                      </span>
+                    </div>
+                    <div className="divide-y divide-border/50">
+                      {grp.map((it) => (
+                        <RowItemView key={it.entry.id} item={it} onConfirm={openConfirm} onMessage={handleMessage}
+                          onWhatsApp={openWhatsApp} onCopy={copyText} onRescheduleQuick={quickReschedule}
+                          onRescheduleCustom={openReschedule} onIgnore={handleIgnore} />
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </div>
         )}
@@ -1054,7 +1162,7 @@ export default function CobrancasSemanaPage() {
         )}
 
         {/* Próximas cobranças desta semana */}
-        {filteredToday.length === 0 && filteredUpcoming.length === 0 && filteredOverdue.length === 0 ? (
+        {filteredToday.length === 0 && filteredUpcoming.length === 0 && filteredOverdueVisible.length === 0 && filteredOverdueSnoozed.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-12 gap-2">
             <CalendarDays className="h-8 w-8 text-muted-foreground/30" />
             <p className="text-[13px] text-muted-foreground/50">
@@ -1279,7 +1387,7 @@ function RowItemView({
   onIgnore: (i: RowItem) => void;
 }) {
   const meta = metaFor(item.catKey);
-  const isOverdue = item.daysLate > 0;
+  const isOverdue = item.originalDaysLate > 0;
   const isPago = item.entry.pago;
   const pagoHoje = isPago && item.entry.data === new Date().toISOString().slice(0, 10);
   const boletoUrl = item.entry.asaasInvoiceUrl || item.entry.asaasBoletoUrl;
@@ -1346,7 +1454,12 @@ function RowItemView({
             </span>
             {isOverdue && (
               <span className="text-[9px] font-bold bg-destructive/10 text-destructive rounded-[4px] px-1.5 py-0.5 shrink-0">
-                {item.daysLate}d atraso
+                {item.originalDaysLate}d atraso
+              </span>
+            )}
+            {isOverdue && item.entry.dataPrevista && item.entry.dataPrevista !== item.entry.data && (
+              <span className="text-[9px] text-muted-foreground rounded-[4px] px-1.5 py-0.5 shrink-0 border border-border/50">
+                ação {new Date(item.entry.dataPrevista + "T00:00:00").toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" })}
               </span>
             )}
             {pagoHoje && (

@@ -1099,6 +1099,7 @@ export default function FinanceiroPage() {
 
   const syncAsaasPayment = useCallback(async (updated: FinancialEntry, original: FinancialEntry) => {
     if (!updated.asaasPaymentId) return;
+    if (updated.pago) return;
     if (ASAAS_TERMINAL.includes(updated.asaasStatus || "")) return;
     const dateChanged = updated.data !== original.data;
     const valueChanged = updated.valor !== original.valor;
@@ -1125,7 +1126,7 @@ export default function FinanceiroPage() {
 
   const cancelAsaasPayments = useCallback(async (toDelete: FinancialEntry[]) => {
     const cancellable = toDelete.filter(
-      e => !!e.asaasPaymentId && !ASAAS_TERMINAL.includes(e.asaasStatus || ""),
+      e => !!e.asaasPaymentId && !e.pago && !ASAAS_TERMINAL.includes(e.asaasStatus || ""),
     );
     if (cancellable.length === 0) return;
     const results = await Promise.allSettled(
@@ -1398,6 +1399,10 @@ export default function FinanceiroPage() {
       if (a.categoria === "transferencia" && b.categoria === "transferencia" && a.serieId && a.serieId === b.serieId && a.tipo !== b.tipo) {
         return a.tipo === "despesa" ? -1 : 1;
       }
+      // Taxas Asaas sempre após o recebimento no mesmo dia
+      const aIsFee = a.id.startsWith("asaas-fee-");
+      const bIsFee = b.id.startsWith("asaas-fee-");
+      if (aIsFee !== bIsFee) return aIsFee ? 1 : -1;
       // Dentro do mesmo dia: mais recentes primeiro (último cadastrado no topo)
       const createdA = a.createdAt || "";
       const createdB = b.createdAt || "";
@@ -1417,11 +1422,14 @@ export default function FinanceiroPage() {
       if (!groups[effectiveDate]) groups[effectiveDate] = [];
       groups[effectiveDate].push(e);
     });
-    // Dentro de cada grupo: mais recentes primeiro; transferências do mesmo par: saída antes da entrada
+    // Dentro de cada grupo: mais recentes primeiro; transferências do mesmo par: saída antes da entrada; taxas Asaas após recebimento
     Object.values(groups).forEach(arr => arr.sort((a, b) => {
       if (a.categoria === "transferencia" && b.categoria === "transferencia" && a.serieId && a.serieId === b.serieId) {
         if (a.tipo !== b.tipo) return a.tipo === "despesa" ? -1 : 1;
       }
+      const aIsFee = a.id.startsWith("asaas-fee-");
+      const bIsFee = b.id.startsWith("asaas-fee-");
+      if (aIsFee !== bIsFee) return aIsFee ? 1 : -1;
       return (b.createdAt || "").localeCompare(a.createdAt || "");
     }));
     return Object.entries(groups).sort(([a], [b]) => b.localeCompare(a));
@@ -1949,10 +1957,15 @@ export default function FinanceiroPage() {
       } catch { /* ignora */ }
     }
     await cancelAsaasPayments([target]);
-    const updated = entries.filter(e => e.id !== target.id);
+    // Transferências são sempre par — apaga os dois lados juntos
+    const idsToRemove = new Set<string>([target.id]);
+    if (target.categoria === "transferencia" && target.serieId) {
+      entries.forEach(e => { if (e.id !== target.id && e.serieId === target.serieId) idsToRemove.add(e.id); });
+    }
+    const updated = entries.filter(e => !idsToRemove.has(e.id));
     setEntries(updated);
     saveFinancial(updated)
-      .then(() => toast.success("Lançamento removido."))
+      .then(() => toast.success(idsToRemove.size > 1 ? "Transferência removida (ambos os lados)." : "Lançamento removido."))
       .catch(err => { setEntries(entries); console.error("[FinanceiroPage] persist error:", err); toast.error("Erro ao salvar. Verifique sua conexão."); });
   };
 
@@ -2063,7 +2076,7 @@ export default function FinanceiroPage() {
       }
     }));
     // Success panel para pagamentos de aluguel de locação
-    if (!confirmToggleEntry.pago && confirmToggleEntry.rentalId) {
+    if (!confirmToggleEntry.pago && confirmToggleEntry.rentalId && confirmToggleEntry.tipo === "receita" && confirmToggleEntry.categoria === "aluguel") {
       const rental = rentals.find(r => r.id === confirmToggleEntry.rentalId);
       const client = clients.find(c => c.id === confirmToggleEntry.clienteId);
       const dueDateStr = confirmToggleEntry.dataPrevista || confirmToggleEntry.data;
@@ -3126,15 +3139,18 @@ export default function FinanceiroPage() {
                                 <Tooltip>
                                   <TooltipTrigger asChild>
                                     <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium whitespace-nowrap ${
-                                      e.asaasStatus === "RECEIVED" ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400" :
+                                      (e.asaasStatus === "RECEIVED" || (e.pago && e.asaasStatus === "PENDING")) ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400" :
                                       e.asaasStatus === "OVERDUE"  ? "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400" :
                                       "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400"
                                     }`}>
                                       {e.asaasStatus === "RECEIVED" ? "Pago Asaas" :
+                                       (e.pago && e.asaasStatus === "PENDING") ? "Pago Asaas" :
                                        e.asaasStatus === "OVERDUE"  ? "Vencido Asaas" : "Asaas"}
                                     </span>
                                   </TooltipTrigger>
-                                  <TooltipContent side="top" className="text-xs">Boleto Asaas · {e.asaasStatus}</TooltipContent>
+                                  <TooltipContent side="top" className="text-xs">
+                                    {e.pago && e.asaasStatus === "PENDING" ? "Boleto Asaas · Pago manualmente" : `Boleto Asaas · ${e.asaasStatus}`}
+                                  </TooltipContent>
                                 </Tooltip>
                               </TooltipProvider>
                             )}
@@ -3890,7 +3906,7 @@ export default function FinanceiroPage() {
                 Salvar e Criar Nova
               </Button>
             )}
-            <Button onClick={handleSave} disabled={isSaving || !form.categoria || form.valor <= 0 || !form.data || !form.conta || !form.natureza}>
+            <Button onClick={handleSave} disabled={isSaving || !form.categoria || form.valor <= 0 || !form.data || !form.conta || !form.natureza} variant={form.tipo === "despesa" ? "destructive" : "default"}>
               {isSaving ? "Salvando..." : "Salvar"}
             </Button>
             </div>
@@ -3954,7 +3970,9 @@ export default function FinanceiroPage() {
               <AlertDialogHeader>
                 <AlertDialogTitle>Remover lançamento</AlertDialogTitle>
                 <AlertDialogDescription>
-                  {hasSiblings ? (
+                  {deleteTarget.categoria === "transferencia" ? (
+                    <span>Esta é uma transferência entre contas. Ao remover, o par correspondente também será removido automaticamente.</span>
+                  ) : hasSiblings ? (
                     <>
                       <span>Este lançamento faz parte de uma série ({siblings.length + 1} no total). Escolha o que deseja remover:</span>
                       {pendingFutures.length > 0 && (
