@@ -508,7 +508,7 @@ function NovoParcelamentoDialog({
                 {activeRentals.map(r => {
                   const m = motoMap[r.motoId];
                   const c = clientMap[r.clienteId];
-                  const num = r.numero ? `#${String(r.numero).padStart(5, "0")}` : r.id.slice(0, 6);
+                  const num = r.numero ? `L${String(r.numero).padStart(5, "0")}MV` : r.id.slice(0, 6);
                   return (
                     <SelectItem key={r.id} value={r.id}>
                       {num} · {c?.nome ?? "?"} · {m?.placa ?? "?"}
