@@ -162,7 +162,11 @@ export default function LocacoesPage() {
     return "—";
   };
 
-  const getNumero = (r: Rental) => r.numero ? `L${String(r.numero).padStart(5, "0")}MV` : `#${r.id.slice(0, 6).toUpperCase()}`;
+  const getNumero = (r: Rental) => {
+    if (!r.numero) return `#${r.id.slice(0, 6).toUpperCase()}`;
+    if (r.createdAt >= "2026-06-01") return `L${String(r.numero).padStart(5, "0")}MV`;
+    return `#${String(r.numero).padStart(5, "0")}`;
+  };
 
   const matchSearch = (r: Rental) =>
     !search ||
@@ -247,7 +251,7 @@ export default function LocacoesPage() {
 
     const newFinancialEntries: FinancialEntry[] = [];
 
-    const numContrato = rental.numero ? `L${String(rental.numero).padStart(5, "0")}MV` : `#${rental.id.slice(0, 6).toUpperCase()}`;
+    const numContrato = !rental.numero ? `#${rental.id.slice(0, 6).toUpperCase()}` : rental.createdAt >= "2026-06-01" ? `L${String(rental.numero).padStart(5, "0")}MV` : `#${String(rental.numero).padStart(5, "0")}`;
     const obsExtra = rental.observacoes ? ` - ${rental.observacoes}` : "";
 
     if (rental.gerarCobrancaCaucao && rental.valorCaucao > 0 && !rental.caucaoParcelado) {

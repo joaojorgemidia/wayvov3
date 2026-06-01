@@ -650,7 +650,7 @@ export default function ContratosPage() {
                   {activeRentals.map(r => {
                     const moto = motoMap[r.motoId];
                     const client = clientMap[r.clienteId];
-                    const num = r.numero ? `L${String(r.numero).padStart(5, "0")}MV` : r.id.slice(0, 6);
+                    const num = !r.numero ? r.id.slice(0, 6) : r.createdAt >= "2026-06-01" ? `L${String(r.numero).padStart(5, "0")}MV` : `#${String(r.numero).padStart(5, "0")}`;
                     return (
                       <SelectItem key={r.id} value={r.id}>
                         {num} — {client?.nome || "?"} · {moto?.placa || "?"}

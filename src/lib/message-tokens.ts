@@ -294,7 +294,7 @@ export function vehicleTokens(m?: Motorcycle | null): TokenMap {
 export function rentalTokens(r?: Rental | null): TokenMap {
   if (!r) return {};
   return {
-    "{NUMERO_LOCACAO}": r.numero != null ? `L${String(r.numero).padStart(5, "0")}MV` : "",
+    "{NUMERO_LOCACAO}": r.numero != null ? (r.createdAt >= "2026-06-01" ? `L${String(r.numero).padStart(5, "0")}MV` : `#${String(r.numero).padStart(5, "0")}`) : "",
     "{DATA_INICIO}": fmtDate(r.dataInicio),
     "{HORA_INICIO}": r.horaInicio ?? "",
     "{DATA_FIM_CONTRATO}": fmtDate(r.dataFimContrato),
