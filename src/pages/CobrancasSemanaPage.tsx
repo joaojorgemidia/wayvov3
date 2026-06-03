@@ -24,6 +24,7 @@ import {
 import { toast } from "sonner";
 import { useDataCacheSnapshot } from "@/lib/data-cache";
 import { saveFinancial, loadFinancial } from "@/lib/store";
+import { supabase } from "@/integrations/supabase/client";
 import { FinancialEntry } from "@/lib/types";
 import { MessagePopup } from "@/components/MessagePopup";
 import { applyTokens, buildAllTokens } from "@/lib/message-tokens";
@@ -497,6 +498,17 @@ export default function CobrancasSemanaPage() {
           : e,
       );
       await saveFinancial(next);
+
+      // Sync automático de taxas Asaas em background (não bloqueia o fluxo)
+      if (item.entry.asaasPaymentId && item.entry.asaasStatus === "RECEIVED" && activeCompany?.id) {
+        supabase.functions.invoke("asaas-sync-fees", {
+          body: { asaasPaymentId: item.entry.asaasPaymentId, entryId: item.entry.id, companyId: activeCompany.id },
+        }).then(({ data }) => {
+          if (data?.registered > 0) {
+            toast.success(`${data.registered} taxa(s) Asaas registrada(s) automaticamente.`);
+          }
+        }).catch(() => {});
+      }
 
       // Popup de confirmação para enviar ao cliente
       const dataPagamento = new Date(payDate + "T12:00:00").toLocaleDateString("pt-BR");
