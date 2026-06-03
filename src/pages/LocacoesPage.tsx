@@ -408,9 +408,10 @@ export default function LocacoesPage() {
       saveMotos(updatedMotos);
     }
 
-    const exists = rentals.find(r => r.id === rental.id);
-    if (exists) persist(rentals.map(r => r.id === rental.id ? rental : r));
-    else persist([...rentals, rental]);
+    const currentRentals = loadRentals();
+    const exists = currentRentals.find(r => r.id === rental.id);
+    if (exists) persist(currentRentals.map(r => r.id === rental.id ? rental : r));
+    else persist([...currentRentals, rental]);
 
     setDialogOpen(false);
     setEditRental(null);
@@ -469,7 +470,7 @@ export default function LocacoesPage() {
       observacoes: obs,
       checklistDevolucao: [],
     };
-    persist(rentals.map(x => x.id === encerrarRental.id ? updated : x));
+    persist(loadRentals().map(x => x.id === encerrarRental.id ? updated : x));
 
     if (encerrarRental.motoId) {
       const allMotos = loadMotos();
@@ -498,7 +499,7 @@ export default function LocacoesPage() {
   };
 
   const handleDelete = async (rental: Rental) => {
-    persist(rentals.filter(r => r.id !== rental.id));
+    persist(loadRentals().filter(r => r.id !== rental.id));
     const allEntries = loadFinancial();
     const toRemove = allEntries.filter(e => e.rentalId === rental.id);
     const remaining = allEntries.filter(e => e.rentalId !== rental.id);
@@ -519,7 +520,7 @@ export default function LocacoesPage() {
     const toFinalize = rentals.filter(r => selectedIds.has(r.id) && r.status === "ativa");
     if (!toFinalize.length) { toast.error("Nenhuma locação ativa selecionada."); return; }
     const motoIds = toFinalize.map(r => r.motoId).filter(Boolean);
-    persist(rentals.map(r => selectedIds.has(r.id) && r.status === "ativa"
+    persist(loadRentals().map(r => selectedIds.has(r.id) && r.status === "ativa"
       ? { ...r, status: "finalizada" as const, dataFim: bulkFinalizarData } : r));
     if (motoIds.length > 0) {
       const allMotos = loadMotos();
@@ -533,7 +534,7 @@ export default function LocacoesPage() {
   const handleBulkSetCobranca = (prePaga: boolean) => {
     const targets = rentals.filter(r => selectedIds.has(r.id));
     if (!targets.length) { toast.error("Nenhuma locação selecionada."); return; }
-    persist(rentals.map(r => selectedIds.has(r.id) ? { ...r, cobrancaPrePaga: prePaga } : r));
+    persist(loadRentals().map(r => selectedIds.has(r.id) ? { ...r, cobrancaPrePaga: prePaga } : r));
     setSelectedIds(new Set());
     toast.success(`${targets.length} locação(ões) marcada(s) como ${prePaga ? "Pré-paga" : "Pós-paga"}.`);
   };
@@ -542,7 +543,7 @@ export default function LocacoesPage() {
     const toDelete = rentals.filter(r => selectedIds.has(r.id));
     const activeMotoIds = toDelete.filter(r => r.status === "ativa").map(r => r.motoId).filter(Boolean);
     const deleteIds = new Set(toDelete.map(r => r.id));
-    persist(rentals.filter(r => !deleteIds.has(r.id)));
+    persist(loadRentals().filter(r => !deleteIds.has(r.id)));
     const allEntries = loadFinancial();
     const toRemove = allEntries.filter(e => deleteIds.has(e.rentalId || ""));
     const remaining = allEntries.filter(e => !deleteIds.has(e.rentalId || ""));
@@ -1178,7 +1179,7 @@ export default function LocacoesPage() {
         onOpenChange={setHistoricalOpen}
         motos={motos}
         clients={clients}
-        onSaved={(rental) => persist([...rentals, rental])}
+        onSaved={(rental) => persist([...loadRentals(), rental])}
       />
 
       {/* Simulação de Troca de Vencimento */}
@@ -1265,7 +1266,7 @@ export default function LocacoesPage() {
             return { ...e, data: toIso(newDate), dataPrevista: toIso(newDate) };
           });
 
-          const updatedRentals = rentals.map(ren =>
+          const updatedRentals = loadRentals().map(ren =>
             ren.id === r.id ? { ...ren, proximoPagamento: primeiraNormalStr } : ren
           );
 

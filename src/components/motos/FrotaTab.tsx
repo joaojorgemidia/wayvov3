@@ -147,7 +147,7 @@ export function FrotaTab({ motos, onEdit, onDelete, onSell }: FrotaTabProps) {
               <tr className="border-b bg-muted/40">
                 <th className="px-4 py-3.5 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">Status</th>
                 <th className="px-4 py-3.5 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                  Ano Modelo
+                  Ano Fab./Modelo
                 </th>
                 <th className="px-4 py-3.5 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">Placa</th>
                 <th className="px-4 py-3.5 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">Modelo</th>
@@ -181,7 +181,7 @@ export function FrotaTab({ motos, onEdit, onDelete, onSell }: FrotaTabProps) {
                         {statusLabels[m.status]}
                       </span>
                     </td>
-                    <td className="px-4 py-3.5 font-mono text-foreground/80">{m.anoModelo ?? "—"}</td>
+                    <td className="px-4 py-3.5 font-mono text-foreground/80">{m.anoFabricacao && m.anoModelo ? `${m.anoFabricacao}/${m.anoModelo}` : m.anoModelo ?? "—"}</td>
                     <td className="px-4 py-3.5">
                       <span className="inline-flex rounded-md bg-muted/60 px-2 py-0.5 font-mono font-bold text-foreground">{m.placa}</span>
                     </td>

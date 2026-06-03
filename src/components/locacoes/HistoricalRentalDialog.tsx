@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Rental, Motorcycle, Client, FinancialEntry } from "@/lib/types";
-import { loadFinancial, saveFinancial, saveRentals, loadRentals } from "@/lib/store";
+import { loadFinancial, saveFinancial } from "@/lib/store";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -83,10 +83,6 @@ export default function HistoricalRentalDialog({ open, onOpenChange, motos, clie
       observacoes: obs,
       createdAt: new Date().toISOString().split("T")[0],
     };
-
-    // Persist rental
-    const allRentals = loadRentals();
-    saveRentals([...allRentals, rental]);
 
     // Auto-associate financial entries by placa + period
     const placa = (moto.placa || "").toUpperCase().trim();

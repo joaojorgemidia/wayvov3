@@ -20,7 +20,7 @@ interface TableResult {
 
 const FIELD_MAPS: Record<string, (item: any) => any> = {
   motorcycles: (m) => ({
-    placa: m.placa, modelo: m.modelo, ano_modelo: m.anoModelo, cor: m.cor, chassi: m.chassi,
+    placa: m.placa, modelo: m.modelo, ano_fabricacao: m.anoFabricacao ?? null, ano_modelo: m.anoModelo, cor: m.cor, chassi: m.chassi,
     renavam: m.renavam, num_motor: m.numMotor, aplicativo: m.aplicativo, tipo: m.tipo,
     proprietario: m.proprietario || null, status: m.status, km_atual: m.kmAtual,
     km_compra: m.kmCompra, km_troca_oleo: m.kmTrocaOleo, km_venda: m.kmVenda,

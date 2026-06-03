@@ -625,6 +625,7 @@ export type Database = {
       }
       motorcycles: {
         Row: {
+          ano_fabricacao: number | null
           ano_modelo: number | null
           aplicativo: string
           chassi: string
@@ -666,6 +667,7 @@ export type Database = {
           valor_venda: number | null
         }
         Insert: {
+          ano_fabricacao?: number | null
           ano_modelo?: number | null
           aplicativo?: string
           chassi?: string
@@ -707,6 +709,7 @@ export type Database = {
           valor_venda?: number | null
         }
         Update: {
+          ano_fabricacao?: number | null
           ano_modelo?: number | null
           aplicativo?: string
           chassi?: string

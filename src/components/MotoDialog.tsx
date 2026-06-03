@@ -37,6 +37,7 @@ const emptyMoto = (): Motorcycle => ({
   id: crypto.randomUUID(),
   placa: "",
   modelo: "",
+  anoFabricacao: null,
   anoModelo: null,
   cor: "",
   chassi: "",
@@ -87,8 +88,9 @@ function validateStep2(form: Motorcycle): FieldErrors {
   const placaErr = validatePlaca(form.placa);
   if (placaErr) e.placa = placaErr;
   if (!form.modelo.trim()) e.modelo = "Modelo é obrigatório";
-  if (form.anoModelo == null) e.anoModelo = "Ano é obrigatório";
+  if (form.anoModelo == null) e.anoModelo = "Ano modelo é obrigatório";
   else if (form.anoModelo < 1950 || form.anoModelo > new Date().getFullYear() + 2) e.anoModelo = "Ano inválido";
+  if (form.anoFabricacao != null && (form.anoFabricacao < 1950 || form.anoFabricacao > new Date().getFullYear() + 1)) e.anoFabricacao = "Ano inválido";
   if (!form.cor.trim()) e.cor = "Cor é obrigatória";
   if (!form.chassi.trim()) e.chassi = "Chassi é obrigatório";
   else if (form.chassi.length !== 17) e.chassi = "Chassi deve ter 17 caracteres";
@@ -793,6 +795,7 @@ export function MotoDialog({ open, onOpenChange, moto, onSave, mode }: MotoDialo
           ...prev,
           placa: d.placa?.toUpperCase() || prev.placa,
           modelo: d.modelo || prev.modelo,
+          anoFabricacao: d.anoFabricacao ? Number(d.anoFabricacao) : prev.anoFabricacao,
           anoModelo: d.anoModelo ? Number(d.anoModelo) : prev.anoModelo,
           cor: d.cor || prev.cor,
           chassi: d.chassi?.toUpperCase() || prev.chassi,
@@ -991,17 +994,24 @@ export function MotoDialog({ open, onOpenChange, moto, onSave, mode }: MotoDialo
                 </div>
               </div>
 
+              <div className="grid gap-1">
+                <Label className="flex items-center gap-1 text-xs">
+                  Modelo <span className="text-destructive">*</span>
+                </Label>
+                <Input className={errBorder("modelo", step2Errors)} value={form.modelo} onChange={(e) => setForm({ ...form, modelo: e.target.value })} placeholder="CG 160 Fan" />
+                <FieldError msg={step2Errors.modelo} />
+              </div>
               <div className="grid grid-cols-2 gap-3">
                 <div className="grid gap-1">
                   <Label className="flex items-center gap-1 text-xs">
-                    Modelo <span className="text-destructive">*</span>
+                    Ano Fabricação
                   </Label>
-                  <Input className={errBorder("modelo", step2Errors)} value={form.modelo} onChange={(e) => setForm({ ...form, modelo: e.target.value })} placeholder="CG 160 Fan" />
-                  <FieldError msg={step2Errors.modelo} />
+                  <Input className={errBorder("anoFabricacao", step2Errors)} type="number" value={form.anoFabricacao ?? ""} onChange={(e) => setForm({ ...form, anoFabricacao: e.target.value ? Number(e.target.value) : null })} placeholder="2024" />
+                  <FieldError msg={step2Errors.anoFabricacao} />
                 </div>
                 <div className="grid gap-1">
                   <Label className="flex items-center gap-1 text-xs">
-                    Ano/Modelo <span className="text-destructive">*</span>
+                    Ano Modelo <span className="text-destructive">*</span>
                   </Label>
                   <Input className={errBorder("anoModelo", step2Errors)} type="number" value={form.anoModelo ?? ""} onChange={(e) => setForm({ ...form, anoModelo: e.target.value ? Number(e.target.value) : null })} placeholder="2025" />
                   <FieldError msg={step2Errors.anoModelo} />

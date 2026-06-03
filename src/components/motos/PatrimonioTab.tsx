@@ -142,7 +142,7 @@ export function PatrimonioTab({ motos, onEdit }: PatrimonioTabProps) {
                 return (
                   <tr key={m.id} className="border-b last:border-0 hover:bg-muted/30 transition-colors">
                     <td className="px-3 py-3 font-mono font-bold text-foreground">{m.placa}</td>
-                    <td className="px-3 py-3 text-muted-foreground text-xs">{m.modelo || "—"}{m.anoModelo ? ` ${m.anoModelo}` : ""}</td>
+                    <td className="px-3 py-3 text-muted-foreground text-xs">{m.modelo || "—"}{m.anoFabricacao && m.anoModelo ? ` ${m.anoFabricacao}/${m.anoModelo}` : m.anoModelo ? ` ${m.anoModelo}` : ""}</td>
                     <td className="px-3 py-3 text-right font-mono">{formatCurrency(compra)}</td>
                     <td className="px-3 py-3 text-right font-mono text-primary font-semibold">{fipe > 0 ? formatCurrency(fipe) : "—"}</td>
                     <td className="px-3 py-3 text-right">

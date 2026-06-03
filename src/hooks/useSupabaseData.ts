@@ -96,6 +96,7 @@ function dbToMoto(r: any): Motorcycle {
     id: r.id,
     placa: r.placa || "",
     modelo: r.modelo || "",
+    anoFabricacao: r.ano_fabricacao ?? null,
     anoModelo: r.ano_modelo ?? null,
     cor: r.cor || "",
     chassi: r.chassi || "",
@@ -130,6 +131,7 @@ function motoToDb(m: Motorcycle): any {
   return {
     placa: m.placa,
     modelo: m.modelo,
+    ano_fabricacao: m.anoFabricacao ?? null,
     ano_modelo: m.anoModelo,
     cor: m.cor,
     chassi: m.chassi,

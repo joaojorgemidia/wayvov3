@@ -9,7 +9,8 @@ const userPrompt = `Extraia os dados deste CRLV e retorne um JSON com exatamente
 {
   "placa": "string ou null",
   "modelo": "string ou null (marca/modelo completo)",
-  "anoModelo": "number ou null (ano/modelo)",
+  "anoFabricacao": "number ou null (ano de fabricação — campo ANO FAB ou a primeira parte de ANO FAB/ANO MOD, ex: 2023/2024 → 2023)",
+  "anoModelo": "number ou null (ano modelo — campo ANO MOD ou a segunda parte de ANO FAB/ANO MOD, ex: 2023/2024 → 2024)",
   "cor": "string ou null",
   "chassi": "string ou null (17 caracteres)",
   "renavam": "string ou null (11 dígitos)",

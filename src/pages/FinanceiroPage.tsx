@@ -29,7 +29,7 @@ import {
   PieChart as PieChartIcon, BarChart3, Settings2, HelpCircle,
   EyeOff, Pin, Tag as TagIcon, Check, ChevronsUpDown, Bookmark, AlertTriangle,
   MoreVertical, CheckCheck, Banknote, X, Eye, ChevronsLeft, ChevronsRight, ArrowLeftRight, ChevronDown,
-  ExternalLink, Loader2, Link2
+  ExternalLink, Loader2, Link2, RefreshCw
 } from "lucide-react";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Textarea } from "@/components/ui/textarea";
@@ -939,7 +939,7 @@ export default function FinanceiroPage() {
   const SUBCATEGORIAS = useMemo(() => {
     const merged = { ...DEFAULT_SUBCATEGORIAS };
     // Filter out removed default subcategories
-    const removedSubs = (finConfig as any).removedSubcategorias || {};
+    const removedSubs = finConfig.removedSubcategorias || {};
     Object.entries(removedSubs).forEach(([k, removed]) => {
       if (Array.isArray(removed) && merged[k]) {
         merged[k] = merged[k].filter(s => !(removed as string[]).includes(s));
@@ -973,7 +973,7 @@ export default function FinanceiroPage() {
   const TAGS = useMemo(() => {
     const merged = { ...DEFAULT_TAGS };
     // Filter out removed default tags
-    const removedTags = (finConfig as any).removedTags || {};
+    const removedTags = finConfig.removedTags || {};
     Object.entries(removedTags).forEach(([k, removed]) => {
       if (Array.isArray(removed) && merged[k]) {
         merged[k] = merged[k].filter(t => !(removed as string[]).includes(t));
@@ -1326,10 +1326,11 @@ export default function FinanceiroPage() {
     [entries, currentMonth, customRangeMode, customFrom, customTo]
   );
 
-  // When explicit filter dates are set, they should search the full dataset instead of being limited by the top period navigator.
+  // Expand to full dataset only when dateFrom is explicitly set (user defined a start outside the current month).
+  // dateTo alone keeps the current month scope — it acts as an upper bound within the month.
   const filteredSource = useMemo(
-    () => (dateFrom || dateTo ? entries : monthEntries),
-    [entries, monthEntries, dateFrom, dateTo],
+    () => (dateFrom ? entries : monthEntries),
+    [entries, monthEntries, dateFrom],
   );
 
   const filtered = useMemo(() => {
@@ -1365,8 +1366,9 @@ export default function FinanceiroPage() {
       // Locatário filter
       const clientName = e.clienteId ? (clients.find(c => c.id === e.clienteId)?.nome || e.clienteNome || "") : (e.clienteNome || "");
       const matchLocatario = !locatarioFilter || clientName === locatarioFilter || clientName.toLowerCase().includes(locatarioFilter.toLowerCase());
-      // Search — accent-insensitive, plate ignores dashes/spaces
-      const matchSearch = !q || norm(e.descricao).includes(q) || norm(getCatLabel(normalizedEntryCategory, e.tipo)).includes(q) || norm(e.observacao || "").includes(q) || norm(e.subcategoria || "").includes(q) || normPlaca(motoPlaca).includes(normPlaca(search)) || norm(clientName).includes(q);
+      // Search — accent-insensitive, plate ignores dashes/spaces, valor matches as string
+      const valorStr = e.valor != null ? String(e.valor.toFixed(2)).replace(".", ",") : "";
+      const matchSearch = !q || norm(e.descricao).includes(q) || norm(getCatLabel(normalizedEntryCategory, e.tipo)).includes(q) || norm(e.observacao || "").includes(q) || norm(e.subcategoria || "").includes(q) || normPlaca(motoPlaca).includes(normPlaca(search)) || norm(clientName).includes(q) || valorStr.includes(q) || String(e.valor ?? "").includes(q);
       // Date range filter
       const effectiveDate = !e.pago && e.dataPrevista ? e.dataPrevista : e.data;
       const matchDateFrom = !dateFrom || effectiveDate >= dateFrom;
@@ -1547,6 +1549,24 @@ export default function FinanceiroPage() {
 
   const [editScopeTarget, setEditScopeTarget] = useState<FinancialEntry | null>(null);
   const [asaasLoadingId, setAsaasLoadingId] = useState<string | null>(null);
+  const [syncingFeesId, setSyncingFeesId] = useState<string | null>(null);
+
+  const handleSyncAsaasFees = async (entry: FinancialEntry) => {
+    if (!entry.asaasPaymentId) return;
+    setSyncingFeesId(entry.id);
+    try {
+      const { data, error } = await supabase.functions.invoke("asaas-sync-fees", {
+        body: { asaasPaymentId: entry.asaasPaymentId, entryId: entry.id, companyId: currentCompanyId },
+      });
+      if (error) throw error;
+      if (data?.registered > 0) toast.success(`${data.registered} taxa(s) registrada(s) com sucesso.`);
+      else toast.info(data?.message || "Nenhuma taxa encontrada no Asaas para este pagamento.");
+    } catch (e: any) {
+      toast.error("Erro ao buscar taxas: " + (e?.message || "Tente novamente."));
+    } finally {
+      setSyncingFeesId(null);
+    }
+  };
 
   const handleGenerateAsaasBoleto = async (entry: FinancialEntry) => {
     setAsaasLoadingId(entry.id);
@@ -2200,9 +2220,9 @@ export default function FinanceiroPage() {
       c.customSubcategorias = { ...c.customSubcategorias, [cat]: (c.customSubcategorias[cat] || []).filter(s => s !== item) };
     }
     if (isDefault) {
-      const removedSubs = { ...((c as any).removedSubcategorias || {}) };
+      const removedSubs = { ...(c.removedSubcategorias || {}) };
       removedSubs[cat] = [...(removedSubs[cat] || []), item];
-      (c as any).removedSubcategorias = removedSubs;
+      c.removedSubcategorias = removedSubs;
     }
     persistConfig(c);
     persist(entries.map(e => e.subcategoria === item && e.categoria === cat ? { ...e, subcategoria: "" } : e)).catch(err => { console.error("[FinanceiroPage] persist error:", err); toast.error("Erro ao salvar. Verifique sua conexão."); });
@@ -2270,7 +2290,7 @@ export default function FinanceiroPage() {
     const updatedCustom = { ...finConfig.customTags, [key]: existing.filter(t => t !== tag) };
     // If it's a default tag, store as "removed" so it doesn't reappear
     const isDefault = (DEFAULT_TAGS[key] || []).includes(tag);
-    let removedTags = { ...(finConfig as any).removedTags || {} };
+    const removedTags = { ...(finConfig.removedTags || {}) };
     if (isDefault) {
       removedTags[key] = [...(removedTags[key] || []), tag];
     }
@@ -2289,9 +2309,9 @@ export default function FinanceiroPage() {
       c.customTags = { ...c.customTags, [key]: (c.customTags[key] || []).map(t => t === old ? next : t) };
     } else if (isDefault) {
       // Remove default, add as custom with new name
-      let removedTags = { ...(c as any).removedTags || {} };
+      const removedTags = { ...(c.removedTags || {}) };
       removedTags[key] = [...(removedTags[key] || []), old];
-      (c as any).removedTags = removedTags;
+      c.removedTags = removedTags;
       c.customTags = { ...c.customTags, [key]: [...(c.customTags[key] || []), next] };
     }
     persistConfig(c);
@@ -2824,7 +2844,7 @@ export default function FinanceiroPage() {
               <div className="relative flex-1">
                 <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
                 <input className="w-full bg-background border border-border/50 rounded-lg pl-8 pr-3 py-1.5 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
-                  placeholder="Buscar descrição, placa, locatário…" value={search} onChange={e => setSearch(e.target.value)} />
+                  placeholder="Buscar descrição, placa, locatário, valor…" value={search} onChange={e => setSearch(e.target.value)} />
               </div>
               {hasActiveFilters && (
                 <button onClick={() => { setCategoriaFilter("all"); setContaFilter("all"); setDateFrom(""); setDateTo(""); setPlacaFilter(""); setLocatarioFilter(""); setOnlyPagas(false); setOnlyPendentes(false); setOnlyRecorrentes(false); setDueFilter("all"); setIgnoradasFilter("incluir"); setTipoFilter("all"); setSearch(""); }}
@@ -2849,7 +2869,7 @@ export default function FinanceiroPage() {
                       placeholder="Todos"
                       options={[
                         { value: "", label: "Todos" },
-                        ...Array.from(new Set(entries.map(e => {
+                        ...Array.from(new Set(filteredSource.map(e => {
                           const name = e.clienteId ? (clients.find(c => c.id === e.clienteId)?.nome || e.clienteNome || "") : (e.clienteNome || "");
                           return name;
                         }).filter(Boolean))).sort().map(n => ({ value: n, label: n.split(" ").map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(" ") }))
@@ -2868,7 +2888,7 @@ export default function FinanceiroPage() {
                           const validPlacas = new Set(
                             motos.filter(m => m.status !== "vendida" && m.status !== "inativa").map(m => m.placa).filter(Boolean)
                           );
-                          return Array.from(new Set(entries.map(e => {
+                          return Array.from(new Set(filteredSource.map(e => {
                             const moto = e.motoId ? motos.find(m => m.id === e.motoId) : null;
                             const p = moto?.placa || e.placa || "";
                             return p;
@@ -3285,6 +3305,18 @@ export default function FinanceiroPage() {
                                   className="gap-2 text-xs"
                                 >
                                   <ExternalLink className="h-3.5 w-3.5" /> Ver Boleto
+                                </DropdownMenuItem>
+                              )}
+                              {/* Asaas: sincronizar taxas de pagamentos já recebidos */}
+                              {e.asaasPaymentId && e.pago && e.asaasStatus === "RECEIVED" && (
+                                <DropdownMenuItem
+                                  onClick={() => handleSyncAsaasFees(e)}
+                                  disabled={syncingFeesId === e.id}
+                                  className="gap-2 text-xs"
+                                >
+                                  {syncingFeesId === e.id
+                                    ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Buscando taxas...</>
+                                    : <><RefreshCw className="h-3.5 w-3.5" /> Sincronizar taxas</>}
                                 </DropdownMenuItem>
                               )}
                               {canDelete && (

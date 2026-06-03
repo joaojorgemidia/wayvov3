@@ -81,7 +81,7 @@ export const DEFAULT_SUBCATEGORIAS: Record<string, string[]> = {
   imposto: ["MEI", "IPVA", "Licenciamento", "CRLV"],
   equipe: ["Pró Labore", "Transporte", "Alimentação", "Folha de Pagamento"],
   marketing: ["Tráfego Pago", "Brindes"],
-  taxas: ["Administradora de Cobranças"],
+  taxas: ["Administradora de Cobranças", "Taxa Asaas", "Taxa de boleto", "Taxa de mensageria", "Taxa de transferência", "Taxa de antecipação", "Taxa PIX"],
 };
 
 export const DEFAULT_TAGS: Record<string, string[]> = {

@@ -128,6 +128,7 @@ export const SCHEMAS: Record<EntityKind, { fields: FieldDef[]; sheetName: string
     fields: [
       { key: "placa", label: "Placa", example: "ABC1D23", required: true },
       { key: "modelo", label: "Modelo", example: "Honda CG 160 Fan", required: true },
+      { key: "anoFabricacao", label: "Ano Fabricação", example: 2022 },
       { key: "anoModelo", label: "Ano Modelo", example: 2023 },
       { key: "cor", label: "Cor", example: "Vermelha" },
       { key: "chassi", label: "Chassi", example: "9C2KC1670NR000001" },
@@ -497,6 +498,7 @@ export function buildMotosPreview(
       id: conflict?.id || crypto.randomUUID(),
       placa,
       modelo,
+      anoFabricacao: parseInt(getCell(row, "Ano Fabricação")) || null,
       anoModelo: parseInt(getCell(row, "Ano Modelo")) || null,
       cor: getCell(row, "Cor"),
       chassi: getCell(row, "Chassi"),

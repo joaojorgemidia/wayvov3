@@ -21,6 +21,7 @@ function motoToRow(m: any) {
     id: m.id,
     placa: m.placa || "",
     modelo: m.modelo || "",
+    ano_fabricacao: m.anoFabricacao ?? null,
     ano_modelo: m.anoModelo ?? null,
     cor: m.cor || "",
     chassi: m.chassi || "",

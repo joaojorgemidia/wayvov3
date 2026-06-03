@@ -8,6 +8,7 @@ export interface Motorcycle {
   id: string;
   placa: string;
   modelo: string;
+  anoFabricacao: number | null;
   anoModelo: number | null;
   cor: string;
   chassi: string;

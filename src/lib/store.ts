@@ -109,6 +109,8 @@ export interface FinConfig {
   customTags: Record<string, string[]>;
   customContas: string[];
   removedDefaults?: { receita: string[]; despesa: string[] };
+  removedSubcategorias?: Record<string, string[]>;
+  removedTags?: Record<string, string[]>;
 }
 
 const defaultFinConfig: FinConfig = {
@@ -116,6 +118,8 @@ const defaultFinConfig: FinConfig = {
   customSubcategorias: {},
   customTags: {},
   customContas: [],
+  removedSubcategorias: {},
+  removedTags: {},
 };
 
 export function loadFinConfig(): FinConfig { return loadData(companyKey(FIN_CONFIG_BASE), defaultFinConfig); }

@@ -14,6 +14,13 @@ const STATUS_MAP: Record<string, string> = {
   PAYMENT_PARTIALLY_REFUNDED: "PARTIALLY_REFUNDED",
 };
 
+async function feeIdToUUID(feeId: string | number): Promise<string> {
+  const data = new TextEncoder().encode(`asaas-fee:${feeId}`);
+  const buf = await crypto.subtle.digest("SHA-1", data);
+  const h = [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, "0")).join("");
+  return `${h.slice(0,8)}-${h.slice(8,12)}-5${h.slice(13,16)}-${(["8","9","a","b"])[parseInt(h[16],16)&3]}${h.slice(17,20)}-${h.slice(20,32)}`;
+}
+
 function parseFeeSubcategoria(description: string): string {
   const d = description.toLowerCase();
   if (d.includes("mensageria") || d.includes("sms") || d.includes("whatsapp")) return "Taxa de mensageria";
@@ -67,7 +74,7 @@ async function registerAsaasFees(
       const subcategoria = parseFeeSubcategoria(fee.description || "");
 
       const feeEntry = {
-        id: `asaas-fee-${fee.id}`,
+        id: await feeIdToUUID(fee.id),
         tipo: "despesa",
         categoria: "taxas",
         subcategoria,
