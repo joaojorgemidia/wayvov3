@@ -4,11 +4,12 @@ import { maskCurrency, parseBRL, formatBRL } from "@/lib/masks";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { BankIcon } from "@/components/BankLogos";
 import { InfoTooltip } from "@/components/InfoTooltip";
-import { Archive, ArchiveRestore, Check, CreditCard, Info, MoreVertical, Pencil, Plus, Search, RefreshCw } from "lucide-react";
+import { Archive, ArchiveRestore, Check, ChevronRight, CreditCard, Info, Loader2, MoreVertical, Pencil, Plus, Search, RefreshCw } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { toast } from "sonner";
@@ -16,6 +17,7 @@ import { useBankAccounts, useFinancialEntries, type BankAccount } from "@/hooks/
 import { calculateAccountBalances } from "@/lib/account-balances";
 import { useDataCacheSnapshot } from "@/lib/data-cache";
 import { usePermissions } from "@/hooks/usePermissions";
+import { CATEGORIES } from "@/lib/financeiro-constants";
 
 const bankOptions = [
   "C6", "Nubank", "Mercado Pago", "Asaas", "Inter", "Itaú", "Bradesco",
@@ -44,9 +46,114 @@ export default function ContasPage() {
   const [adjustMode, setAdjustMode] = useState<"transacao" | "saldo_inicial">("transacao");
   const [adjustDesc, setAdjustDesc] = useState("");
 
+  // Card detail sheet
+  const [cardDetailOpen, setCardDetailOpen] = useState(false);
+  const [cardDetailAccount, setCardDetailAccount] = useState<BankAccount | null>(null);
+
+  // New expense from card detail
+  const today = new Date().toISOString().split("T")[0];
+  const [newExpenseOpen, setNewExpenseOpen] = useState(false);
+  const [newExpenseForm, setNewExpenseForm] = useState({ descricao: "", valor: "", data: today, categoria: "outro_despesa", parcelas: 1, observacao: "" });
+  const [savingExpense, setSavingExpense] = useState(false);
+
   const accountBalances = useMemo(() => {
     return calculateAccountBalances(accounts, financial, 90);
   }, [accounts, financial]);
+
+  const expenseCategories = useMemo(
+    () => CATEGORIES.despesa.filter(c => c.value !== "fatura_cartao" && c.value !== "ajuste_saldo"),
+    [],
+  );
+
+  const monthLabel = (ym: string) => {
+    const [y, m] = ym.split("-");
+    const months = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
+    return `${months[parseInt(m) - 1]}/${y}`;
+  };
+
+  const cardEntries = useMemo(() => {
+    if (!cardDetailAccount) return [];
+    return (financial || [])
+      .filter(e => e.conta === cardDetailAccount.nome && e.tipo === "despesa" && e.categoria !== "fatura_cartao")
+      .sort((a, b) => (b.dataPrevista || b.data).localeCompare(a.dataPrevista || a.data));
+  }, [financial, cardDetailAccount]);
+
+  const cardEntriesByMonth = useMemo(() => {
+    const groups = new Map<string, FinancialEntry[]>();
+    cardEntries.forEach(e => {
+      const d = e.dataPrevista || e.data;
+      const ym = d ? d.slice(0, 7) : "?";
+      if (!groups.has(ym)) groups.set(ym, []);
+      groups.get(ym)!.push(e);
+    });
+    return Array.from(groups.entries()).sort((a, b) => b[0].localeCompare(a[0]));
+  }, [cardEntries]);
+
+  const openCardDetail = (account: BankAccount) => {
+    setCardDetailAccount(account);
+    setCardDetailOpen(true);
+  };
+
+  const handleSaveNewExpense = async () => {
+    if (!cardDetailAccount || !newExpenseForm.descricao.trim() || !newExpenseForm.valor) return;
+    setSavingExpense(true);
+    try {
+      const valor = parseBRL(newExpenseForm.valor);
+      if (!valor || valor <= 0) { toast.error("Valor inválido"); return; }
+      const card = cardDetailAccount;
+      const purchaseDate = new Date(newExpenseForm.data + "T00:00:00");
+      const closingDay = card.diaFechamento || 1;
+      const dueDay = card.diaVencimento || 1;
+      const parcelas = newExpenseForm.parcelas;
+      const baseId = crypto.randomUUID();
+      const baseSerie = parcelas > 1 ? `cc-${baseId}` : undefined;
+      const ccGroupId = parcelas > 1 ? crypto.randomUUID() : null;
+      const valorParcela = Math.round((valor / parcelas) * 100) / 100;
+      const closingMonthOffset = purchaseDate.getDate() > closingDay ? 1 : 0;
+      const dueMonthOffsetFromClosing = dueDay > closingDay ? 0 : 1;
+      const firstInvoiceMonthOffset = closingMonthOffset + dueMonthOffsetFromClosing;
+
+      for (let i = 0; i < parcelas; i++) {
+        const inv = new Date(purchaseDate.getFullYear(), purchaseDate.getMonth() + firstInvoiceMonthOffset + i, 1);
+        const lastDay = new Date(inv.getFullYear(), inv.getMonth() + 1, 0).getDate();
+        inv.setDate(Math.min(dueDay, lastDay));
+        const dueIso = inv.toISOString().split("T")[0];
+        const parcelaTag = parcelas > 1 ? ` (${i + 1}/${parcelas})` : "";
+        const entry: FinancialEntry = {
+          id: i === 0 ? baseId : crypto.randomUUID(),
+          tipo: "despesa",
+          categoria: newExpenseForm.categoria,
+          subcategoria: null,
+          descricao: newExpenseForm.descricao.trim() + parcelaTag,
+          valor: valorParcela,
+          data: dueIso,
+          dataPrevista: dueIso,
+          pago: false,
+          conta: card.nome,
+          natureza: "operacional",
+          tags: [],
+          motoId: null, rentalId: null, clienteId: null,
+          placa: "", clienteNome: "",
+          recorrente: false, despesaFixa: false,
+          serieId: baseSerie ?? null, fixedOriginId: null, recurringGroupId: ccGroupId,
+          recorrenciaTipo: "mensal", recorrenciaVezes: 0, recorrenciaPorPeriodo: 1,
+          observacao: (newExpenseForm.observacao.trim() ? newExpenseForm.observacao.trim() + " • " : "") +
+            `Compra em ${purchaseDate.toLocaleDateString("pt-BR")}${parcelas > 1 ? ` • Parcela ${i + 1}/${parcelas}` : ""} • ${card.nome}`,
+          asaasPaymentId: null,
+        };
+        await saveFinancialEntry(entry);
+      }
+
+      if (parcelas > 1) toast.success(`${parcelas} parcelas lançadas no ${card.nome}`);
+      else toast.success(`Despesa lançada na fatura do ${card.nome}`);
+      setNewExpenseOpen(false);
+      setNewExpenseForm({ descricao: "", valor: "", data: today, categoria: "outro_despesa", parcelas: 1, observacao: "" });
+    } catch (err: any) {
+      toast.error("Erro ao salvar: " + (err?.message || "Tente novamente"));
+    } finally {
+      setSavingExpense(false);
+    }
+  };
 
   const totalAtual = useMemo(
     () => Object.values(accountBalances).reduce((s, b) => s + b.atual, 0),
@@ -388,7 +495,11 @@ export default function ContasPage() {
             const disponivel = Math.max(0, limite - usado);
             const pct = limite > 0 ? Math.min(100, (usado / limite) * 100) : 0;
             return (
-              <Card key={account.id} className="relative overflow-hidden">
+              <Card
+                key={account.id}
+                className="relative overflow-hidden cursor-pointer hover:border-primary/50 transition-colors"
+                onClick={() => openCardDetail(account)}
+              >
                 <CardContent className="p-5">
                   <div className="mb-4 flex items-start justify-between">
                     <div className="flex items-center gap-3">
@@ -402,25 +513,28 @@ export default function ContasPage() {
                         </p>
                       </div>
                     </div>
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <Button variant="ghost" size="icon" className="h-8 w-8">
-                          <MoreVertical className="h-4 w-4" />
-                        </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end">
-                        {canEdit && (
-                          <DropdownMenuItem onClick={() => openEdit(account)}>
-                            <Pencil className="mr-2 h-3.5 w-3.5" /> Editar
-                          </DropdownMenuItem>
-                        )}
-                        {canDelete && (
-                          <DropdownMenuItem onClick={() => handleDelete(account.id)} className="text-destructive">
-                            <Archive className="mr-2 h-3.5 w-3.5" /> Arquivar
-                          </DropdownMenuItem>
-                        )}
-                      </DropdownMenuContent>
-                    </DropdownMenu>
+                    <div className="flex items-center gap-1">
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={e => e.stopPropagation()}>
+                            <MoreVertical className="h-4 w-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          {canEdit && (
+                            <DropdownMenuItem onClick={e => { e.stopPropagation(); openEdit(account); }}>
+                              <Pencil className="mr-2 h-3.5 w-3.5" /> Editar
+                            </DropdownMenuItem>
+                          )}
+                          {canDelete && (
+                            <DropdownMenuItem onClick={e => { e.stopPropagation(); handleDelete(account.id); }} className="text-destructive">
+                              <Archive className="mr-2 h-3.5 w-3.5" /> Arquivar
+                            </DropdownMenuItem>
+                          )}
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                      <ChevronRight className="h-4 w-4 text-muted-foreground/50" />
+                    </div>
                   </div>
 
                   {account.descricao && (
@@ -658,6 +772,216 @@ export default function ContasPage() {
           <DialogFooter>
             <Button variant="ghost" onClick={() => setDialogOpen(false)}>Cancelar</Button>
             <Button onClick={handleSave} disabled={!form.nome.trim() || !form.banco}>Salvar</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Sheet: detalhe do cartão */}
+      <Sheet open={cardDetailOpen} onOpenChange={setCardDetailOpen}>
+        <SheetContent className="w-full sm:max-w-lg flex flex-col gap-0 p-0">
+          {cardDetailAccount && (() => {
+            const bal = accountBalances[cardDetailAccount.nome] || { atual: 0, previsto: 0 };
+            const limite = cardDetailAccount.limite || 0;
+            const usado = Math.max(0, -bal.atual);
+            const disponivel = Math.max(0, limite - usado);
+            const pct = limite > 0 ? Math.min(100, (usado / limite) * 100) : 0;
+            return (
+              <>
+                {/* Header */}
+                <SheetHeader className="p-5 pb-4 border-b">
+                  <div className="flex items-center gap-3">
+                    <div className="flex h-10 w-10 items-center justify-center rounded-md bg-primary/10 text-primary">
+                      <CreditCard className="h-6 w-6" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <SheetTitle className="text-base">{cardDetailAccount.nome}</SheetTitle>
+                      <p className="text-xs text-muted-foreground">
+                        {cardDetailAccount.bandeira || "Cartão"}{cardDetailAccount.banco ? ` • ${cardDetailAccount.banco}` : ""}
+                        {" • "}Vence dia {cardDetailAccount.diaVencimento || "-"} • Fecha dia {cardDetailAccount.diaFechamento || "-"}
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Limit bar */}
+                  {limite > 0 && (
+                    <div className="mt-3 space-y-1.5">
+                      <div className="flex justify-between text-xs text-muted-foreground">
+                        <span>Fatura atual</span>
+                        <span className="font-mono">{fmt(usado)} / {fmt(limite)}</span>
+                      </div>
+                      <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
+                        <div className="h-full bg-primary transition-all" style={{ width: `${pct}%` }} />
+                      </div>
+                      <div className="flex justify-between text-xs">
+                        <span className="text-muted-foreground">Disponível</span>
+                        <span className="font-mono font-semibold text-emerald-600">{fmt(disponivel)}</span>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Actions */}
+                  <div className="mt-3 flex gap-2">
+                    {canCreate && (
+                      <Button size="sm" className="gap-1.5 flex-1" onClick={() => {
+                        setNewExpenseForm({ descricao: "", valor: "", data: today, categoria: "outro_despesa", parcelas: 1, observacao: "" });
+                        setNewExpenseOpen(true);
+                      }}>
+                        <Plus className="h-3.5 w-3.5" /> Nova despesa
+                      </Button>
+                    )}
+                    {canEdit && (
+                      <Button size="sm" variant="outline" className="gap-1.5" onClick={() => { setCardDetailOpen(false); openEdit(cardDetailAccount); }}>
+                        <Pencil className="h-3.5 w-3.5" /> Editar
+                      </Button>
+                    )}
+                  </div>
+                </SheetHeader>
+
+                {/* Entry list */}
+                <div className="flex-1 overflow-y-auto p-5 space-y-5">
+                  {cardEntriesByMonth.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center py-12 text-center text-muted-foreground">
+                      <CreditCard className="h-8 w-8 mb-3 opacity-30" />
+                      <p className="text-sm">Nenhuma despesa lançada neste cartão.</p>
+                    </div>
+                  ) : (
+                    cardEntriesByMonth.map(([ym, entries]) => {
+                      const total = entries.reduce((s, e) => s + e.valor, 0);
+                      return (
+                        <div key={ym}>
+                          <div className="flex items-center justify-between mb-2">
+                            <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                              Fatura {monthLabel(ym)}
+                            </span>
+                            <span className="font-mono text-sm font-semibold text-foreground">{fmt(total)}</span>
+                          </div>
+                          <div className="rounded-lg border divide-y overflow-hidden">
+                            {entries.map(e => (
+                              <div key={e.id} className="flex items-center justify-between px-3 py-2.5 bg-background hover:bg-muted/30 transition-colors">
+                                <div className="flex-1 min-w-0 pr-3">
+                                  <p className="text-sm truncate text-foreground">{e.descricao}</p>
+                                  <p className="text-xs text-muted-foreground">
+                                    {e.dataPrevista || e.data}
+                                    {e.pago && <span className="ml-1.5 text-emerald-600">• Pago</span>}
+                                  </p>
+                                </div>
+                                <span className={`font-mono text-sm font-medium ${e.pago ? "text-muted-foreground" : "text-destructive"}`}>
+                                  {fmt(e.valor)}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </>
+            );
+          })()}
+        </SheetContent>
+      </Sheet>
+
+      {/* Dialog: nova despesa no cartão */}
+      <Dialog open={newExpenseOpen} onOpenChange={setNewExpenseOpen}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Nova despesa — {cardDetailAccount?.nome}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="grid gap-1">
+              <Label className="text-xs">Descrição <span className="text-destructive">*</span></Label>
+              <Input
+                value={newExpenseForm.descricao}
+                onChange={e => setNewExpenseForm(f => ({ ...f, descricao: e.target.value }))}
+                placeholder="Ex: Supermercado, Combustível..."
+                autoFocus
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="grid gap-1">
+                <Label className="text-xs">Valor <span className="text-destructive">*</span></Label>
+                <div className="relative">
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">R$</span>
+                  <Input
+                    value={newExpenseForm.valor}
+                    onChange={e => setNewExpenseForm(f => ({ ...f, valor: maskCurrency(e.target.value) }))}
+                    placeholder="0,00"
+                    className="pl-9 font-mono"
+                  />
+                </div>
+              </div>
+              <div className="grid gap-1">
+                <Label className="text-xs">Parcelas</Label>
+                <select
+                  value={newExpenseForm.parcelas}
+                  onChange={e => setNewExpenseForm(f => ({ ...f, parcelas: parseInt(e.target.value) }))}
+                  className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                >
+                  {Array.from({ length: 12 }, (_, i) => i + 1).map(n => (
+                    <option key={n} value={n}>{n}x{n > 1 ? " sem juros" : ""}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            <div className="grid gap-1">
+              <Label className="text-xs">Data da compra</Label>
+              <Input
+                type="date"
+                value={newExpenseForm.data}
+                onChange={e => setNewExpenseForm(f => ({ ...f, data: e.target.value }))}
+              />
+            </div>
+            <div className="grid gap-1">
+              <Label className="text-xs">Categoria</Label>
+              <select
+                value={newExpenseForm.categoria}
+                onChange={e => setNewExpenseForm(f => ({ ...f, categoria: e.target.value }))}
+                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+              >
+                {expenseCategories.map(c => (
+                  <option key={c.value} value={c.value}>{c.label}</option>
+                ))}
+              </select>
+            </div>
+            <div className="grid gap-1">
+              <Label className="text-xs">Observação <span className="text-muted-foreground font-normal">(opcional)</span></Label>
+              <Input
+                value={newExpenseForm.observacao}
+                onChange={e => setNewExpenseForm(f => ({ ...f, observacao: e.target.value }))}
+                placeholder="..."
+              />
+            </div>
+            {cardDetailAccount && newExpenseForm.valor && parseBRL(newExpenseForm.valor) > 0 && (() => {
+              const card = cardDetailAccount;
+              const purchaseDate = new Date((newExpenseForm.data || today) + "T00:00:00");
+              const closingDay = card.diaFechamento || 1;
+              const dueDay = card.diaVencimento || 1;
+              const closingMonthOffset = purchaseDate.getDate() > closingDay ? 1 : 0;
+              const dueMonthOffsetFromClosing = dueDay > closingDay ? 0 : 1;
+              const firstOffset = closingMonthOffset + dueMonthOffsetFromClosing;
+              const inv = new Date(purchaseDate.getFullYear(), purchaseDate.getMonth() + firstOffset, Math.min(dueDay, 28));
+              const invLabel = monthLabel(inv.toISOString().slice(0, 7));
+              const valor = parseBRL(newExpenseForm.valor);
+              const parcelas = newExpenseForm.parcelas;
+              return (
+                <p className="rounded-md bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+                  💳 {parcelas > 1
+                    ? `${parcelas}x de ${fmt(Math.round(valor / parcelas * 100) / 100)} — 1ª parcela na fatura de ${invLabel}`
+                    : `Vai para a fatura de ${invLabel}`}
+                </p>
+              );
+            })()}
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setNewExpenseOpen(false)}>Cancelar</Button>
+            <Button
+              onClick={handleSaveNewExpense}
+              disabled={savingExpense || !newExpenseForm.descricao.trim() || !newExpenseForm.valor}
+            >
+              {savingExpense && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />}
+              Salvar
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

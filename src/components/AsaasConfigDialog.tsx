@@ -101,6 +101,24 @@ export default function AsaasConfigDialog({ open, onClose, onSave, initial, comp
                 </div>
               </div>
 
+              {/* Multa diária */}
+              <div className="space-y-1.5">
+                <Label className="text-sm font-medium">Multa diária por atraso</Label>
+                <p className="text-xs text-muted-foreground">Valor adicional cobrado por cada dia de atraso.</p>
+                <div className="flex items-center gap-2">
+                  <span className="text-sm text-muted-foreground">R$</span>
+                  <Input
+                    type="number"
+                    min={0}
+                    step={0.01}
+                    value={cfg.multaDiaria ?? 0}
+                    onChange={e => set("multaDiaria", Number(e.target.value))}
+                    className="w-32"
+                  />
+                  <span className="text-sm text-muted-foreground">/ dia</span>
+                </div>
+              </div>
+
               {/* Juros */}
               <div className="space-y-1.5">
                 <Label className="text-sm font-medium">Definir juros de atraso</Label>

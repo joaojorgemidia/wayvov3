@@ -3159,17 +3159,16 @@ export default function FinanceiroPage() {
                                 <Tooltip>
                                   <TooltipTrigger asChild>
                                     <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium whitespace-nowrap ${
-                                      (e.asaasStatus === "RECEIVED" || (e.pago && e.asaasStatus === "PENDING")) ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400" :
+                                      (e.asaasStatus === "RECEIVED" || (e.pago && e.asaasStatus !== "DELETED")) ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400" :
                                       e.asaasStatus === "OVERDUE"  ? "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400" :
                                       "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400"
                                     }`}>
-                                      {e.asaasStatus === "RECEIVED" ? "Pago Asaas" :
-                                       (e.pago && e.asaasStatus === "PENDING") ? "Pago Asaas" :
+                                      {(e.asaasStatus === "RECEIVED" || (e.pago && e.asaasStatus !== "DELETED")) ? "Pago Asaas" :
                                        e.asaasStatus === "OVERDUE"  ? "Vencido Asaas" : "Asaas"}
                                     </span>
                                   </TooltipTrigger>
                                   <TooltipContent side="top" className="text-xs">
-                                    {e.pago && e.asaasStatus === "PENDING" ? "Boleto Asaas · Pago manualmente" : `Boleto Asaas · ${e.asaasStatus}`}
+                                    {e.pago && e.asaasStatus !== "RECEIVED" ? "Boleto Asaas · Pago manualmente" : `Boleto Asaas · ${e.asaasStatus}`}
                                   </TooltipContent>
                                 </Tooltip>
                               </TooltipProvider>

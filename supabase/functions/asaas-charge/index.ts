@@ -97,6 +97,7 @@ serve(async (req) => {
 
     // 2b. Busca a locação e a config Asaas da empresa
     let multaAtraso = 0;
+    let multaDiaria = 0;
     let jurosAtrasoMes = 0;
     let contratoNumero: number | null = null;
     let asaasConfig: Record<string, any> | null = null;
@@ -126,6 +127,7 @@ serve(async (req) => {
         asaasConfig = company.asaas_config;
         if (asaasConfig.enabled) {
           multaAtraso = Number(asaasConfig.multaAtraso) || 0;
+          multaDiaria = Number(asaasConfig.multaDiaria) || 0;
           jurosAtrasoMes = Number(asaasConfig.jurosAtrasoMes) || 0;
         }
       }
@@ -201,9 +203,13 @@ serve(async (req) => {
       postalService: false,
     };
 
-    // Multa por atraso
-    if (multaAtraso > 0) {
-      paymentPayload.fine = { value: multaAtraso, type: "FIXED" };
+    // Multa por atraso (fixa) + multa diária acumulada até hoje se o boleto já venceu
+    const dueDateObj = new Date(effectiveDueDate + "T00:00:00");
+    const todayObj = new Date(today + "T00:00:00");
+    const diasAtraso = Math.max(0, Math.floor((todayObj.getTime() - dueDateObj.getTime()) / 86400000));
+    const multaTotal = multaAtraso + multaDiaria * diasAtraso;
+    if (multaTotal > 0) {
+      paymentPayload.fine = { value: multaTotal, type: "FIXED" };
     }
 
     // Juros mensais

@@ -2,6 +2,7 @@ export interface AsaasConfig {
   apiKey?: string;                // chave de API da conta Asaas desta empresa
   enabled: boolean;
   multaAtraso: number;
+  multaDiaria: number;            // R$ por dia de atraso (acumulativo)
   jurosAtrasoMes: number;
   descontoEnabled: boolean;
   descontoValor: number;
@@ -15,6 +16,7 @@ export interface AsaasConfig {
 export const DEFAULT_ASAAS_CONFIG: AsaasConfig = {
   enabled: false,
   multaAtraso: 0,
+  multaDiaria: 0,
   jurosAtrasoMes: 0,
   descontoEnabled: false,
   descontoValor: 0,
