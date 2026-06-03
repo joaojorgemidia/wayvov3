@@ -23,7 +23,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { useDataCacheSnapshot } from "@/lib/data-cache";
-import { saveFinancial } from "@/lib/store";
+import { saveFinancial, loadFinancial } from "@/lib/store";
 import { FinancialEntry } from "@/lib/types";
 import { MessagePopup } from "@/components/MessagePopup";
 import { applyTokens, buildAllTokens } from "@/lib/message-tokens";
@@ -482,7 +482,7 @@ export default function CobrancasSemanaPage() {
     const valor = parseFloat(form.valor.replace(",", ".")) || item.entry.valor || 0;
     try {
       const payDate = form.data || new Date().toISOString().slice(0, 10);
-      const next = cache.financial.map((e) =>
+      const next = loadFinancial().map((e) =>
         e.id === item.entry.id
           ? {
               ...e,
@@ -611,7 +611,7 @@ export default function CobrancasSemanaPage() {
     const target = reschedItem;
     if (!target || !newDate) return;
     try {
-      const next = cache.financial.map((e) =>
+      const next = loadFinancial().map((e) =>
         e.id === target.entry.id ? { ...e, dataPrevista: newDate } : e,
       );
       await saveFinancial(next);
@@ -633,7 +633,7 @@ export default function CobrancasSemanaPage() {
     nd.setDate(nd.getDate() + deltaDays);
     try {
       const iso = toISODate(nd);
-      const next = cache.financial.map((e) =>
+      const next = loadFinancial().map((e) =>
         e.id === item.entry.id ? { ...e, dataPrevista: iso } : e,
       );
       await saveFinancial(next);
@@ -645,7 +645,7 @@ export default function CobrancasSemanaPage() {
 
   const handleIgnore = async (item: RowItem) => {
     try {
-      const next = cache.financial.map((e) =>
+      const next = loadFinancial().map((e) =>
         e.id === item.entry.id ? { ...e, ignorada: true } : e,
       );
       await saveFinancial(next);
@@ -1502,6 +1502,17 @@ function RowItemView({
 
       {/* Ações — desabilitadas se pago (exceto "...") */}
       <div className={`flex items-center gap-1 pr-2 flex-shrink-0 ${isPago ? "opacity-30 pointer-events-none" : ""}`}>
+        {/* Copiar nº de telefone */}
+        {item.telefoneCliente && (
+          <button
+            className="w-[30px] h-[30px] rounded-[7px] border border-border/60 flex items-center justify-center text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+            onClick={() => onCopy(item.telefoneCliente!, "Telefone")}
+            title={item.telefoneCliente}
+          >
+            <Copy className="h-3.5 w-3.5" />
+          </button>
+        )}
+
         {/* Boleto link */}
         {boletoUrl && (
           <a href={boletoUrl} target="_blank" rel="noopener noreferrer">
