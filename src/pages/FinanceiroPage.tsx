@@ -1328,11 +1328,10 @@ export default function FinanceiroPage() {
     [entries, currentMonth, customRangeMode, customFrom, customTo]
   );
 
-  // Expand to full dataset only when dateFrom is explicitly set (user defined a start outside the current month).
-  // dateTo alone keeps the current month scope — it acts as an upper bound within the month.
+  // Expand to full dataset whenever any date range filter is active.
   const filteredSource = useMemo(
-    () => (dateFrom ? entries : monthEntries),
-    [entries, monthEntries, dateFrom],
+    () => (dateFrom || dateTo ? entries : monthEntries),
+    [entries, monthEntries, dateFrom, dateTo],
   );
 
   const filtered = useMemo(() => {
