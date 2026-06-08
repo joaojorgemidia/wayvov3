@@ -40,7 +40,7 @@ import { Calendar as CalendarComponent } from "@/components/ui/calendar";
 import { BankIcon } from "@/components/BankLogos";
 import { ptBR } from "date-fns/locale";
 import { useDataCacheSnapshot } from "@/lib/data-cache";
-import { getCompanyFeatureFlags } from "@/lib/companies";
+import { getCompanyFeatureFlags, DEFAULT_COBRANCA_CONFIG } from "@/lib/companies";
 import { useCompany } from "@/contexts/CompanyContext";
 import { ImportExportBar } from "@/components/ImportExportBar";
 import { useBankAccounts } from "@/hooks/useSupabaseData";
@@ -2094,11 +2094,32 @@ export default function FinanceiroPage() {
     const entry = entries.find(e => e.id === id);
     if (entry) {
       setConfirmToggleEntry(entry);
-      setConfirmDate(!entry.pago ? new Date().toISOString().split("T")[0] : "");
+      const payDate = !entry.pago ? new Date().toISOString().split("T")[0] : "";
+      setConfirmDate(payDate);
       setConfirmConta(entry.conta || "");
-      setConfirmValor(entry.valor.toLocaleString("pt-BR", { minimumFractionDigits: 2 }));
       const card = creditCards.find(c => c.nome === (entry.conta || ""));
       setConfirmPayBank(card?.contaPagamento || "");
+
+      // Calcula valor inicial com acréscimos por atraso
+      let initialValor = entry.valor;
+      if (!entry.pago && entry.rentalId && entry.tipo === "receita" && entry.categoria === "aluguel" && payDate) {
+        const rental = rentals.find(r => r.id === entry.rentalId);
+        const dueDateStr = entry.dataPrevista || entry.data;
+        if (rental && dueDateStr) {
+          const dueDate = new Date(dueDateStr + "T00:00:00");
+          const pay = new Date(payDate + "T00:00:00");
+          const daysOverdue = Math.max(0, Math.floor((pay.getTime() - dueDate.getTime()) / 86400000));
+          if (daysOverdue > 0) {
+            const cfg = activeCompany?.cobrancaConfig ?? DEFAULT_COBRANCA_CONFIG;
+            const multa = rental.multaAtraso || cfg.multaAtraso || 0;
+            const jurosMes = rental.jurosAtrasoMes || cfg.jurosMes || 0;
+            const jurosCalc = (entry.valor * (jurosMes / 100 / 30)) * daysOverdue;
+            const jurosDiarioFix = (cfg.jurosDiario || 0) * daysOverdue;
+            initialValor = entry.valor + multa + jurosCalc + jurosDiarioFix;
+          }
+        }
+      }
+      setConfirmValor(initialValor.toLocaleString("pt-BR", { minimumFractionDigits: 2 }));
     }
   };
 
@@ -2120,7 +2141,7 @@ export default function FinanceiroPage() {
       setConfirmValor(confirmToggleEntry.valor.toLocaleString("pt-BR", { minimumFractionDigits: 2 }));
       return;
     }
-    const cfg = activeCompany?.cobrancaConfig ?? { multaAtraso: 0, jurosDiario: 0, jurosMes: 0 };
+    const cfg = activeCompany?.cobrancaConfig ?? DEFAULT_COBRANCA_CONFIG;
     const multa = rental.multaAtraso || cfg.multaAtraso || 0;
     const jurosMes = rental.jurosAtrasoMes || cfg.jurosMes || 0;
     const jurosCalc = (confirmToggleEntry.valor * (jurosMes / 100 / 30)) * daysOverdue;
@@ -2128,7 +2149,7 @@ export default function FinanceiroPage() {
     const total = confirmToggleEntry.valor + multa + jurosCalc + jurosDiarioFix;
     setConfirmValor(total.toLocaleString("pt-BR", { minimumFractionDigits: 2 }));
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [confirmDate, confirmToggleEntry]);
+  }, [confirmDate, confirmToggleEntry, activeCompany, rentals]);
 
   const confirmTogglePago = () => {
     if (!confirmToggleEntry) return;
@@ -2146,7 +2167,7 @@ export default function FinanceiroPage() {
     const daysOverdue = (isRentalPayment && dueDate)
       ? Math.max(0, Math.floor((new Date(payDate + "T00:00:00").getTime() - dueDate.getTime()) / 86400000))
       : 0;
-    const cfg = activeCompany?.cobrancaConfig ?? { multaAtraso: 0, jurosDiario: 0, jurosMes: 0 };
+    const cfg = activeCompany?.cobrancaConfig ?? DEFAULT_COBRANCA_CONFIG;
     const multa        = daysOverdue > 0 ? (rental?.multaAtraso    || cfg.multaAtraso || 0) : 0;
     const jurosMesEfetivo = rental?.jurosAtrasoMes || cfg.jurosMes || 0;
     const jurosCalc    = daysOverdue > 0 ? (confirmToggleEntry.valor * (jurosMesEfetivo / 100 / 30)) * daysOverdue : 0;
@@ -4541,7 +4562,7 @@ export default function FinanceiroPage() {
                 const pay = new Date(confirmDate + "T00:00:00");
                 const daysOverdue = Math.max(0, Math.floor((pay.getTime() - due.getTime()) / 86400000));
                 if (daysOverdue === 0) return null;
-                const cfg = activeCompany?.cobrancaConfig ?? { multaAtraso: 0, jurosDiario: 0, jurosMes: 0 };
+                const cfg = activeCompany?.cobrancaConfig ?? DEFAULT_COBRANCA_CONFIG;
                 const multa = rental.multaAtraso || cfg.multaAtraso || 0;
                 const jurosMes = rental.jurosAtrasoMes || cfg.jurosMes || 0;
                 const jurosCalc = (confirmToggleEntry.valor * (jurosMes / 100 / 30)) * daysOverdue;
