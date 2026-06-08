@@ -2120,9 +2120,12 @@ export default function FinanceiroPage() {
       setConfirmValor(confirmToggleEntry.valor.toLocaleString("pt-BR", { minimumFractionDigits: 2 }));
       return;
     }
-    const multa = rental.multaAtraso || 0;
-    const jurosDia = (confirmToggleEntry.valor * (rental.jurosAtrasoMes || 0) / 100) / 30;
-    const total = confirmToggleEntry.valor + multa + jurosDia * daysOverdue;
+    const cfg = activeCompany?.cobrancaConfig ?? { multaAtraso: 0, jurosDiario: 0, jurosMes: 0 };
+    const multa = rental.multaAtraso || cfg.multaAtraso || 0;
+    const jurosMes = rental.jurosAtrasoMes || cfg.jurosMes || 0;
+    const jurosCalc = (confirmToggleEntry.valor * (jurosMes / 100 / 30)) * daysOverdue;
+    const jurosDiarioFix = (cfg.jurosDiario || 0) * daysOverdue;
+    const total = confirmToggleEntry.valor + multa + jurosCalc + jurosDiarioFix;
     setConfirmValor(total.toLocaleString("pt-BR", { minimumFractionDigits: 2 }));
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [confirmDate, confirmToggleEntry]);
@@ -2170,17 +2173,16 @@ export default function FinanceiroPage() {
       const priNome = nome.split(" ")[0];
       const fmt2 = (v: number) => v.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-      // Calcular acréscimos por atraso
-      const multa = rental?.multaAtraso || 0;
-      const jurosAtrasoMes = rental?.jurosAtrasoMes || 0;
-      const valorOriginal = confirmToggleEntry.valor;
-      const payDateObj = new Date(payDate + "T00:00:00");
-      const daysOverdue = dueDate ? Math.max(0, Math.floor((payDateObj.getTime() - dueDate.getTime()) / 86400000)) : 0;
-      const jurosDia = (valorOriginal * jurosAtrasoMes / 100) / 30;
-      const totalJuros = jurosDia * daysOverdue;
+      // Calcular acréscimos por atraso usando hierarquia: locação > empresa
+      const cfg = activeCompany?.cobrancaConfig ?? { multaAtraso: 0, jurosDiario: 0, jurosMes: 0 };
+      const multa = daysOverdue > 0 ? (rental?.multaAtraso || cfg.multaAtraso || 0) : 0;
+      const jurosMesEfetivo = rental?.jurosAtrasoMes || cfg.jurosMes || 0;
+      const jurosCalcMsg = daysOverdue > 0 ? (valorOriginal * (jurosMesEfetivo / 100 / 30)) * daysOverdue : 0;
+      const jurosDiarioFixMsg = daysOverdue > 0 ? (cfg.jurosDiario || 0) * daysOverdue : 0;
+      const totalJuros = jurosCalcMsg + jurosDiarioFixMsg;
       const totalComAcrescimos = daysOverdue > 0 ? valorOriginal + multa + totalJuros : 0;
       const pendente = totalComAcrescimos > 0 ? Math.max(0, Math.round((totalComAcrescimos - finalValor) * 100) / 100) : 0;
-      const temAcrescimo = daysOverdue > 0 && (multa > 0 || jurosAtrasoMes > 0);
+      const temAcrescimo = daysOverdue > 0 && (multa > 0 || totalJuros > 0);
 
       const mensagem = [
         `Olá, ${priNome}! Segue confirmação do seu pagamento:`,
@@ -2189,12 +2191,11 @@ export default function FinanceiroPage() {
         dueDateStr ? `📅 Vencimento: ${new Date(dueDateStr + "T12:00:00").toLocaleDateString("pt-BR")}` : null,
         `✅ Pago em: ${new Date(payDate + "T12:00:00").toLocaleDateString("pt-BR")}`,
         "",
-        // Bloco de atraso (só aparece quando há multa/juros configurados e houve atraso)
         temAcrescimo ? `⚠️ Pagamento com atraso de ${daysOverdue} dia${daysOverdue !== 1 ? "s" : ""}` : null,
         temAcrescimo && multa > 0 ? `• Multa: R$ ${fmt2(multa)}` : null,
-        temAcrescimo && jurosDia > 0 ? `• Juros (R$ ${fmt2(jurosDia)}/dia × ${daysOverdue} dias): R$ ${fmt2(totalJuros)}` : null,
+        temAcrescimo && cfg.jurosDiario > 0 ? `• Juros (R$ ${fmt2(cfg.jurosDiario)}/dia × ${daysOverdue} dias): R$ ${fmt2(jurosDiarioFixMsg)}` : null,
+        temAcrescimo && jurosMesEfetivo > 0 ? `• Juros ${fmt2(jurosMesEfetivo)}%/mês: R$ ${fmt2(jurosCalcMsg)}` : null,
         temAcrescimo ? "" : null,
-        // Valores
         temAcrescimo ? `💰 Valor original: R$ ${fmt2(valorOriginal)}` : null,
         temAcrescimo ? `💳 Total com acréscimos: R$ ${fmt2(totalComAcrescimos)}` : null,
         temAcrescimo ? `✅ Valor pago: R$ ${fmt2(finalValor)}` : null,
@@ -4499,11 +4500,16 @@ export default function FinanceiroPage() {
                 const pay = new Date(confirmDate + "T00:00:00");
                 const daysOverdue = Math.max(0, Math.floor((pay.getTime() - due.getTime()) / 86400000));
                 if (daysOverdue === 0) return null;
-                const multa = rental.multaAtraso || 0;
-                const jurosDia = (confirmToggleEntry.valor * (rental.jurosAtrasoMes || 0) / 100) / 30;
-                const totalJuros = jurosDia * daysOverdue;
+                const cfg = activeCompany?.cobrancaConfig ?? { multaAtraso: 0, jurosDiario: 0, jurosMes: 0 };
+                const multa = rental.multaAtraso || cfg.multaAtraso || 0;
+                const jurosMes = rental.jurosAtrasoMes || cfg.jurosMes || 0;
+                const jurosCalc = (confirmToggleEntry.valor * (jurosMes / 100 / 30)) * daysOverdue;
+                const jurosDiarioFix = (cfg.jurosDiario || 0) * daysOverdue;
+                const totalJuros = jurosCalc + jurosDiarioFix;
                 const total = confirmToggleEntry.valor + multa + totalJuros;
                 const fmt = (v: number) => v.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                const temAcrescimo = multa > 0 || totalJuros > 0;
+                if (!temAcrescimo) return null;
                 return (
                   <div className="rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-950/20 dark:border-amber-700 p-3 space-y-1.5 text-sm">
                     <div className="flex items-center gap-1.5 font-semibold text-amber-700 dark:text-amber-400 mb-0.5">
@@ -4519,18 +4525,22 @@ export default function FinanceiroPage() {
                         <span>R$ {fmt(multa)}</span>
                       </div>
                     )}
-                    {jurosDia > 0 && (
+                    {cfg.jurosDiario > 0 && (
                       <div className="flex justify-between">
-                        <span className="text-muted-foreground">Juros (R$ {fmt(jurosDia)}/dia):</span>
-                        <span>R$ {fmt(totalJuros)}</span>
+                        <span className="text-muted-foreground">Juros (R$ {fmt(cfg.jurosDiario)}/dia):</span>
+                        <span>R$ {fmt(jurosDiarioFix)}</span>
                       </div>
                     )}
-                    {(multa > 0 || jurosDia > 0) && (
-                      <div className="flex justify-between border-t pt-1.5 font-semibold">
-                        <span>Total a pagar:</span>
-                        <span className="text-red-600 dark:text-red-400">R$ {fmt(total)}</span>
+                    {jurosMes > 0 && (
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Juros {fmt(jurosMes)}%/mês:</span>
+                        <span>R$ {fmt(jurosCalc)}</span>
                       </div>
                     )}
+                    <div className="flex justify-between border-t pt-1.5 font-semibold">
+                      <span>Total a pagar:</span>
+                      <span className="text-red-600 dark:text-red-400">R$ {fmt(total)}</span>
+                    </div>
                   </div>
                 );
               })()}
