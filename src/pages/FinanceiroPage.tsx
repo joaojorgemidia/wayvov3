@@ -2149,7 +2149,7 @@ export default function FinanceiroPage() {
     const total = confirmToggleEntry.valor + multa + jurosCalc + jurosDiarioFix;
     setConfirmValor(total.toLocaleString("pt-BR", { minimumFractionDigits: 2 }));
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [confirmDate, confirmToggleEntry, activeCompany, rentals]);
+  }, [confirmDate, confirmToggleEntry, activeCompany]);
 
   const confirmTogglePago = () => {
     if (!confirmToggleEntry) return;
@@ -4611,6 +4611,33 @@ export default function FinanceiroPage() {
                       <span>Total a pagar:</span>
                       <span className="text-red-600 dark:text-red-400">R$ {fmt(total)}</span>
                     </div>
+                    {(() => {
+                      const parsed = parseFloat(confirmValor.replace(/\./g, "").replace(",", "."));
+                      if (isNaN(parsed) || parsed <= 0) return null;
+                      const pendente = Math.round((total - parsed) * 100) / 100;
+                      if (pendente > 0.009) {
+                        return (
+                          <div className="border-t pt-1.5 space-y-1">
+                            <div className="flex justify-between text-sm">
+                              <span className="text-muted-foreground">Recebido:</span>
+                              <span className="font-semibold">R$ {fmt(parsed)}</span>
+                            </div>
+                            <div className="flex justify-between text-sm font-semibold text-orange-600 dark:text-orange-400">
+                              <span>Pendente de juros/multa:</span>
+                              <span>R$ {fmt(pendente)}</span>
+                            </div>
+                          </div>
+                        );
+                      }
+                      if (parsed >= total) {
+                        return (
+                          <div className="text-center text-green-600 dark:text-green-400 text-xs border-t pt-1.5 font-medium">
+                            ✓ Valor cobre todas as taxas
+                          </div>
+                        );
+                      }
+                      return null;
+                    })()}
                   </div>
                 );
               })()}
