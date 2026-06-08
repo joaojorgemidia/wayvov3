@@ -1968,6 +1968,10 @@ export default function FinanceiroPage() {
   const handleDelete = (id: string) => {
     const entry = entries.find(e => e.id === id);
     if (!entry) return;
+    if (entry.pago) {
+      toast.error("Não é possível excluir um lançamento já pago/recebido.");
+      return;
+    }
     setDeleteTarget(entry);
   };
 
@@ -3098,7 +3102,7 @@ export default function FinanceiroPage() {
                                   </DropdownMenuItem>
                                 )}
                                 {canEdit && (
-                                  <DropdownMenuItem onClick={() => setDeleteTarget(e)} className="gap-2 text-xs text-destructive focus:text-destructive">
+                                  <DropdownMenuItem onClick={() => handleDelete(e.id)} className="gap-2 text-xs text-destructive focus:text-destructive">
                                     <Trash2 className="h-3.5 w-3.5" /> Excluir
                                   </DropdownMenuItem>
                                 )}
