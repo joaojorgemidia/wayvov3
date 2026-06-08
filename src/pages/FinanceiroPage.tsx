@@ -2102,6 +2102,31 @@ export default function FinanceiroPage() {
     }
   };
 
+  // Recalcula confirmValor com multa+juros quando a data de pagamento muda
+  useEffect(() => {
+    if (!confirmToggleEntry || confirmToggleEntry.pago || !confirmDate) return;
+    const rental = confirmToggleEntry.rentalId
+      ? rentals.find(r => r.id === confirmToggleEntry.rentalId)
+      : null;
+    const dueDateStr = confirmToggleEntry.dataPrevista || confirmToggleEntry.data;
+    if (!rental || !dueDateStr) {
+      setConfirmValor(confirmToggleEntry.valor.toLocaleString("pt-BR", { minimumFractionDigits: 2 }));
+      return;
+    }
+    const due = new Date(dueDateStr + "T00:00:00");
+    const pay = new Date(confirmDate + "T00:00:00");
+    const daysOverdue = Math.max(0, Math.floor((pay.getTime() - due.getTime()) / 86400000));
+    if (daysOverdue === 0) {
+      setConfirmValor(confirmToggleEntry.valor.toLocaleString("pt-BR", { minimumFractionDigits: 2 }));
+      return;
+    }
+    const multa = rental.multaAtraso || 0;
+    const jurosDia = (confirmToggleEntry.valor * (rental.jurosAtrasoMes || 0) / 100) / 30;
+    const total = confirmToggleEntry.valor + multa + jurosDia * daysOverdue;
+    setConfirmValor(total.toLocaleString("pt-BR", { minimumFractionDigits: 2 }));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [confirmDate, confirmToggleEntry]);
+
   const confirmTogglePago = () => {
     if (!confirmToggleEntry) return;
     const id = confirmToggleEntry.id;
@@ -4439,6 +4464,51 @@ export default function FinanceiroPage() {
                   </div>
                 </div>
               </div>
+
+              {/* Bloco de atraso — aparece quando há multa/juros configurados e a data de pagamento é posterior ao vencimento */}
+              {confirmToggleEntry.rentalId && confirmDate && (() => {
+                const rental = rentals.find(r => r.id === confirmToggleEntry.rentalId);
+                const dueDateStr = confirmToggleEntry.dataPrevista || confirmToggleEntry.data;
+                if (!rental || !dueDateStr) return null;
+                const due = new Date(dueDateStr + "T00:00:00");
+                const pay = new Date(confirmDate + "T00:00:00");
+                const daysOverdue = Math.max(0, Math.floor((pay.getTime() - due.getTime()) / 86400000));
+                if (daysOverdue === 0) return null;
+                const multa = rental.multaAtraso || 0;
+                const jurosDia = (confirmToggleEntry.valor * (rental.jurosAtrasoMes || 0) / 100) / 30;
+                const totalJuros = jurosDia * daysOverdue;
+                const total = confirmToggleEntry.valor + multa + totalJuros;
+                const fmt = (v: number) => v.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                return (
+                  <div className="rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-950/20 dark:border-amber-700 p-3 space-y-1.5 text-sm">
+                    <div className="flex items-center gap-1.5 font-semibold text-amber-700 dark:text-amber-400 mb-0.5">
+                      <AlertTriangle className="h-4 w-4 shrink-0" /> PAGAMENTO VENCIDO
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Dias em atraso:</span>
+                      <span className="font-semibold">{daysOverdue} dia{daysOverdue !== 1 ? "s" : ""}</span>
+                    </div>
+                    {multa > 0 && (
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Multa de atraso:</span>
+                        <span>R$ {fmt(multa)}</span>
+                      </div>
+                    )}
+                    {jurosDia > 0 && (
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Juros (R$ {fmt(jurosDia)}/dia):</span>
+                        <span>R$ {fmt(totalJuros)}</span>
+                      </div>
+                    )}
+                    {(multa > 0 || jurosDia > 0) && (
+                      <div className="flex justify-between border-t pt-1.5 font-semibold">
+                        <span>Total a pagar:</span>
+                        <span className="text-red-600 dark:text-red-400">R$ {fmt(total)}</span>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
 
               {/* Data de pagamento */}
               <div className="space-y-1.5">
