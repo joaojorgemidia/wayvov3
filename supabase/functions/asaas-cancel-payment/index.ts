@@ -19,9 +19,12 @@ async function asaas(path: string, method: string, apiKey: string, body?: object
     body: body ? JSON.stringify(body) : undefined,
   });
 
-  const data = await res.json();
+  const text = await res.text();
+  let data: Record<string, unknown> = {};
+  try { if (text) data = JSON.parse(text); } catch { /* resposta sem JSON */ }
+
   if (!res.ok) {
-    const msg = data?.errors?.[0]?.description || data?.message || JSON.stringify(data);
+    const msg = (data?.errors as any)?.[0]?.description || data?.message || text || "Erro desconhecido";
     throw new Error(`Asaas ${method} ${path} falhou: ${msg}`);
   }
   return data;
