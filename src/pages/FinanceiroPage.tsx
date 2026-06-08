@@ -2168,16 +2168,41 @@ export default function FinanceiroPage() {
       }
       const nome = client?.nome || "Locatário";
       const priNome = nome.split(" ")[0];
+      const fmt2 = (v: number) => v.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+      // Calcular acréscimos por atraso
+      const multa = rental?.multaAtraso || 0;
+      const jurosAtrasoMes = rental?.jurosAtrasoMes || 0;
+      const valorOriginal = confirmToggleEntry.valor;
+      const payDateObj = new Date(payDate + "T00:00:00");
+      const daysOverdue = dueDate ? Math.max(0, Math.floor((payDateObj.getTime() - dueDate.getTime()) / 86400000)) : 0;
+      const jurosDia = (valorOriginal * jurosAtrasoMes / 100) / 30;
+      const totalJuros = jurosDia * daysOverdue;
+      const totalComAcrescimos = daysOverdue > 0 ? valorOriginal + multa + totalJuros : 0;
+      const pendente = totalComAcrescimos > 0 ? Math.max(0, Math.round((totalComAcrescimos - finalValor) * 100) / 100) : 0;
+      const temAcrescimo = daysOverdue > 0 && (multa > 0 || jurosAtrasoMes > 0);
+
       const mensagem = [
         `Olá, ${priNome}! Segue confirmação do seu pagamento:`,
         "",
         periodoLabel ? `📋 Referência: ${periodoLabel}` : null,
         dueDateStr ? `📅 Vencimento: ${new Date(dueDateStr + "T12:00:00").toLocaleDateString("pt-BR")}` : null,
         `✅ Pago em: ${new Date(payDate + "T12:00:00").toLocaleDateString("pt-BR")}`,
-        `💰 Valor: R$ ${finalValor.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`,
+        "",
+        // Bloco de atraso (só aparece quando há multa/juros configurados e houve atraso)
+        temAcrescimo ? `⚠️ Pagamento com atraso de ${daysOverdue} dia${daysOverdue !== 1 ? "s" : ""}` : null,
+        temAcrescimo && multa > 0 ? `• Multa: R$ ${fmt2(multa)}` : null,
+        temAcrescimo && jurosDia > 0 ? `• Juros (R$ ${fmt2(jurosDia)}/dia × ${daysOverdue} dias): R$ ${fmt2(totalJuros)}` : null,
+        temAcrescimo ? "" : null,
+        // Valores
+        temAcrescimo ? `💰 Valor original: R$ ${fmt2(valorOriginal)}` : null,
+        temAcrescimo ? `💳 Total com acréscimos: R$ ${fmt2(totalComAcrescimos)}` : null,
+        temAcrescimo ? `✅ Valor pago: R$ ${fmt2(finalValor)}` : null,
+        temAcrescimo && pendente > 0 ? `❌ Pendente: R$ ${fmt2(pendente)}` : null,
+        !temAcrescimo ? `💰 Valor: R$ ${fmt2(finalValor)}` : null,
         "",
         "Obrigado! 🏍️",
-      ].filter(Boolean).join("\n");
+      ].filter(v => v !== null).join("\n");
       setRentalPaySuccess({
         nome,
         telefone: client?.telefone || "",
