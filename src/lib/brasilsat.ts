@@ -460,3 +460,7 @@ export function loadBrasilSatConfig(companyId: string): BrasilSatConfig | null {
 export function saveBrasilSatConfig(companyId: string, cfg: BrasilSatConfig) {
   localStorage.setItem(companyKey(CONFIG_KEY, companyId), JSON.stringify(cfg));
 }
+
+export function clearBrasilSatConfig(companyId: string) {
+  localStorage.removeItem(companyKey(CONFIG_KEY, companyId));
+}

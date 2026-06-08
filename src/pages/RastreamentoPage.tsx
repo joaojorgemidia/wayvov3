@@ -3,7 +3,7 @@ import L from "leaflet";
 import {
   authenticate, getDeviceList, trackDevices, getPlayback, getAlarms,
   setMileage, setRelay,
-  loadBrasilSatConfig, saveBrasilSatConfig,
+  loadBrasilSatConfig, saveBrasilSatConfig, clearBrasilSatConfig,
   loadDeviceNames, saveDeviceName,
   loadKmSyncConfig, saveKmSyncConfig,
   type BrasilSatConfig, type BrasilSatToken, type DeviceInfo,
@@ -27,7 +27,7 @@ import {
   MapPin, Wifi, WifiOff, Settings, RefreshCw, Gauge, Clock,
   AlertTriangle, History, Bell, Navigation, Search, X,
   Zap, Battery, Thermometer, Fuel, Pencil, Lock, Unlock, Milestone, Sliders,
-  MessageCircle, ShoppingCart, ExternalLink,
+  MessageCircle, ShoppingCart, ExternalLink, LogOut,
 } from "lucide-react";
 
 // ─── Ícones Leaflet ───────────────────────────────────────────────────────────
@@ -707,6 +707,19 @@ export default function RastreamentoPage() {
     }
   };
 
+  // ── Logout ────────────────────────────────────────────────────────────────
+  const handleLogout = () => {
+    clearBrasilSatConfig(companyId);
+    setAuth(null);
+    setTracks([]);
+    setSelectedImei(null);
+    setConfig({ account: "", password: "" });
+    syncedKmRef.current.clear();
+    trackMarkersRef.current.forEach(m => m.remove());
+    trackMarkersRef.current.clear();
+    toast.success("Desconectado do BrasilSat");
+  };
+
   // ── Listas filtradas ──────────────────────────────────────────────────────
   const onlineCount  = tracks.filter(t => !(t.statusCode ?? "").toLowerCase().includes("offline")).length;
   const offlineCount = (auth?.devices.length ?? 0) - onlineCount;
@@ -756,6 +769,11 @@ export default function RastreamentoPage() {
           <Button size="sm" variant="outline" onClick={() => setConfigOpen(true)}>
             <Settings className="h-4 w-4 mr-1.5" /> Configurações
           </Button>
+          {auth && (
+            <Button size="sm" variant="ghost" onClick={handleLogout} title="Sair do BrasilSat">
+              <LogOut className="h-4 w-4" />
+            </Button>
+          )}
         </div>
       </div>
 
