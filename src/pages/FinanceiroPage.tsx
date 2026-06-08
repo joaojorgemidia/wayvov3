@@ -2188,7 +2188,9 @@ export default function FinanceiroPage() {
           obs = obs.replace(/\s*•\s*Pago via [^•]+/g, "").trim();
           obs = (obs ? obs + " " : "") + `• Pago via ${confirmPayBank}`;
         }
-        return { ...e, pago: true, valor: finalValor, data: payDate, conta: finalConta, observacao: obs };
+        // Para aluguéis em atraso preserva o valor original; para demais usa o valor informado
+        const savedValor = (isRentalPayment && daysOverdue > 0) ? e.valor : finalValor;
+        return { ...e, pago: true, valor: savedValor, data: payDate, conta: finalConta, observacao: obs };
       } else {
         return { ...e, pago: false, data: e.dataPrevista || e.data };
       }
@@ -4537,7 +4539,13 @@ export default function FinanceiroPage() {
                   );
                 })()}
                 <div className="flex justify-between items-center">
-                  <span className="text-muted-foreground">Valor:</span>
+                  <span className="text-muted-foreground">{(() => {
+                    if (!confirmToggleEntry.rentalId || confirmToggleEntry.pago) return "Valor:";
+                    const dueDateStr = confirmToggleEntry.dataPrevista || confirmToggleEntry.data;
+                    if (!dueDateStr || !confirmDate) return "Valor:";
+                    const days = Math.max(0, Math.floor((new Date(confirmDate + "T00:00:00").getTime() - new Date(dueDateStr + "T00:00:00").getTime()) / 86400000));
+                    return days > 0 ? "Total recebido:" : "Valor:";
+                  })()}</span>
                   <div className="flex items-center gap-1">
                     <span className="text-sm text-muted-foreground">R$</span>
                     <Input
