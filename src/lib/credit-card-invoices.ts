@@ -5,7 +5,113 @@ export interface CreditCardLike {
   nome: string;
   tipo: "banco" | "cartao";
   diaVencimento: number | null;
+  diaFechamento?: number | null;
   contaPagamento?: string | null;
+}
+
+export interface CardInvoice {
+  dueDate: string;       // "2026-07-05" ISO
+  ymKey: string;         // "2026-07"
+  label: string;         // "5 jul 2026"
+  status: "Aberta" | "Parcial" | "Zerada" | "Paga";
+  total: number;         // soma das despesas nesta fatura
+}
+
+/**
+ * Dado a data de compra e os dados do cartão, retorna o YYYY-MM da fatura
+ * em que essa compra vai cair (baseado no dia de fechamento e vencimento).
+ *
+ * Regra:
+ *  - Se a compra é feita ATÉ o dia de fechamento (inclusive) → vai para a fatura
+ *    cujo vencimento é no ciclo atual.
+ *  - Se a compra é feita APÓS o dia de fechamento → vai para a fatura do próximo ciclo.
+ *  - Se não há dia de fechamento configurado → assume fechamento no último dia do mês.
+ */
+export function computeCardInvoiceYm(purchaseIso: string, card: CreditCardLike): string {
+  try {
+    const d = new Date(purchaseIso + "T00:00:00");
+    if (Number.isNaN(d.getTime())) return purchaseIso.slice(0, 7);
+    const closingDay = card.diaFechamento ?? lastDayOfMonth(d.getFullYear(), d.getMonth());
+    const dueDay = card.diaVencimento || 1;
+    // Passou do fechamento? Vai pro próximo ciclo.
+    const closingMonthOffset = d.getDate() > closingDay ? 1 : 0;
+    // Vencimento no mesmo mês que o fechamento ou depois? Fica no mesmo mês de fechamento.
+    const dueMonthOffsetFromClosing = dueDay <= closingDay ? 1 : 0;
+    const offset = closingMonthOffset + dueMonthOffsetFromClosing;
+    const inv = new Date(d.getFullYear(), d.getMonth() + offset, 1);
+    return ymKey(inv);
+  } catch {
+    return purchaseIso.slice(0, 7);
+  }
+}
+
+/**
+ * Retorna a data ISO de vencimento da fatura para um dado mês/ano.
+ */
+export function computeCardDueIso(ym: string, card: CreditCardLike): string {
+  const [yStr, mStr] = ym.split("-");
+  const y = Number(yStr);
+  const m = Number(mStr) - 1;
+  const dueDay = Math.min(card.diaVencimento || 1, lastDayOfMonth(y, m));
+  return `${ym}-${String(dueDay).padStart(2, "0")}`;
+}
+
+/**
+ * Retorna a lista de faturas de um cartão (passadas + futuras) com status calculado.
+ */
+export function getCardInvoicesList(
+  card: CreditCardLike,
+  entries: FinancialEntry[],
+  { monthsBack = 2, monthsForward = 7 }: { monthsBack?: number; monthsForward?: number } = {},
+): CardInvoice[] {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  // Fatura "Aberta": se hoje ainda está antes do fechamento, é o mês atual;
+  // se passou do fechamento, já é o próximo mês.
+  const closingDay = card.diaFechamento ?? lastDayOfMonth(today.getFullYear(), today.getMonth());
+  const openBase = new Date(today.getFullYear(), today.getMonth(), 1);
+  if (today.getDate() > closingDay) {
+    openBase.setMonth(openBase.getMonth() + 1);
+  }
+  const openYm = ymKey(openBase);
+
+  const invoices: CardInvoice[] = [];
+
+  for (let i = -monthsBack; i <= monthsForward; i++) {
+    const d = new Date(today.getFullYear(), today.getMonth() + i, 1);
+    const y = d.getFullYear();
+    const mo = d.getMonth();
+    const ym = ymKey(d);
+    const dueDay = Math.min(card.diaVencimento || 1, lastDayOfMonth(y, mo));
+    const dueIso = `${ym}-${String(dueDay).padStart(2, "0")}`;
+
+    const invoiceId = `inv__${card.id}__${ym}`;
+    const isPaid = entries.some(e => e.id === invoiceId && e.pago);
+
+    // Usa computeCardInvoiceYm para garantir que entradas antigas (dataPrevista = data)
+    // também sejam contabilizadas na fatura correta.
+    const total = entries.reduce((sum, e) => {
+      if (e.categoria === "fatura_cartao" || e.tipo !== "despesa" || e.ignorada || e.deletedAt) return sum;
+      if (e.conta !== card.nome) return sum;
+      return computeCardInvoiceYm(e.data, card) === ym
+        ? sum + (Number(e.valor) || 0)
+        : sum;
+    }, 0);
+
+    let status: CardInvoice["status"];
+    if (isPaid) status = "Paga";
+    else if (ym === openYm) status = "Aberta";
+    else if (total > 0) status = "Parcial";
+    else status = "Zerada";
+
+    const dueDate = new Date(y, mo, dueDay);
+    const label = dueDate.toLocaleDateString("pt-BR", { day: "numeric", month: "short", year: "numeric" });
+
+    invoices.push({ dueDate: dueIso, ymKey: ym, label, status, total });
+  }
+
+  return invoices;
 }
 
 function ymKey(d: Date) {
@@ -20,9 +126,6 @@ function lastDayOfMonth(year: number, month: number) {
  * Generates/refreshes pending "Pagamento de fatura" expense entries for each
  * credit card based on the despesas posted to that card. One invoice per
  * (card, month-of-due-date). The invoice debits the card's contaPagamento.
- *
- * Returns the new entries array (with invoices added/updated and stale
- * ones removed). Pure function — caller decides when to persist.
  */
 export function reconcileCardInvoices(
   entries: FinancialEntry[],
@@ -45,11 +148,12 @@ export function reconcileCardInvoices(
     if (!dueStr) return;
     const due = new Date(dueStr + "T00:00:00");
     if (Number.isNaN(due.getTime())) return;
-    advancesByKey.set(`${cardId}::${ymKey(due)}`, (advancesByKey.get(`${cardId}::${ymKey(due)}`) || 0) + (Number(e.valor) || 0));
+    const advYm = `${due.getFullYear()}-${String(due.getMonth() + 1).padStart(2, "0")}`;
+    advancesByKey.set(`${cardId}::${advYm}`, (advancesByKey.get(`${cardId}::${advYm}`) || 0) + (Number(e.valor) || 0));
   });
 
-  // Group despesas posted to a card by (cardId, month-YYYY-MM of due date).
-  // Invoice entries themselves (categoria "fatura_cartao") are excluded.
+  // Group despesas posted to a card by (cardId, invoice YYYY-MM).
+  // Uses computeCardInvoiceYm so old entries (dataPrevista = data) are grouped correctly.
   const groups = new Map<string, { card: CreditCardLike; ym: string; total: number; ids: string[] }>();
 
   entries.forEach((e) => {
@@ -58,12 +162,10 @@ export function reconcileCardInvoices(
     if (e.ignorada) return;
     const card = cardByName.get(e.conta || "");
     if (!card) return;
-    const dueStr = e.dataPrevista || e.data;
-    if (!dueStr) return;
-    const due = new Date(dueStr + "T00:00:00");
-    if (Number.isNaN(due.getTime())) return;
-    const key = `${card.id}::${ymKey(due)}`;
-    const g = groups.get(key) || { card, ym: ymKey(due), total: 0, ids: [] };
+    if (!e.data) return;
+    const ym = computeCardInvoiceYm(e.data, card);
+    const key = `${card.id}::${ym}`;
+    const g = groups.get(key) || { card, ym, total: 0, ids: [] };
     g.total += Number(e.valor) || 0;
     g.ids.push(e.id);
     groups.set(key, g);
@@ -97,11 +199,9 @@ export function reconcileCardInvoices(
     const dueDay = Math.min(g.card.diaVencimento || 1, lastDayOfMonth(y, m));
     const dueIso = `${yStr}-${mStr}-${String(dueDay).padStart(2, "0")}`;
     const prev = existingInvoices.get(id);
-    // Subtract paid advance payments from the invoice total
     const advances = advancesByKey.get(`${g.card.id}::${g.ym}`) || 0;
     const remaining = Math.max(0, Math.round((g.total - advances) * 100) / 100);
     const fullyPaidByAdvances = advances > 0 && remaining <= 0.001;
-    // Preserve user changes if they marked it pago/ignorada or changed contaPagamento
     const merged: FinancialEntry = {
       id,
       tipo: "despesa",
@@ -119,8 +219,6 @@ export function reconcileCardInvoices(
       natureza: "administrativa",
       tags: ["Fatura cartão"],
       observacao: prev?.observacao || `Pagamento automático da fatura do cartão ${g.card.nome}.`,
-      // Fatura é ignorada nos totais (as compras individuais já contam),
-      // mas continua afetando o saldo da conta de pagamento.
       ignorada: prev?.ignorada !== undefined ? prev.ignorada : true,
       classificacaoManual: prev?.classificacaoManual || false,
       createdAt: prev?.createdAt,

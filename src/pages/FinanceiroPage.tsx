@@ -13,7 +13,7 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter, AlertDialogAction, AlertDialogCancel } from "@/components/ui/alert-dialog";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator, DropdownMenuLabel } from "@/components/ui/dropdown-menu";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -45,7 +45,7 @@ import { useCompany } from "@/contexts/CompanyContext";
 import { ImportExportBar } from "@/components/ImportExportBar";
 import { useBankAccounts } from "@/hooks/useSupabaseData";
 import { supabase } from "@/integrations/supabase/client";
-import { reconcileCardInvoices } from "@/lib/credit-card-invoices";
+import { reconcileCardInvoices, getCardInvoicesList, computeCardInvoiceYm } from "@/lib/credit-card-invoices";
 import { calculateAccountBalances } from "@/lib/account-balances";
 import { usePermissions } from "@/hooks/usePermissions";
 
@@ -835,6 +835,8 @@ export default function FinanceiroPage() {
   const [activeTab, setActiveTab] = useState("transacoes");
   const [rowsPerPage, setRowsPerPage] = useState(50);
   const [currentPage, setCurrentPage] = useState(1);
+  const [selectedCCCard, setSelectedCCCard] = useState<any>(null);
+  const [ccViewYm, setCcViewYm] = useState<string>("");
 
   const tableContainerRef = useRef<HTMLDivElement | null>(null);
 
@@ -1471,18 +1473,16 @@ export default function FinanceiroPage() {
     return { receitas, despesas, saldo: receitas - despesas, receitasPagas, despesasPagas, pendentes, saldoEfetuado };
   }, [filtered]);
 
-  // CC / non-CC split for transaction list
+  // Dedup filtered list (CC and non-CC together)
   const ccCardNames = useMemo(() => new Set(creditCards.map((c: any) => c.nome)), [creditCards]);
   const filteredNonCC = useMemo(() => {
     const seen = new Set<string>();
     return filtered.filter(e => {
-      if (ccCardNames.has(e.conta || "")) return false;
       if (seen.has(e.id)) return false;
       seen.add(e.id);
       return true;
     });
-  }, [filtered, ccCardNames]);
-  const filteredCC = useMemo(() => filtered.filter(e => !e.ignorada && ccCardNames.has(e.conta || "") && e.tipo === "despesa"), [filtered, ccCardNames]);
+  }, [filtered]);
 
   // Comparison period totals
   const compTotals = useMemo(() => {
@@ -1559,8 +1559,15 @@ export default function FinanceiroPage() {
         body: { asaasPaymentId: entry.asaasPaymentId, entryId: entry.id, companyId: currentCompanyId },
       });
       if (error) throw error;
-      if (data?.registered > 0) toast.success(`${data.registered} taxa(s) registrada(s) com sucesso.`);
-      else toast.info(data?.message || "Nenhuma taxa encontrada no Asaas para este pagamento.");
+      const totalRegistered = (data?.registeredFees ?? 0) + (data?.registeredJuros ?? 0);
+      if (totalRegistered > 0) {
+        const parts: string[] = [];
+        if (data?.registeredFees > 0) parts.push(`${data.registeredFees} taxa(s) Asaas`);
+        if (data?.registeredJuros > 0) parts.push(`juros/multa`);
+        toast.success(`Registrado: ${parts.join(" e ")}.`);
+      } else {
+        toast.info("Nenhuma taxa ou juros encontrados no Asaas para este pagamento.");
+      }
     } catch (e: any) {
       toast.error("Erro ao buscar taxas: " + (e?.message || "Tente novamente."));
     } finally {
@@ -1634,13 +1641,30 @@ export default function FinanceiroPage() {
       ? (resolved.dataPrevista || resolved.data)
       : resolved.data;
 
+    // For CC expenses (unpaid), dataPrevista must be the invoice due date so
+    // the reconcile groups it into the correct invoice month.
+    let finalPrevista = syncedPrevista;
+    if (!resolved.pago && resolved.tipo === "despesa" && resolved.categoria !== "fatura_cartao") {
+      const ccCard = creditCards.find(c => c.nome === resolved.conta);
+      if (ccCard) {
+        try {
+          const invYm = computeCardInvoiceYm(resolved.data, ccCard as any);
+          const [yStr, mStr] = invYm.split("-");
+          const y = Number(yStr); const m = Number(mStr) - 1;
+          const dueDay = (ccCard as any).diaVencimento || 1;
+          const lastDay = new Date(y, m + 1, 0).getDate();
+          finalPrevista = `${invYm}-${String(Math.min(dueDay, lastDay)).padStart(2, "0")}`;
+        } catch { /* fallback to purchase date */ }
+      }
+    }
+
     const isManutenção = resolved.categoria === "manutencao_despesa" || resolved.categoria === "manutencao_receita";
     const cleanTags = isManutenção ? resolved.tags : (resolved.tags || []).filter(t => t !== "OS");
 
     return {
       ...resolved,
       tags: cleanTags,
-      dataPrevista: syncedPrevista,
+      dataPrevista: finalPrevista,
       observacao: resolved.observacao || resolved.subcategoria || "",
       serieId: resolved.recorrente || resolved.despesaFixa ? (existing?.serieId || resolved.serieId || resolved.id) : resolved.serieId,
       recurringGroupId: (resolved.recorrente || resolved.despesaFixa)
@@ -2586,36 +2610,10 @@ export default function FinanceiroPage() {
               <Plus className="h-5 w-5" />
             </Button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-48">
+          <DropdownMenuContent align="end" className="w-52">
             <DropdownMenuItem onClick={() => { setForm({ ...emptyEntry(), tipo: "despesa" }); setMode("add"); setDialogOpen(true); }} className="gap-2">
               <TrendingDown className="h-4 w-4 text-destructive" /> Despesa
             </DropdownMenuItem>
-            {creditCards.length > 0 && (
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <DropdownMenuItem onSelect={(e) => e.preventDefault()} className="gap-2">
-                    <CreditCard className="h-4 w-4 text-primary" /> Despesa no cartão
-                  </DropdownMenuItem>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent side="left" align="start" className="w-48">
-                  {creditCards.map((card) => (
-                    <DropdownMenuItem
-                      key={card.id}
-                      onClick={() => {
-                        setForm({ ...emptyEntry(), tipo: "despesa", conta: card.nome });
-                        setParcelas(1);
-                        setMode("add");
-                        setDialogOpen(true);
-                      }}
-                      className="gap-2"
-                    >
-                      <CreditCard className="h-4 w-4 text-muted-foreground" />
-                      <span className="truncate">{card.nome}</span>
-                    </DropdownMenuItem>
-                  ))}
-                </DropdownMenuContent>
-              </DropdownMenu>
-            )}
             <DropdownMenuItem onClick={() => { setForm({ ...emptyEntry(), tipo: "receita" }); setMode("add"); setDialogOpen(true); }} className="gap-2">
               <TrendingUp className="h-4 w-4 text-success" /> Receita
             </DropdownMenuItem>
@@ -2623,9 +2621,29 @@ export default function FinanceiroPage() {
               <ArrowLeftRight className="h-4 w-4" /> Transferência
             </DropdownMenuItem>
             {creditCards.length > 0 && (
-              <DropdownMenuItem onClick={() => { setAdvCardId(creditCards[0].id); setAdvBank(creditCards[0].contaPagamento || ""); setAdvOpen(true); }} className="gap-2">
-                <Banknote className="h-4 w-4 text-primary" /> Adiantamento de fatura
-              </DropdownMenuItem>
+              <>
+                <DropdownMenuSeparator />
+                <DropdownMenuLabel className="text-[10px] text-muted-foreground uppercase tracking-wider px-2 py-1 flex items-center gap-1.5">
+                  <CreditCard className="h-3 w-3" /> Cartão de crédito
+                </DropdownMenuLabel>
+                <DropdownMenuItem
+                  onClick={() => {
+                    setForm({ ...emptyEntry(), tipo: "despesa" });
+                    setParcelas(1);
+                    setMode("add");
+                    setDialogOpen(true);
+                  }}
+                  className="gap-2"
+                >
+                  <CreditCard className="h-4 w-4 text-primary" /> Despesa no cartão
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() => { setAdvCardId(""); setAdvBank(""); setAdvOpen(true); }}
+                  className="gap-2"
+                >
+                  <Banknote className="h-4 w-4 text-primary" /> Adiantar fatura
+                </DropdownMenuItem>
+              </>
             )}
           </DropdownMenuContent>
         </DropdownMenu>}
@@ -2723,31 +2741,383 @@ export default function FinanceiroPage() {
       </div>
 
       {/* ═══ BLOCO 2 — Bank Balances (compact) ═══ */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        {CONTAS.map(banco => {
-          const saldo = bankBalances[banco] || 0;
-          return (
-            <div key={banco} className="flex items-center justify-between px-4 py-3 rounded-lg bg-muted/30 border border-border/40">
-              <span className="flex items-center gap-2">
-                <BankIcon conta={banco} size={22} />
-                <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">{banco}</span>
-              </span>
-              <span className={`text-sm font-semibold ${mono} ${saldo < 0 ? "text-destructive" : "text-foreground"}`}>
-                {saldo < 0 ? "–" : ""}R$ {Math.abs(saldo).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
-              </span>
+      {(() => {
+        const bankOnly = (bankAccountsList || []).filter((a: any) => a.tipo !== "cartao");
+        const bankOnlyNames = new Set(bankOnly.map((a: any) => a.nome as string));
+        return (
+          <div className="space-y-3">
+            {/* Contas bancárias */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              {bankOnly.map((account: any) => {
+                const banco = account.nome as string;
+                const saldo = bankBalances[banco] || 0;
+                const isSelected = contaFilter === banco;
+                return (
+                  <div
+                    key={banco}
+                    onClick={() => { setContaFilter(isSelected ? "all" : banco); setActiveTab("transacoes"); }}
+                    className={`flex items-center justify-between px-4 py-3 rounded-lg border cursor-pointer transition-colors select-none ${
+                      isSelected ? "bg-primary/10 border-primary/40 ring-1 ring-primary/30" : "bg-muted/30 border-border/40 hover:bg-muted/50 hover:border-border/70"
+                    }`}
+                  >
+                    <span className="flex items-center gap-2">
+                      <BankIcon conta={account.banco} size={22} />
+                      <span className={`text-xs font-medium uppercase tracking-wider ${isSelected ? "text-primary" : "text-muted-foreground"}`}>{banco}</span>
+                    </span>
+                    <span className={`text-sm font-semibold ${mono} ${saldo < 0 ? "text-destructive" : isSelected ? "text-primary" : "text-foreground"}`}>
+                      {saldo < 0 ? "–" : ""}R$ {Math.abs(saldo).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                    </span>
+                  </div>
+                );
+              })}
+              <div className="flex items-center justify-between px-4 py-3 rounded-lg bg-success/5 border border-success/20">
+                <span className="text-xs font-medium text-success uppercase tracking-wider">Total em Caixa</span>
+                <span className={`text-sm font-bold ${mono} ${totalCaixa >= 0 ? "text-success" : "text-destructive"}`}>
+                  {totalCaixa < 0 ? "–" : ""}R$ {Math.abs(totalCaixa).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                </span>
+              </div>
             </div>
-          );
-        })}
-        <div className="flex items-center justify-between px-4 py-3 rounded-lg bg-success/5 border border-success/20">
-          <span className="text-xs font-medium text-success uppercase tracking-wider">Total em Caixa</span>
-          <span className={`text-sm font-bold ${mono} ${totalCaixa >= 0 ? "text-success" : "text-destructive"}`}>
-            {totalCaixa < 0 ? "–" : ""}R$ {Math.abs(totalCaixa).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
-          </span>
-        </div>
-      </div>
+
+            {/* Cartões de crédito */}
+            {creditCards.length > 0 && (
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                {creditCards.map((card: any) => {
+                  const saldo = bankBalances[card.nome] || 0;
+                  const limite = card.limite || 0;
+                  const usado = Math.max(0, -saldo);
+                  const disponivel = Math.max(0, limite - usado);
+                  const pct = limite > 0 ? Math.min(100, (usado / limite) * 100) : 0;
+                  const isSelected = selectedCCCard?.nome === card.nome;
+                  const isActive = selectedCCCard?.nome === card.nome;
+                  return (
+                    <div
+                      key={card.nome}
+                      onClick={() => {
+                        if (isActive) {
+                          setSelectedCCCard(null);
+                          setCcViewYm("");
+                        } else {
+                          const invoices = getCardInvoicesList(card as any, entries || []);
+                          const openInv = invoices.find(i => i.status === "Aberta") || invoices.find(i => i.total > 0) || invoices[0];
+                          setSelectedCCCard(card);
+                          setCcViewYm(openInv?.ymKey || "");
+                        }
+                      }}
+                      className={`flex flex-col gap-2 px-4 py-3 rounded-lg border cursor-pointer transition-colors select-none ${
+                        isActive ? "bg-primary/10 border-primary/40 ring-1 ring-primary/30" : "bg-muted/30 border-border/40 hover:bg-muted/50 hover:border-border/70"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="flex items-center gap-1.5">
+                          <CreditCard className={`h-3.5 w-3.5 ${isActive ? "text-primary" : "text-muted-foreground"}`} />
+                          <span className={`text-xs font-medium uppercase tracking-wider ${isActive ? "text-primary" : "text-muted-foreground"}`}>{card.nome}</span>
+                        </span>
+                        <span className={`text-xs font-semibold ${mono} ${usado > 0 ? "text-destructive" : "text-muted-foreground"}`}>
+                          {usado > 0 ? `– R$ ${usado.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}` : "R$ 0,00"}
+                        </span>
+                      </div>
+                      {limite > 0 && (
+                        <>
+                          <div className="h-1 w-full overflow-hidden rounded-full bg-muted/60">
+                            <div className="h-full bg-primary/60 transition-all" style={{ width: `${pct}%` }} />
+                          </div>
+                          <div className="flex items-center justify-between text-[10px] text-muted-foreground">
+                            <span>Disponível</span>
+                            <span className={`font-mono font-medium ${isActive ? "text-primary" : "text-emerald-600"}`}>
+                              R$ {disponivel.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                            </span>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        );
+      })()}
+
+      {/* ═══ BLOCO CC — Vista dedicada de cartão de crédito ═══ */}
+      {selectedCCCard && (() => {
+        const card = selectedCCCard;
+        const invoices = getCardInvoicesList(card as any, entries || []);
+        const today = new Date(); today.setHours(0, 0, 0, 0);
+        const currentInvoice = invoices.find(i => i.ymKey === ccViewYm) || invoices[0];
+        const invId = `inv__${card.id}__${ccViewYm}`;
+        const invEntry = entries.find(e => e.id === invId);
+        // Compute ccEntries first so we can use allExpensesPaid in isPaid.
+        // Uses computeCardInvoiceYm(e.data) to correctly place entries regardless
+        // of whether dataPrevista was set (new entries) or not (old entries).
+        const ccEntries = (entries || []).filter(e =>
+          e.conta === card.nome &&
+          e.categoria !== "fatura_cartao" &&
+          !e.deletedAt &&
+          computeCardInvoiceYm(e.data, card as any) === ccViewYm
+        ).sort((a, b) => a.data.localeCompare(b.data));
+        const allExpensesPaid = ccEntries.length > 0 && ccEntries.every(e => e.pago);
+        const isPaid = !!(invEntry?.pago || currentInvoice?.status === "Paga" || allExpensesPaid);
+        const totalFatura = currentInvoice?.total || 0;
+        const saldoFatura = isPaid ? 0 : (invEntry?.valor ?? totalFatura);
+        const pagoParcial = Math.max(0, totalFatura - saldoFatura);
+        const dueDate = currentInvoice ? new Date(currentInvoice.dueDate + "T00:00:00") : null;
+        const isFaturaOverdue = !isPaid && dueDate && dueDate < today && totalFatura > 0;
+        const daysOverdueFatura = isFaturaOverdue ? Math.floor((today.getTime() - dueDate!.getTime()) / 86400000) : 0;
+        const daysUntilDue = !isPaid && dueDate && !isFaturaOverdue && totalFatura > 0
+          ? Math.floor((dueDate.getTime() - today.getTime()) / 86400000) : null;
+        const fmtC = (v: number) => `R$ ${v.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`;
+        const invIdx = invoices.findIndex(i => i.ymKey === ccViewYm);
+        const canPrev = invIdx > 0;
+        const canNext = invIdx < invoices.length - 1;
+        const mono = "font-mono";
+        const getCatLabelCC = (cat: string, tipo: string) => {
+          const cats = tipo === "receita" ? DEFAULT_CATEGORIAS.receita : DEFAULT_CATEGORIAS.despesa;
+          return (cats as any[]).find((c: any) => c.value === cat)?.label || cat;
+        };
+        return (
+          <div className="space-y-4">
+            {/* Header */}
+            <div className="flex items-center gap-3 flex-wrap">
+              <Button variant="ghost" size="sm" className="gap-1.5 text-muted-foreground" onClick={() => { setSelectedCCCard(null); setCcViewYm(""); }}>
+                <ChevronLeft className="h-4 w-4" /> Voltar
+              </Button>
+              <div className="flex items-center gap-2">
+                <CreditCard className="h-5 w-5 text-primary" />
+                <span className="font-bold text-lg">{card.nome}</span>
+                {card.banco && <span className="text-sm text-muted-foreground">· {card.banco}</span>}
+              </div>
+              {card.limite > 0 && (
+                <span className="ml-auto text-sm text-muted-foreground">Limite: <span className="font-semibold text-foreground">{fmtC(card.limite)}</span></span>
+              )}
+            </div>
+
+            {/* Fatura chips — month navigator */}
+            <div className="flex items-center gap-2 flex-wrap">
+              <Button variant="ghost" size="icon" className="h-7 w-7" disabled={!canPrev} onClick={() => canPrev && setCcViewYm(invoices[invIdx - 1].ymKey)}>
+                <ChevronLeft className="h-4 w-4" />
+              </Button>
+              <div className="flex items-center gap-1.5 flex-wrap">
+                {invoices.filter(i => i.status !== "Zerada" || i.ymKey === ccViewYm).map(inv => (
+                  <button
+                    key={inv.ymKey}
+                    onClick={() => setCcViewYm(inv.ymKey)}
+                    className={`px-2.5 py-1 rounded-full text-xs font-medium transition-all border ${
+                      inv.ymKey === ccViewYm
+                        ? "bg-primary text-primary-foreground border-primary"
+                        : inv.status === "Paga" ? "border-success/40 text-success bg-success/10 hover:bg-success/20"
+                        : inv.status === "Aberta" ? "border-warning/40 text-warning bg-warning/10 hover:bg-warning/20"
+                        : "border-border/40 text-muted-foreground hover:border-border hover:bg-muted/40"
+                    }`}
+                  >
+                    {new Date(inv.ymKey + "-15").toLocaleDateString("pt-BR", { month: "short", year: "numeric" })}
+                    {inv.status === "Paga" && " ✓"}
+                  </button>
+                ))}
+              </div>
+              <Button variant="ghost" size="icon" className="h-7 w-7" disabled={!canNext} onClick={() => canNext && setCcViewYm(invoices[invIdx + 1].ymKey)}>
+                <ChevronRight className="h-4 w-4" />
+              </Button>
+            </div>
+
+            {/* Fatura summary */}
+            {(() => {
+              const handlePayFatura = () => {
+                if (invEntry) { togglePago(invEntry.id); return; }
+                if (!currentInvoice || totalFatura <= 0) return;
+                const newInv = {
+                  id: invId,
+                  tipo: "despesa" as const,
+                  categoria: "fatura_cartao",
+                  descricao: `Fatura ${card.nome} • ${ccViewYm}`,
+                  valor: totalFatura,
+                  data: new Date().toISOString().split("T")[0],
+                  dataPrevista: currentInvoice.dueDate,
+                  pago: false,
+                  conta: card.contaPagamento || "",
+                  natureza: "administrativa" as const,
+                  tags: ["Fatura cartão"],
+                  observacao: `Pagamento automático da fatura do cartão ${card.nome}.`,
+                  ignorada: true,
+                  motoId: null, rentalId: null, clienteId: null, classificacaoManual: false,
+                };
+                const updated = entries.some(e => e.id === invId)
+                  ? entries
+                  : [...entries, newInv as any];
+                persistWithFeedback(updated).then(() => {
+                  setTimeout(() => togglePago(invId), 200);
+                });
+              };
+              const handleUndoFatura = () => { if (invEntry) togglePago(invEntry.id); };
+              return (
+                <div className={`rounded-xl border px-5 py-4 ${isFaturaOverdue ? "border-destructive/30 bg-destructive/[0.03]" : isPaid ? "border-success/30 bg-success/[0.03]" : "border-border/50 bg-muted/10"}`}>
+                  <div className="flex flex-wrap items-center gap-6">
+                    <div className="flex items-end gap-2 shrink-0">
+                      <div className="flex flex-col">
+                        <span className="text-xs text-muted-foreground uppercase tracking-wide">Fatura</span>
+                        <span className="font-bold text-base capitalize">
+                          {new Date(ccViewYm + "-15").toLocaleDateString("pt-BR", { month: "long", year: "numeric" })}
+                        </span>
+                      </div>
+                      {dueDate && (
+                        <span className="text-xs text-muted-foreground mb-0.5">vence {dueDate.toLocaleDateString("pt-BR", { day: "numeric", month: "short" })}</span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-6 flex-wrap">
+                      <div className="flex flex-col">
+                        <span className="text-xs text-muted-foreground">Total</span>
+                        <span className={`font-bold ${mono} text-base`}>{fmtC(totalFatura)}</span>
+                      </div>
+                      {pagoParcial > 0 && (
+                        <div className="flex flex-col">
+                          <span className="text-xs text-muted-foreground">Adiantado</span>
+                          <span className={`font-bold ${mono} text-base text-success`}>{fmtC(pagoParcial)}</span>
+                        </div>
+                      )}
+                      <div className="flex flex-col">
+                        <span className="text-xs text-muted-foreground">Pendente</span>
+                        <span className={`font-bold ${mono} text-base ${isPaid ? "text-success" : saldoFatura > 0 ? "text-destructive" : "text-muted-foreground"}`}>{fmtC(saldoFatura)}</span>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 flex-wrap ml-auto">
+                      {isFaturaOverdue && <span className="text-destructive font-semibold flex items-center gap-1 text-sm"><AlertTriangle className="h-4 w-4" /> Vencida há {daysOverdueFatura}d</span>}
+                      {daysUntilDue !== null && <span className={`text-sm font-medium ${daysUntilDue <= 3 ? "text-amber-600" : "text-muted-foreground"}`}>Vence em {daysUntilDue === 0 ? "hoje" : `${daysUntilDue}d`}</span>}
+                      {isPaid && <span className="text-success font-semibold flex items-center gap-1 text-sm"><CheckCircle2 className="h-4 w-4" /> Paga</span>}
+                      {!isPaid && totalFatura > 0 && (
+                        <Button size="sm" variant="outline" className="h-8 gap-1.5" onClick={() => { setAdvCardId(card.id); const c = creditCards.find((x: any) => x.id === card.id); if (c?.contaPagamento) setAdvBank(c.contaPagamento); setAdvOpen(true); }}>
+                          <Banknote className="h-3.5 w-3.5" /> Adiantar fatura
+                        </Button>
+                      )}
+                      {!isPaid && totalFatura > 0 && (
+                        <Button size="sm" className="h-8 gap-1.5" onClick={handlePayFatura}>
+                          <CheckCheck className="h-3.5 w-3.5" /> Pagar fatura
+                        </Button>
+                      )}
+                      {isPaid && (
+                        <Button size="sm" variant="outline" className="h-8 gap-1.5 text-muted-foreground" onClick={handleUndoFatura} disabled={!invEntry}>
+                          <Circle className="h-3.5 w-3.5" /> Desfazer
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* CC transactions table — same row format as main transactions table */}
+            <div className="rounded-xl border border-border/50 overflow-hidden bg-card">
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead>
+                    <tr className="bg-muted/30 border-b border-border/40">
+                      <th className="w-[3px] p-0"></th>
+                      <th className="text-center py-2.5 px-2"><span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Status</span></th>
+                      <th className="text-left py-2.5 px-2"><span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Tipo</span></th>
+                      <th className="text-left py-2.5 px-2"><span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Placa</span></th>
+                      <th className="text-left py-2.5 px-2"><span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Categoria / Sub</span></th>
+                      <th className="text-left py-2.5 px-2"><span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Obs.</span></th>
+                      <th className="text-left py-2.5 px-2"><span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Tags</span></th>
+                      <th className="text-center py-2.5 px-2"><span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Data Compra</span></th>
+                      <th className="text-right py-2.5 px-2 w-[120px]"><span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Valor</span></th>
+                      <th className="w-[36px] p-0"></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {ccEntries.length === 0 && (
+                      <tr><td colSpan={10} className="py-16 text-center text-muted-foreground text-sm">Nenhuma despesa nesta fatura</td></tr>
+                    )}
+                    {ccEntries.map((e) => {
+                      const motoPlaca = e.motoId ? (motos.find(m => m.id === e.motoId)?.placa || e.placa || null) : (e.placa || null);
+                      const rawClientName = e.clienteId ? (clients.find(c => c.id === e.clienteId)?.nome || e.clienteNome || null) : (e.clienteNome || null);
+                      const fmtClientName = rawClientName ? rawClientName.split(" ").map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(" ") : null;
+                      const catLabel = getCatLabelCC(e.categoria, e.tipo);
+                      const entryOverdue = isOverdue(e);
+                      const fmtDateCC = (d: string) => { try { return format(parseISO(d), "dd/MM"); } catch { return d; } };
+                      const fmtValor = `R$ ${e.valor.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`;
+                      const isOperacional = e.natureza === "operacional" || (!e.natureza && !!motoPlaca);
+                      const isInvestimento = e.natureza === "investimento";
+                      return (
+                        <tr key={e.id}
+                          id={`entry-row-${e.id}`}
+                          className={`border-b border-border/20 hover:bg-muted/30 transition-colors group cursor-pointer ${e.ignorada ? "opacity-40" : ""}`}
+                          onClick={() => setDetailEntry(e)}
+                        >
+                          <td className="p-0"><div className="w-[3px] h-full min-h-[44px]" style={{ backgroundColor: e.pago ? "hsl(var(--success))" : entryOverdue ? "hsl(var(--destructive))" : "hsl(var(--warning))" }} /></td>
+                          <td className="py-2 px-2 text-center">
+                            <span className="cursor-default">
+                              {e.pago ? <CheckCircle2 className="h-5 w-5 text-success" /> : entryOverdue ? <AlertTriangle className="h-5 w-5 text-destructive" /> : <Circle className="h-5 w-5 text-warning" />}
+                            </span>
+                          </td>
+                          <td className="py-2 px-2">
+                            <span className={`text-xs font-semibold whitespace-nowrap ${isInvestimento ? "text-amber-600 dark:text-amber-400" : isOperacional ? "text-blue-600 dark:text-blue-400" : "text-purple-600 dark:text-purple-400"}`}>
+                              {isInvestimento ? "Invest." : isOperacional ? "Oper." : "Admin."}
+                            </span>
+                          </td>
+                          <td className="py-2 px-2">
+                            {motoPlaca ? <span className={`${mono} text-sm font-bold text-foreground whitespace-nowrap`}>{motoPlaca}</span> : <span className="text-xs text-muted-foreground/40">—</span>}
+                          </td>
+                          <td className="py-2 px-2">
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-sm font-semibold text-foreground whitespace-nowrap">{catLabel}</span>
+                                {e.subcategoria && <span className="text-xs text-muted-foreground whitespace-nowrap">› {e.subcategoria}</span>}
+                              </div>
+                              {fmtClientName && <span className="text-xs text-muted-foreground mt-0.5 block">{fmtClientName}</span>}
+                            </div>
+                          </td>
+                          <td className="py-2 px-2 max-w-[200px]">
+                            {e.observacao ? (
+                              <span className="text-xs font-medium text-foreground/80 italic truncate block" title={e.observacao}>{e.observacao}</span>
+                            ) : <span className="text-xs text-muted-foreground/40">—</span>}
+                          </td>
+                          <td className="py-2 px-2">
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              {(e.tags || []).map(t => (
+                                <span key={t} className="text-[11px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground whitespace-nowrap">{t}</span>
+                              ))}
+                              {e.recorrente && <Repeat className="h-3.5 w-3.5 text-muted-foreground/60" />}
+                              {!(e.tags || []).length && !e.recorrente && <span className="text-xs text-muted-foreground/40">—</span>}
+                            </div>
+                          </td>
+                          <td className="py-2 px-2 text-center">
+                            <span className={`text-sm ${mono} whitespace-nowrap text-muted-foreground`}>{fmtDateCC(e.data)}</span>
+                          </td>
+                          <td className="py-2 px-2 text-right">
+                            <span className={`text-sm font-bold ${mono} whitespace-nowrap text-destructive`}>– {fmtValor}</span>
+                          </td>
+                          <td className="py-2 pr-1" onClick={(ev) => ev.stopPropagation()}>
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button variant="ghost" size="icon" className="h-7 w-7 opacity-0 group-hover:opacity-100 data-[state=open]:opacity-100 transition-opacity">
+                                  <MoreVertical className="h-4 w-4" />
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end" className="w-48">
+                                {canEdit && (
+                                  <DropdownMenuItem onClick={() => { setForm(resolveEntryAssociations({ ...e })); setMode("edit"); setDialogOpen(true); }} className="gap-2 text-xs">
+                                    <Pencil className="h-3.5 w-3.5" /> Editar
+                                  </DropdownMenuItem>
+                                )}
+                                {canEdit && (
+                                  <DropdownMenuItem onClick={() => setDeleteTarget(e)} className="gap-2 text-xs text-destructive focus:text-destructive">
+                                    <Trash2 className="h-3.5 w-3.5" /> Excluir
+                                  </DropdownMenuItem>
+                                )}
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* ═══ BLOCO 3 — Tabs ═══ */}
-      <Tabs value={activeTab} onValueChange={setActiveTab}>
+      {!selectedCCCard && <Tabs value={activeTab} onValueChange={setActiveTab}>
         <div className="border-b border-border/50">
           <div className="flex gap-6">
             {[
@@ -2773,6 +3143,7 @@ export default function FinanceiroPage() {
 
         {/* TAB: Transações */}
         <TabsContent value="transacoes" className="space-y-3 mt-4">
+
           {/* ═══ Compact Filters ═══ */}
           <div className="space-y-2">
             <div className="flex flex-wrap items-center gap-2">
@@ -2943,7 +3314,6 @@ export default function FinanceiroPage() {
             <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 rounded-lg border border-border/30 bg-muted/20 px-3 py-2 text-xs">
               <span className="text-muted-foreground">
                 {filteredNonCC.length} lançamento{filteredNonCC.length !== 1 ? "s" : ""}
-                {filteredCC.length > 0 && <span className="ml-1.5 text-muted-foreground/60">• {filteredCC.length} no cartão</span>}
               </span>
               <div className="flex flex-wrap items-center gap-4">
                 <span className="flex items-center gap-1 text-muted-foreground">
@@ -3375,77 +3745,6 @@ export default function FinanceiroPage() {
             })()}
           </div>
 
-          {/* ═══ Compras no Cartão de Crédito ═══ */}
-          {filteredCC.length > 0 && (
-            <div className="rounded-xl border border-border/50 overflow-hidden bg-card">
-              <div className="flex items-center justify-between px-4 py-3 border-b border-border/30 bg-muted/20">
-                <div className="flex items-center gap-2">
-                  <CreditCard className="h-4 w-4 text-muted-foreground" />
-                  <span className="text-sm font-semibold">Compras no Cartão de Crédito</span>
-                  <span className="text-xs text-muted-foreground bg-muted rounded px-1.5 py-0.5">{filteredCC.length}</span>
-                </div>
-                <div className="flex items-center gap-4 text-xs">
-                  <span className="text-muted-foreground">
-                    Total: <span className={`font-semibold text-destructive ${mono}`}>
-                      R$ {filteredCC.reduce((s, e) => s + e.valor, 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
-                    </span>
-                  </span>
-                  {filteredCC.some(e => e.pago) && (
-                    <span className="text-muted-foreground">
-                      Pago: <span className={`font-semibold text-success ${mono}`}>
-                        R$ {filteredCC.filter(e => e.pago).reduce((s, e) => s + e.valor, 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
-                      </span>
-                    </span>
-                  )}
-                  {filteredCC.some(e => !e.pago) && (
-                    <span className="text-muted-foreground">
-                      Pendente: <span className={`font-semibold text-warning ${mono}`}>
-                        R$ {filteredCC.filter(e => !e.pago).reduce((s, e) => s + e.valor, 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
-                      </span>
-                    </span>
-                  )}
-                </div>
-              </div>
-              <div className="overflow-x-auto">
-                <table className="w-full">
-                  <thead>
-                    <tr className="border-b border-border/20 text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
-                      <th className="text-left py-2 px-3">Data</th>
-                      <th className="text-left py-2 px-3">Descrição</th>
-                      <th className="text-left py-2 px-3">Cartão</th>
-                      <th className="text-left py-2 px-3">Categoria</th>
-                      <th className="text-right py-2 px-3">Valor</th>
-                      <th className="text-center py-2 px-3">Status</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {filteredCC.map(e => {
-                      const catLabel = getCatLabel(e.categoria, e.tipo);
-                      return (
-                        <tr key={e.id} className="border-b border-border/20 last:border-0 hover:bg-muted/10 transition-colors">
-                          <td className={`py-2 px-3 text-xs text-muted-foreground whitespace-nowrap ${mono}`}>
-                            {(() => { try { return format(parseISO(e.data), "dd/MM/yy"); } catch { return e.data; } })()}
-                          </td>
-                          <td className="py-2 px-3 text-xs font-medium max-w-[220px] truncate">{e.descricao}</td>
-                          <td className="py-2 px-3 text-xs text-muted-foreground">{e.conta}</td>
-                          <td className="py-2 px-3 text-xs text-muted-foreground">{catLabel}{e.subcategoria ? ` · ${e.subcategoria}` : ""}</td>
-                          <td className={`py-2 px-3 text-xs font-semibold text-right text-destructive ${mono}`}>
-                            R$ {e.valor.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
-                          </td>
-                          <td className="py-2 px-3 text-center">
-                            {e.pago
-                              ? <span className="text-xs text-success font-medium">✓ Pago</span>
-                              : <span className="text-xs text-warning font-medium">○ Pendente</span>
-                            }
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
         </TabsContent>
 
         {/* TAB: Categorias */}
@@ -3560,7 +3859,7 @@ export default function FinanceiroPage() {
             </CardContent>
           </Card>
         </TabsContent>
-      </Tabs>
+      </Tabs>}
 
       {/* ═══════ Dialog for add/edit ═══════ */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
@@ -4401,9 +4700,11 @@ export default function FinanceiroPage() {
 
                 {/* Actions */}
                 <div className="flex gap-2 pt-2">
-                  <Button variant="outline" className="flex-1 gap-1.5" onClick={() => { togglePago(de.id); setDetailEntry(null); }}>
-                    {de.pago ? <><Circle className="h-4 w-4" /> Desfazer</> : <><CheckCheck className="h-4 w-4" /> {de.tipo === "receita" ? "Receber" : "Pagar"}</>}
-                  </Button>
+                  {!creditCards.some(c => c.nome === de.conta) && (
+                    <Button variant="outline" className="flex-1 gap-1.5" onClick={() => { togglePago(de.id); setDetailEntry(null); }}>
+                      {de.pago ? <><Circle className="h-4 w-4" /> Desfazer</> : <><CheckCheck className="h-4 w-4" /> {de.tipo === "receita" ? "Receber" : "Pagar"}</>}
+                    </Button>
+                  )}
                   {canDelete && (
                     <Button variant="destructive" size="icon" className="shrink-0" onClick={() => handleDelete(de.id)}>
                       <Trash2 className="h-4 w-4" />

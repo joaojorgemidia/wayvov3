@@ -504,8 +504,12 @@ export default function CobrancasSemanaPage() {
         supabase.functions.invoke("asaas-sync-fees", {
           body: { asaasPaymentId: item.entry.asaasPaymentId, entryId: item.entry.id, companyId: activeCompany.id },
         }).then(({ data }) => {
-          if (data?.registered > 0) {
-            toast.success(`${data.registered} taxa(s) Asaas registrada(s) automaticamente.`);
+          const totalRegistered = (data?.registeredFees ?? 0) + (data?.registeredJuros ?? 0);
+          if (totalRegistered > 0) {
+            const parts: string[] = [];
+            if (data?.registeredFees > 0) parts.push(`${data.registeredFees} taxa(s) Asaas`);
+            if (data?.registeredJuros > 0) parts.push(`juros/multa`);
+            toast.success(`Registrado automaticamente: ${parts.join(" e ")}.`);
           }
         }).catch(() => {});
       }

@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { BankIcon } from "@/components/BankLogos";
 import { InfoTooltip } from "@/components/InfoTooltip";
-import { Archive, ArchiveRestore, Check, ChevronRight, CreditCard, Info, Loader2, MoreVertical, Pencil, Plus, Search, RefreshCw } from "lucide-react";
+import { Archive, ArchiveRestore, Check, ChevronLeft, ChevronRight, Circle, CreditCard, Info, Loader2, MoreVertical, Pencil, Plus, Search, RefreshCw, Trash2 } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { toast } from "sonner";
@@ -17,7 +17,8 @@ import { useBankAccounts, useFinancialEntries, type BankAccount } from "@/hooks/
 import { calculateAccountBalances } from "@/lib/account-balances";
 import { useDataCacheSnapshot } from "@/lib/data-cache";
 import { usePermissions } from "@/hooks/usePermissions";
-import { CATEGORIES } from "@/lib/financeiro-constants";
+import { DEFAULT_CATEGORIAS as CATEGORIES } from "@/lib/financeiro-constants";
+import { getCardInvoicesList, type CardInvoice } from "@/lib/credit-card-invoices";
 
 const bankOptions = [
   "C6", "Nubank", "Mercado Pago", "Asaas", "Inter", "Itaú", "Bradesco",
@@ -28,7 +29,7 @@ const bandeiraOptions = ["Visa", "Mastercard", "Elo", "American Express", "Hiper
 
 export default function ContasPage() {
   const { data: accounts, save: saveBankAccount, remove: removeBankAccount, restore: restoreBankAccount, archivedAccounts } = useBankAccounts();
-  const { save: saveFinancialEntry } = useFinancialEntries();
+  const { save: saveFinancialEntry, remove: removeFinancialEntry } = useFinancialEntries();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editAccount, setEditAccount] = useState<BankAccount | null>(null);
   const [form, setForm] = useState({ nome: "", banco: "", saldoInicial: "", tipo: "banco" as "banco" | "cartao", diaFechamento: "", diaVencimento: "", limite: "", contaPagamento: "", bandeira: "", descricao: "" });
@@ -49,12 +50,22 @@ export default function ContasPage() {
   // Card detail sheet
   const [cardDetailOpen, setCardDetailOpen] = useState(false);
   const [cardDetailAccount, setCardDetailAccount] = useState<BankAccount | null>(null);
+  const [cardDetailYm, setCardDetailYm] = useState("");
 
   // New expense from card detail
   const today = new Date().toISOString().split("T")[0];
   const [newExpenseOpen, setNewExpenseOpen] = useState(false);
-  const [newExpenseForm, setNewExpenseForm] = useState({ descricao: "", valor: "", data: today, categoria: "outro_despesa", parcelas: 1, observacao: "" });
+  const [newExpenseForm, setNewExpenseForm] = useState({ descricao: "", valor: "", faturaYm: "", categoria: "outro_despesa", parcelas: 1, observacao: "" });
   const [savingExpense, setSavingExpense] = useState(false);
+
+  const cardInvoices = useMemo<CardInvoice[]>(() => {
+    if (!cardDetailAccount) return [];
+    return getCardInvoicesList(cardDetailAccount, financial || []);
+  }, [cardDetailAccount, financial]);
+
+  const defaultFaturaYm = useMemo(() => {
+    return (cardInvoices.find(i => i.status === "Aberta") ?? cardInvoices[0])?.ymKey ?? "";
+  }, [cardInvoices]);
 
   const accountBalances = useMemo(() => {
     return calculateAccountBalances(accounts, financial, 90);
@@ -74,7 +85,7 @@ export default function ContasPage() {
   const cardEntries = useMemo(() => {
     if (!cardDetailAccount) return [];
     return (financial || [])
-      .filter(e => e.conta === cardDetailAccount.nome && e.tipo === "despesa" && e.categoria !== "fatura_cartao")
+      .filter(e => !e.deletedAt && e.conta === cardDetailAccount.nome && e.tipo === "despesa" && e.categoria !== "fatura_cartao")
       .sort((a, b) => (b.dataPrevista || b.data).localeCompare(a.dataPrevista || a.data));
   }, [financial, cardDetailAccount]);
 
@@ -91,6 +102,9 @@ export default function ContasPage() {
 
   const openCardDetail = (account: BankAccount) => {
     setCardDetailAccount(account);
+    const invoices = getCardInvoicesList(account, financial || []);
+    const open = invoices.find(i => i.status === "Aberta");
+    setCardDetailYm(open?.ymKey ?? new Date().toISOString().slice(0, 7));
     setCardDetailOpen(true);
   };
 
@@ -101,22 +115,21 @@ export default function ContasPage() {
       const valor = parseBRL(newExpenseForm.valor);
       if (!valor || valor <= 0) { toast.error("Valor inválido"); return; }
       const card = cardDetailAccount;
-      const purchaseDate = new Date(newExpenseForm.data + "T00:00:00");
-      const closingDay = card.diaFechamento || 1;
-      const dueDay = card.diaVencimento || 1;
       const parcelas = newExpenseForm.parcelas;
       const baseId = crypto.randomUUID();
       const baseSerie = parcelas > 1 ? `cc-${baseId}` : undefined;
       const ccGroupId = parcelas > 1 ? crypto.randomUUID() : null;
       const valorParcela = Math.round((valor / parcelas) * 100) / 100;
-      const closingMonthOffset = purchaseDate.getDate() > closingDay ? 1 : 0;
-      const dueMonthOffsetFromClosing = dueDay > closingDay ? 0 : 1;
-      const firstInvoiceMonthOffset = closingMonthOffset + dueMonthOffsetFromClosing;
+
+      // Usa a fatura selecionada como data da 1ª parcela
+      const selectedInvoice = cardInvoices.find(i => i.ymKey === newExpenseForm.faturaYm);
+      if (!selectedInvoice) { toast.error("Selecione uma fatura válida"); return; }
+      const [fy, fm, fd] = selectedInvoice.dueDate.split("-").map(Number);
 
       for (let i = 0; i < parcelas; i++) {
-        const inv = new Date(purchaseDate.getFullYear(), purchaseDate.getMonth() + firstInvoiceMonthOffset + i, 1);
+        const inv = new Date(fy, fm - 1 + i, 1);
         const lastDay = new Date(inv.getFullYear(), inv.getMonth() + 1, 0).getDate();
-        inv.setDate(Math.min(dueDay, lastDay));
+        inv.setDate(Math.min(fd, lastDay));
         const dueIso = inv.toISOString().split("T")[0];
         const parcelaTag = parcelas > 1 ? ` (${i + 1}/${parcelas})` : "";
         const entry: FinancialEntry = {
@@ -137,8 +150,7 @@ export default function ContasPage() {
           recorrente: false, despesaFixa: false,
           serieId: baseSerie ?? null, fixedOriginId: null, recurringGroupId: ccGroupId,
           recorrenciaTipo: "mensal", recorrenciaVezes: 0, recorrenciaPorPeriodo: 1,
-          observacao: (newExpenseForm.observacao.trim() ? newExpenseForm.observacao.trim() + " • " : "") +
-            `Compra em ${purchaseDate.toLocaleDateString("pt-BR")}${parcelas > 1 ? ` • Parcela ${i + 1}/${parcelas}` : ""} • ${card.nome}`,
+          observacao: newExpenseForm.observacao.trim() || null,
           asaasPaymentId: null,
         };
         await saveFinancialEntry(entry);
@@ -147,7 +159,7 @@ export default function ContasPage() {
       if (parcelas > 1) toast.success(`${parcelas} parcelas lançadas no ${card.nome}`);
       else toast.success(`Despesa lançada na fatura do ${card.nome}`);
       setNewExpenseOpen(false);
-      setNewExpenseForm({ descricao: "", valor: "", data: today, categoria: "outro_despesa", parcelas: 1, observacao: "" });
+      setNewExpenseForm({ descricao: "", valor: "", faturaYm: defaultFaturaYm, categoria: "outro_despesa", parcelas: 1, observacao: "" });
     } catch (err: any) {
       toast.error("Erro ao salvar: " + (err?.message || "Tente novamente"));
     } finally {
@@ -823,7 +835,7 @@ export default function ContasPage() {
                   <div className="mt-3 flex gap-2">
                     {canCreate && (
                       <Button size="sm" className="gap-1.5 flex-1" onClick={() => {
-                        setNewExpenseForm({ descricao: "", valor: "", data: today, categoria: "outro_despesa", parcelas: 1, observacao: "" });
+                        setNewExpenseForm({ descricao: "", valor: "", faturaYm: defaultFaturaYm, categoria: "outro_despesa", parcelas: 1, observacao: "" });
                         setNewExpenseOpen(true);
                       }}>
                         <Plus className="h-3.5 w-3.5" /> Nova despesa
@@ -837,45 +849,124 @@ export default function ContasPage() {
                   </div>
                 </SheetHeader>
 
-                {/* Entry list */}
-                <div className="flex-1 overflow-y-auto p-5 space-y-5">
-                  {cardEntriesByMonth.length === 0 ? (
-                    <div className="flex flex-col items-center justify-center py-12 text-center text-muted-foreground">
-                      <CreditCard className="h-8 w-8 mb-3 opacity-30" />
-                      <p className="text-sm">Nenhuma despesa lançada neste cartão.</p>
-                    </div>
-                  ) : (
-                    cardEntriesByMonth.map(([ym, entries]) => {
-                      const total = entries.reduce((s, e) => s + e.valor, 0);
-                      return (
-                        <div key={ym}>
-                          <div className="flex items-center justify-between mb-2">
-                            <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                              Fatura {monthLabel(ym)}
-                            </span>
-                            <span className="font-mono text-sm font-semibold text-foreground">{fmt(total)}</span>
+                {/* Month navigator + entries */}
+                {(() => {
+                  const todayD = new Date(); todayD.setHours(0, 0, 0, 0);
+                  const [y, m] = cardDetailYm ? cardDetailYm.split("-").map(Number) : [todayD.getFullYear(), todayD.getMonth() + 1];
+                  const prevYm = m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, "0")}`;
+                  const nextYm = m === 12 ? `${y + 1}-01` : `${y}-${String(m + 1).padStart(2, "0")}`;
+                  const label = new Date(y, m - 1, 1).toLocaleDateString("pt-BR", { month: "long", year: "numeric" });
+                  const invoice = cardInvoices.find(i => i.ymKey === cardDetailYm);
+                  const ymEntries = cardEntries.filter(e => (e.dataPrevista || e.data || "").slice(0, 7) === cardDetailYm);
+                  const total = ymEntries.reduce((s, e) => s + e.valor, 0);
+
+                  const dueDay = cardDetailAccount?.diaVencimento || 1;
+                  const dueDate = new Date(y, m - 1, dueDay);
+                  const isOverdue = invoice?.status !== "Paga" && dueDate < todayD && total > 0;
+                  const daysOverdue = isOverdue ? Math.floor((todayD.getTime() - dueDate.getTime()) / 86400000) : 0;
+                  const daysUntilDue = !isOverdue && invoice?.status !== "Paga" && dueDate >= todayD && total > 0
+                    ? Math.floor((dueDate.getTime() - todayD.getTime()) / 86400000) : null;
+
+                  const statusBadge = (() => {
+                    if (invoice?.status === "Paga") return { label: "Paga", cls: "bg-emerald-50 text-emerald-700 border-emerald-200" };
+                    if (isOverdue) return { label: `Vencida há ${daysOverdue}d`, cls: "bg-destructive/10 text-destructive border-destructive/30" };
+                    if (total === 0) return { label: "Sem despesas", cls: "bg-muted text-muted-foreground border-border/40" };
+                    return { label: "A pagar", cls: "bg-amber-50 text-amber-700 border-amber-200" };
+                  })();
+
+                  // Fatura inv__ entry para marcar como paga
+                  const invId = cardDetailAccount ? `inv__${cardDetailAccount.id}__${cardDetailYm}` : "";
+                  const invEntry = (financial || []).find(e => e.id === invId);
+
+                  const handlePayFatura = async () => {
+                    if (!cardDetailAccount || !invEntry) return;
+                    const updated = { ...invEntry, pago: !invEntry.pago, data: !invEntry.pago ? todayD.toISOString().split("T")[0] : invEntry.data };
+                    await saveFinancialEntry(updated as any);
+                  };
+
+                  return (
+                    <div className="flex-1 overflow-y-auto flex flex-col min-h-0">
+                      {/* Navigator bar */}
+                      <div className="flex items-center gap-2 px-5 py-3 border-b shrink-0">
+                        <button onClick={() => setCardDetailYm(prevYm)} className="p-1.5 rounded-md border border-border/60 hover:bg-muted/60 transition-colors">
+                          <ChevronLeft className="h-4 w-4" />
+                        </button>
+                        <span className="flex-1 text-center bg-primary text-primary-foreground rounded-lg px-4 py-2 text-sm font-semibold capitalize">{label}</span>
+                        <button onClick={() => setCardDetailYm(nextYm)} className="p-1.5 rounded-md border border-border/60 hover:bg-muted/60 transition-colors">
+                          <ChevronRight className="h-4 w-4" />
+                        </button>
+                      </div>
+
+                      {/* Fatura summary */}
+                      <div className={`flex items-center gap-3 px-5 py-3 border-b shrink-0 ${isOverdue ? "bg-destructive/5" : "bg-muted/20"}`}>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-xs font-medium text-muted-foreground">Total da fatura:</span>
+                            <span className="font-mono text-sm font-bold text-destructive">{fmt(total)}</span>
+                            <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded border ${statusBadge.cls}`}>{statusBadge.label}</span>
                           </div>
-                          <div className="rounded-lg border divide-y overflow-hidden">
-                            {entries.map(e => (
-                              <div key={e.id} className="flex items-center justify-between px-3 py-2.5 bg-background hover:bg-muted/30 transition-colors">
-                                <div className="flex-1 min-w-0 pr-3">
-                                  <p className="text-sm truncate text-foreground">{e.descricao}</p>
-                                  <p className="text-xs text-muted-foreground">
-                                    {e.dataPrevista || e.data}
-                                    {e.pago && <span className="ml-1.5 text-emerald-600">• Pago</span>}
-                                  </p>
-                                </div>
-                                <span className={`font-mono text-sm font-medium ${e.pago ? "text-muted-foreground" : "text-destructive"}`}>
-                                  {fmt(e.valor)}
-                                </span>
-                              </div>
-                            ))}
-                          </div>
+                          {daysUntilDue !== null && daysUntilDue <= 5 && (
+                            <p className="text-[10px] text-amber-600 font-medium mt-0.5">Vence em {daysUntilDue === 0 ? "hoje" : `${daysUntilDue} dias`} — {dueDate.toLocaleDateString("pt-BR")}</p>
+                          )}
+                          {isOverdue && (
+                            <p className="text-[10px] text-destructive font-medium mt-0.5">Venceu em {dueDate.toLocaleDateString("pt-BR")}</p>
+                          )}
                         </div>
-                      );
-                    })
-                  )}
-                </div>
+                        {total > 0 && invoice?.status !== "Paga" && (
+                          <Button size="sm" className="gap-1.5 shrink-0 h-7 text-xs" onClick={handlePayFatura}>
+                            <Check className="h-3 w-3" /> Pagar fatura
+                          </Button>
+                        )}
+                        {invoice?.status === "Paga" && (
+                          <Button size="sm" variant="outline" className="gap-1.5 shrink-0 h-7 text-xs" onClick={handlePayFatura}>
+                            <Circle className="h-3 w-3" /> Desfazer
+                          </Button>
+                        )}
+                      </div>
+
+                      {/* Entries */}
+                      <div className="flex-1 overflow-y-auto divide-y divide-border/30">
+                        {ymEntries.length === 0 ? (
+                          <div className="flex flex-col items-center justify-center py-12 text-center text-muted-foreground">
+                            <CreditCard className="h-8 w-8 mb-3 opacity-30" />
+                            <p className="text-sm">Nenhuma despesa neste mês.</p>
+                          </div>
+                        ) : (
+                          ymEntries.map(e => {
+                            const entryLabel = e.descricao?.trim() || e.subcategoria || e.categoria || "—";
+                            return (
+                              <div key={e.id} className="group flex items-center gap-0 hover:bg-muted/20 transition-colors">
+                                <div className={`w-[3px] self-stretch ${e.pago ? "bg-emerald-500" : "bg-destructive"}`} />
+                                <div className="flex items-center gap-3 flex-1 min-w-0 px-4 py-3">
+                                  <div className="flex-1 min-w-0">
+                                    <p className="text-sm font-medium truncate">{entryLabel}</p>
+                                    <p className="text-xs text-muted-foreground">
+                                      {(e.dataPrevista || e.data || "").slice(0, 10).split("-").reverse().join("/")}
+                                      {e.subcategoria && e.descricao?.trim() && <span className="ml-1.5 opacity-70">• {e.subcategoria}</span>}
+                                      {e.pago && <span className="ml-1.5 text-emerald-600 font-medium">• Pago</span>}
+                                    </p>
+                                  </div>
+                                  <span className={`font-mono text-sm font-semibold whitespace-nowrap ${e.pago ? "text-muted-foreground" : "text-destructive"}`}>
+                                    {fmt(Number(e.valor) || 0)}
+                                  </span>
+                                  {canDelete && (
+                                    <button
+                                      onClick={() => { if (confirm("Excluir esta despesa?")) removeFinancialEntry(e.id); }}
+                                      className="p-1 rounded opacity-0 group-hover:opacity-100 transition-opacity hover:bg-destructive/10 text-muted-foreground hover:text-destructive"
+                                      title="Excluir"
+                                    >
+                                      <Trash2 className="h-3.5 w-3.5" />
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })
+                        )}
+                      </div>
+                    </div>
+                  );
+                })()}
               </>
             );
           })()}
@@ -925,12 +1016,22 @@ export default function ContasPage() {
               </div>
             </div>
             <div className="grid gap-1">
-              <Label className="text-xs">Data da compra</Label>
-              <Input
-                type="date"
-                value={newExpenseForm.data}
-                onChange={e => setNewExpenseForm(f => ({ ...f, data: e.target.value }))}
-              />
+              <Label className="text-xs">Fatura <span className="text-destructive">*</span></Label>
+              <select
+                value={newExpenseForm.faturaYm}
+                onChange={e => setNewExpenseForm(f => ({ ...f, faturaYm: e.target.value }))}
+                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+              >
+                {cardInvoices.map(inv => {
+                  const statusLabel: Record<string, string> = { Aberta: "Aberta", Parcial: "Parcial", Zerada: "Zerada", Paga: "Paga" };
+                  const totalStr = inv.total > 0 ? ` — ${fmt(inv.total)}` : "";
+                  return (
+                    <option key={inv.ymKey} value={inv.ymKey}>
+                      {inv.label} ({statusLabel[inv.status]}{totalStr})
+                    </option>
+                  );
+                })}
+              </select>
             </div>
             <div className="grid gap-1">
               <Label className="text-xs">Categoria</Label>
@@ -952,23 +1053,16 @@ export default function ContasPage() {
                 placeholder="..."
               />
             </div>
-            {cardDetailAccount && newExpenseForm.valor && parseBRL(newExpenseForm.valor) > 0 && (() => {
-              const card = cardDetailAccount;
-              const purchaseDate = new Date((newExpenseForm.data || today) + "T00:00:00");
-              const closingDay = card.diaFechamento || 1;
-              const dueDay = card.diaVencimento || 1;
-              const closingMonthOffset = purchaseDate.getDate() > closingDay ? 1 : 0;
-              const dueMonthOffsetFromClosing = dueDay > closingDay ? 0 : 1;
-              const firstOffset = closingMonthOffset + dueMonthOffsetFromClosing;
-              const inv = new Date(purchaseDate.getFullYear(), purchaseDate.getMonth() + firstOffset, Math.min(dueDay, 28));
-              const invLabel = monthLabel(inv.toISOString().slice(0, 7));
+            {newExpenseForm.valor && parseBRL(newExpenseForm.valor) > 0 && newExpenseForm.faturaYm && (() => {
+              const inv = cardInvoices.find(i => i.ymKey === newExpenseForm.faturaYm);
+              if (!inv) return null;
               const valor = parseBRL(newExpenseForm.valor);
               const parcelas = newExpenseForm.parcelas;
               return (
                 <p className="rounded-md bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
                   💳 {parcelas > 1
-                    ? `${parcelas}x de ${fmt(Math.round(valor / parcelas * 100) / 100)} — 1ª parcela na fatura de ${invLabel}`
-                    : `Vai para a fatura de ${invLabel}`}
+                    ? `${parcelas}x de ${fmt(Math.round(valor / parcelas * 100) / 100)} — 1ª parcela: ${inv.label}`
+                    : `Fatura: ${inv.label}`}
                 </p>
               );
             })()}
