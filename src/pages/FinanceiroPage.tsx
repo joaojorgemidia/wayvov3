@@ -2135,7 +2135,29 @@ export default function FinanceiroPage() {
     const id = confirmToggleEntry.id;
     const parsedValor = parseFloat(confirmValor.replace(/\./g, "").replace(",", "."));
     const finalValor = !isNaN(parsedValor) && parsedValor > 0 ? parsedValor : confirmToggleEntry.valor;
-    persist(entries.map(e => {
+    const payDate = confirmDate || new Date().toISOString().split("T")[0];
+    const isRentalPayment = !confirmToggleEntry.pago && !!confirmToggleEntry.rentalId
+      && confirmToggleEntry.tipo === "receita" && confirmToggleEntry.categoria === "aluguel";
+
+    // ── Calcular acréscimos por atraso (hierarquia: locação > empresa) ──────
+    const rental = isRentalPayment ? rentals.find(r => r.id === confirmToggleEntry.rentalId) : null;
+    const dueDateStr = confirmToggleEntry.dataPrevista || confirmToggleEntry.data;
+    const dueDate = dueDateStr ? new Date(dueDateStr + "T00:00:00") : null;
+    const daysOverdue = (isRentalPayment && dueDate)
+      ? Math.max(0, Math.floor((new Date(payDate + "T00:00:00").getTime() - dueDate.getTime()) / 86400000))
+      : 0;
+    const cfg = activeCompany?.cobrancaConfig ?? { multaAtraso: 0, jurosDiario: 0, jurosMes: 0 };
+    const multa        = daysOverdue > 0 ? (rental?.multaAtraso    || cfg.multaAtraso || 0) : 0;
+    const jurosMesEfetivo = rental?.jurosAtrasoMes || cfg.jurosMes || 0;
+    const jurosCalc    = daysOverdue > 0 ? (confirmToggleEntry.valor * (jurosMesEfetivo / 100 / 30)) * daysOverdue : 0;
+    const jurosDiarioFix = daysOverdue > 0 ? (cfg.jurosDiario || 0) * daysOverdue : 0;
+    const totalJuros   = jurosCalc + jurosDiarioFix;
+    const totalComAcrescimos = daysOverdue > 0 ? confirmToggleEntry.valor + multa + totalJuros : 0;
+    const pendente     = totalComAcrescimos > 0 ? Math.max(0, Math.round((totalComAcrescimos - finalValor) * 100) / 100) : 0;
+    const temAcrescimo = daysOverdue > 0 && (multa > 0 || totalJuros > 0);
+
+    // ── Atualiza a entrada original ──────────────────────────────────────────
+    const updatedEntries = entries.map(e => {
       if (e.id !== id) return e;
       if (!e.pago) {
         const finalConta = confirmConta || e.conta;
@@ -2145,19 +2167,48 @@ export default function FinanceiroPage() {
           obs = obs.replace(/\s*•\s*Pago via [^•]+/g, "").trim();
           obs = (obs ? obs + " " : "") + `• Pago via ${confirmPayBank}`;
         }
-        return { ...e, pago: true, valor: finalValor, data: confirmDate || new Date().toISOString().split("T")[0], conta: finalConta, observacao: obs };
+        return { ...e, pago: true, valor: finalValor, data: payDate, conta: finalConta, observacao: obs };
       } else {
         return { ...e, pago: false, data: e.dataPrevista || e.data };
       }
-    }));
-    // Success panel para pagamentos de aluguel de locação
-    if (!confirmToggleEntry.pago && confirmToggleEntry.rentalId && confirmToggleEntry.tipo === "receita" && confirmToggleEntry.categoria === "aluguel") {
-      const rental = rentals.find(r => r.id === confirmToggleEntry.rentalId);
+    });
+
+    // ── Cria entrada pendente de juros/multa quando houver saldo devedor ────
+    let finalEntries = updatedEntries;
+    if (isRentalPayment && pendente > 0.009) {
+      const dueFmt = dueDateStr ? new Date(dueDateStr + "T12:00:00").toLocaleDateString("pt-BR") : "?";
+      const feeEntry: FinancialEntry = {
+        id: crypto.randomUUID(),
+        tipo: "receita",
+        categoria: "juros_atraso",
+        descricao: `Juros/Multa — ref. venc. ${dueFmt}`,
+        valor: pendente,
+        data: payDate,
+        dataPrevista: payDate,
+        pago: false,
+        conta: confirmConta || confirmToggleEntry.conta || "",
+        natureza: confirmToggleEntry.natureza || "operacional",
+        tags: [],
+        rentalId: confirmToggleEntry.rentalId ?? null,
+        clienteId: confirmToggleEntry.clienteId ?? null,
+        clienteNome: confirmToggleEntry.clienteNome || "",
+        motoId: confirmToggleEntry.motoId ?? null,
+        placa: confirmToggleEntry.placa || "",
+        observacao: `Juros e multa referente ao pagamento com vencimento em ${dueFmt}`,
+        recorrente: false,
+        despesaFixa: false,
+        ignorada: false,
+        createdAt: new Date().toISOString(),
+      };
+      finalEntries = [...updatedEntries, feeEntry];
+    }
+
+    persist(finalEntries);
+
+    // ── Success panel para pagamentos de aluguel ─────────────────────────────
+    if (isRentalPayment) {
       const client = clients.find(c => c.id === confirmToggleEntry.clienteId);
-      const dueDateStr = confirmToggleEntry.dataPrevista || confirmToggleEntry.data;
-      const dueDate = dueDateStr ? new Date(dueDateStr + "T00:00:00") : null;
       const startDate = rental ? new Date(rental.dataInicio + "T00:00:00") : null;
-      const payDate = confirmDate || new Date().toISOString().split("T")[0];
       let periodoLabel = "";
       if (rental && dueDate && startDate) {
         const freq = rental.frequenciaPagamento;
@@ -2172,17 +2223,7 @@ export default function FinanceiroPage() {
       const nome = client?.nome || "Locatário";
       const priNome = nome.split(" ")[0];
       const fmt2 = (v: number) => v.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-
-      // Calcular acréscimos por atraso usando hierarquia: locação > empresa
-      const cfg = activeCompany?.cobrancaConfig ?? { multaAtraso: 0, jurosDiario: 0, jurosMes: 0 };
-      const multa = daysOverdue > 0 ? (rental?.multaAtraso || cfg.multaAtraso || 0) : 0;
-      const jurosMesEfetivo = rental?.jurosAtrasoMes || cfg.jurosMes || 0;
-      const jurosCalcMsg = daysOverdue > 0 ? (valorOriginal * (jurosMesEfetivo / 100 / 30)) * daysOverdue : 0;
-      const jurosDiarioFixMsg = daysOverdue > 0 ? (cfg.jurosDiario || 0) * daysOverdue : 0;
-      const totalJuros = jurosCalcMsg + jurosDiarioFixMsg;
-      const totalComAcrescimos = daysOverdue > 0 ? valorOriginal + multa + totalJuros : 0;
-      const pendente = totalComAcrescimos > 0 ? Math.max(0, Math.round((totalComAcrescimos - finalValor) * 100) / 100) : 0;
-      const temAcrescimo = daysOverdue > 0 && (multa > 0 || totalJuros > 0);
+      const valorOriginal = confirmToggleEntry.valor;
 
       const mensagem = [
         `Olá, ${priNome}! Segue confirmação do seu pagamento:`,
@@ -2193,8 +2234,8 @@ export default function FinanceiroPage() {
         "",
         temAcrescimo ? `⚠️ Pagamento com atraso de ${daysOverdue} dia${daysOverdue !== 1 ? "s" : ""}` : null,
         temAcrescimo && multa > 0 ? `• Multa: R$ ${fmt2(multa)}` : null,
-        temAcrescimo && cfg.jurosDiario > 0 ? `• Juros (R$ ${fmt2(cfg.jurosDiario)}/dia × ${daysOverdue} dias): R$ ${fmt2(jurosDiarioFixMsg)}` : null,
-        temAcrescimo && jurosMesEfetivo > 0 ? `• Juros ${fmt2(jurosMesEfetivo)}%/mês: R$ ${fmt2(jurosCalcMsg)}` : null,
+        temAcrescimo && cfg.jurosDiario > 0 ? `• Juros (R$ ${fmt2(cfg.jurosDiario)}/dia × ${daysOverdue} dias): R$ ${fmt2(jurosDiarioFix)}` : null,
+        temAcrescimo && jurosMesEfetivo > 0 ? `• Juros ${fmt2(jurosMesEfetivo)}%/mês: R$ ${fmt2(jurosCalc)}` : null,
         temAcrescimo ? "" : null,
         temAcrescimo ? `💰 Valor original: R$ ${fmt2(valorOriginal)}` : null,
         temAcrescimo ? `💳 Total com acréscimos: R$ ${fmt2(totalComAcrescimos)}` : null,
