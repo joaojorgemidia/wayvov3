@@ -9,6 +9,13 @@ const corsHeaders = {
 const ASAAS_BASE = "https://www.asaas.com/api/v3";
 const TERMINAL = new Set(["RECEIVED", "CANCELLED", "REFUNDED", "REFUND_REQUESTED", "DELETED"]);
 
+async function deterministicUUID(key: string): Promise<string> {
+  const data = new TextEncoder().encode(key);
+  const buf = await crypto.subtle.digest("SHA-1", data);
+  const h = [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, "0")).join("");
+  return `${h.slice(0,8)}-${h.slice(8,12)}-5${h.slice(13,16)}-${(["8","9","a","b"])[parseInt(h[16],16)&3]}${h.slice(17,20)}-${h.slice(20,32)}`;
+}
+
 function parseFeeSubcategoria(description: string): string {
   const d = description.toLowerCase();
   if (d.includes("mensageria") || d.includes("sms") || d.includes("whatsapp")) return "Taxa de mensageria";
@@ -37,7 +44,7 @@ async function registerAsaasFees(
   let registered = 0;
   try {
     const res = await fetch(
-      `${ASAAS_BASE}/financialTransactions?payment.id=${entry.asaas_payment_id}&type=DEBIT`,
+      `${ASAAS_BASE}/financialTransactions?payment=${entry.asaas_payment_id}&type=DEBIT`,
       { headers: { "access_token": apiKey } },
     );
 
@@ -47,7 +54,9 @@ async function registerAsaasFees(
     }
 
     const json = await res.json();
-    const fees = (json.data || []) as Array<{ id: string; date: string; value: number; description: string }>;
+    // Filtra apenas taxas deste pagamento (dupla proteção: payment.id na resposta)
+    const fees = ((json.data || []) as Array<{ id: string; date: string; value: number; description: string; payment?: { id: string } }>)
+      .filter(f => !f.payment?.id || f.payment.id === entry.asaas_payment_id);
 
     for (const fee of fees) {
       const feeAmount = Math.abs(Number(fee.value));
@@ -59,7 +68,7 @@ async function registerAsaasFees(
       const { error } = await supabase
         .from("financial_entries")
         .upsert({
-          id: `asaas-fee-${fee.id}`,
+          id: await deterministicUUID(`asaas-fee:${fee.id}`),
           tipo: "despesa",
           categoria: "taxas",
           subcategoria,
@@ -70,7 +79,7 @@ async function registerAsaasFees(
           data_prevista: feeDate,
           pago: true,
           conta: "Asaas",
-          natureza: "administrativa",
+          natureza: entry.placa || entry.moto_id ? "operacional" : "administrativa",
           company_id: entry.company_id,
           cliente_id: entry.cliente_id || null,
           cliente_nome: entry.cliente_nome || null,

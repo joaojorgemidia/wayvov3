@@ -3,7 +3,6 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const ASAAS_BASE = "https://www.asaas.com/api/v3";
 
-// Asaas events que atualizam status
 const STATUS_MAP: Record<string, string> = {
   PAYMENT_RECEIVED: "RECEIVED",
   PAYMENT_CONFIRMED: "RECEIVED",
@@ -14,8 +13,8 @@ const STATUS_MAP: Record<string, string> = {
   PAYMENT_PARTIALLY_REFUNDED: "PARTIALLY_REFUNDED",
 };
 
-async function feeIdToUUID(feeId: string | number): Promise<string> {
-  const data = new TextEncoder().encode(`asaas-fee:${feeId}`);
+async function deterministicUUID(key: string): Promise<string> {
+  const data = new TextEncoder().encode(key);
   const buf = await crypto.subtle.digest("SHA-1", data);
   const h = [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, "0")).join("");
   return `${h.slice(0,8)}-${h.slice(8,12)}-5${h.slice(13,16)}-${(["8","9","a","b"])[parseInt(h[16],16)&3]}${h.slice(17,20)}-${h.slice(20,32)}`;
@@ -31,25 +30,26 @@ function parseFeeSubcategoria(description: string): string {
   return "Taxa Asaas";
 }
 
+type EntryContext = {
+  id: string;
+  asaas_payment_id: string;
+  company_id: string;
+  cliente_id?: string | null;
+  cliente_nome?: string | null;
+  moto_id?: string | null;
+  placa?: string | null;
+  rental_id?: string | null;
+};
+
 async function registerAsaasFees(
   supabase: ReturnType<typeof createClient>,
-  entry: {
-    id: string;
-    asaas_payment_id: string;
-    company_id: string;
-    cliente_id?: string | null;
-    cliente_nome?: string | null;
-    moto_id?: string | null;
-    placa?: string | null;
-    rental_id?: string | null;
-  },
+  entry: EntryContext,
   apiKey: string,
   paymentDate: string,
 ) {
   try {
-    // Busca transações financeiras (taxas) relacionadas a este pagamento no Asaas
     const res = await fetch(
-      `${ASAAS_BASE}/financialTransactions?payment.id=${entry.asaas_payment_id}&type=DEBIT`,
+      `${ASAAS_BASE}/financialTransactions?payment=${entry.asaas_payment_id}&type=DEBIT`,
       { headers: { "access_token": apiKey } },
     );
 
@@ -59,12 +59,9 @@ async function registerAsaasFees(
     }
 
     const json = await res.json();
-    const fees = (json.data || []) as Array<{
-      id: string;
-      date: string;
-      value: number;
-      description: string;
-    }>;
+    // Filtra apenas taxas deste pagamento específico (dupla proteção contra retornos incorretos da API)
+    const fees = ((json.data || []) as Array<{ id: string; date: string; value: number; description: string; payment?: { id: string } }>)
+      .filter(f => !f.payment?.id || f.payment.id === entry.asaas_payment_id);
 
     for (const fee of fees) {
       const feeAmount = Math.abs(Number(fee.value));
@@ -73,8 +70,8 @@ async function registerAsaasFees(
       const feeDate = fee.date || paymentDate;
       const subcategoria = parseFeeSubcategoria(fee.description || "");
 
-      const feeEntry = {
-        id: await feeIdToUUID(fee.id),
+      const { error } = await supabase.from("financial_entries").upsert({
+        id: await deterministicUUID(`asaas-fee:${fee.id}`),
         tipo: "despesa",
         categoria: "taxas",
         subcategoria,
@@ -85,7 +82,7 @@ async function registerAsaasFees(
         data_prevista: feeDate,
         pago: true,
         conta: "Asaas",
-        natureza: "administrativa",
+        natureza: entry.placa || entry.moto_id ? "operacional" : "administrativa",
         company_id: entry.company_id,
         cliente_id: entry.cliente_id || null,
         cliente_nome: entry.cliente_nome || null,
@@ -97,11 +94,7 @@ async function registerAsaasFees(
         despesa_fixa: false,
         ignorada: false,
         deleted_at: null,
-      };
-
-      const { error } = await supabase
-        .from("financial_entries")
-        .upsert(feeEntry, { onConflict: "id", ignoreDuplicates: true });
+      }, { onConflict: "id", ignoreDuplicates: true });
 
       if (error) {
         console.error(`[registerAsaasFees] erro ao inserir taxa ${fee.id}:`, error.message);
@@ -111,6 +104,55 @@ async function registerAsaasFees(
     }
   } catch (err) {
     console.error("[registerAsaasFees] erro inesperado:", err);
+  }
+}
+
+async function registerJurosMulta(
+  supabase: ReturnType<typeof createClient>,
+  entry: EntryContext,
+  payment: { id: string; interest?: { value?: number }; fine?: { value?: number } },
+  paymentDate: string,
+) {
+  const interestValue = Number(payment.interest?.value || 0);
+  const fineValue = Number(payment.fine?.value || 0);
+  const total = interestValue + fineValue;
+
+  if (total <= 0) return;
+
+  const parts: string[] = [];
+  if (interestValue > 0) parts.push(`Juros R$ ${interestValue.toFixed(2)}`);
+  if (fineValue > 0) parts.push(`Multa R$ ${fineValue.toFixed(2)}`);
+
+  const { error } = await supabase.from("financial_entries").upsert({
+    id: await deterministicUUID(`asaas-juros:${payment.id}`),
+    tipo: "receita",
+    categoria: "juros_atraso",
+    subcategoria: "Mensal",
+    descricao: `Juros/Multa - ${entry.cliente_nome || ""}`.trim(),
+    observacao: parts.join(" + "),
+    valor: total,
+    data: paymentDate,
+    data_prevista: paymentDate,
+    pago: true,
+    conta: "Asaas",
+    natureza: "operacional",
+    company_id: entry.company_id,
+    cliente_id: entry.cliente_id || null,
+    cliente_nome: entry.cliente_nome || null,
+    moto_id: entry.moto_id || null,
+    placa: entry.placa || null,
+    rental_id: entry.rental_id || null,
+    tags: ["Asaas", "Pago Asaas"],
+    recorrente: false,
+    despesa_fixa: false,
+    ignorada: false,
+    deleted_at: null,
+  }, { onConflict: "id", ignoreDuplicates: true });
+
+  if (error) {
+    console.error(`[registerJurosMulta] erro para payment ${payment.id}:`, error.message);
+  } else {
+    console.log(`[registerJurosMulta] R$ ${total} registrado (${parts.join(", ")}) para payment ${payment.id}`);
   }
 }
 
@@ -139,7 +181,6 @@ serve(async (req) => {
       return new Response(JSON.stringify({ ok: true, skipped: true }), { status: 200 });
     }
 
-    // Busca a entrada com todos os campos necessários
     const { data: entry, error } = await supabase
       .from("financial_entries")
       .select("id, pago, asaas_status, asaas_payment_id, company_id, cliente_id, cliente_nome, moto_id, placa, rental_id")
@@ -166,7 +207,6 @@ serve(async (req) => {
     await supabase.from("financial_entries").update(updates).eq("id", entry.id);
     console.log(`[asaas-webhook] entrada ${entry.id} atualizada: asaas_status=${newStatus}`);
 
-    // Registra taxas do Asaas quando pagamento é confirmado
     if (newStatus === "RECEIVED" && entry.company_id) {
       const { data: company } = await supabase
         .from("companies")
@@ -175,7 +215,10 @@ serve(async (req) => {
         .single();
       const apiKey = company?.asaas_config?.apiKey || Deno.env.get("ASAAS_API_KEY") || "";
       if (apiKey) {
-        await registerAsaasFees(supabase, entry, apiKey, paymentDate);
+        await Promise.all([
+          registerAsaasFees(supabase, entry, apiKey, paymentDate),
+          registerJurosMulta(supabase, entry, payment, paymentDate),
+        ]);
       }
     }
 
