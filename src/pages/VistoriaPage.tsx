@@ -17,7 +17,7 @@ import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { supabase } from "@/integrations/supabase/client";
 import { useDataCacheSnapshot } from "@/lib/data-cache";
-import { getActiveCompanyId } from "@/lib/companies";
+import { useCompany } from "@/contexts/CompanyContext";
 import { Motorcycle } from "@/lib/types";
 import { formatDate } from "@/lib/alerts";
 import { buildWhatsAppUrl } from "@/lib/whatsapp";
@@ -266,7 +266,8 @@ export default function VistoriaPage() {
     loading: boolean;
   } | null>(null);
 
-  const companyId = getActiveCompanyId();
+  const { activeCompany } = useCompany();
+  const companyId = activeCompany?.id ?? "";
 
   async function loadAll() {
     setLoading(true);

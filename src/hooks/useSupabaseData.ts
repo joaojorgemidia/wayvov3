@@ -1,14 +1,8 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import { getActiveCompanyId } from "@/lib/companies";
 import { getDataCache, setDataCache } from "@/lib/data-cache";
+import { useCompany } from "@/contexts/CompanyContext";
 import type { Motorcycle, Client, Rental, Fine, Maintenance, MaintenanceItem, FinancialEntry } from "@/lib/types";
-
-// ─── Helpers ────────────────────────────────────────────────────
-
-function companyId() {
-  return getActiveCompanyId();
-}
 
 // ─── Generic CRUD hook factory ──────────────────────────────────
 
@@ -20,7 +14,9 @@ function useTable<TRow, TLocal>(
   queryFilter?: (query: any) => any,
 ) {
   const qc = useQueryClient();
-  const key = [queryKey, companyId()];
+  const { activeCompany } = useCompany();
+  const cid = activeCompany?.id ?? "";
+  const key = [queryKey, cid];
   const db = supabase as any;
 
   const query = useQuery({
@@ -29,7 +25,7 @@ function useTable<TRow, TLocal>(
       let queryBuilder = db
         .from(table)
         .select("*")
-        .eq("company_id", companyId());
+        .eq("company_id", cid);
       if (queryFilter) {
         queryBuilder = queryFilter(queryBuilder);
       }
@@ -37,16 +33,17 @@ function useTable<TRow, TLocal>(
       if (error) throw error;
       return (data || []).map((r: any) => toLocal(r));
     },
+    enabled: !!cid,
   });
 
   const upsertMutation = useMutation({
     mutationFn: async (item: TLocal & { id: string }) => {
-      const row = { ...toRow(item), company_id: companyId() } as any;
+      const row = { ...toRow(item), company_id: cid } as any;
       const { data: existing } = await db
         .from(table)
         .select("id")
         .eq("id", item.id)
-        .eq("company_id", companyId())
+        .eq("company_id", cid)
         .maybeSingle();
 
       if (existing) {
@@ -62,7 +59,7 @@ function useTable<TRow, TLocal>(
 
   const deleteMutation = useMutation({
     mutationFn: async (id: string) => {
-      const { error } = await db.from(table).delete().eq("id", id).eq("company_id", companyId());
+      const { error } = await db.from(table).delete().eq("id", id).eq("company_id", cid);
       if (error) throw error;
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: key }),
@@ -70,7 +67,7 @@ function useTable<TRow, TLocal>(
 
   const bulkUpsertMutation = useMutation({
     mutationFn: async (items: (TLocal & { id: string })[]) => {
-      const rows = items.map(item => ({ ...toRow(item), id: item.id, company_id: companyId() }));
+      const rows = items.map(item => ({ ...toRow(item), id: item.id, company_id: cid }));
       const { error } = await db.from(table).upsert(rows, { onConflict: "id" });
       if (error) throw error;
     },
@@ -544,8 +541,10 @@ function bankAccountToDb(a: BankAccount): any {
 export function useBankAccounts() {
   const qc = useQueryClient();
   const db = supabase as any;
-  const activeKey = ["bank_accounts", companyId()];
-  const archiveKey = ["bank_accounts_archived", companyId()];
+  const { activeCompany } = useCompany();
+  const cid = activeCompany?.id ?? "";
+  const activeKey = ["bank_accounts", cid];
+  const archiveKey = ["bank_accounts_archived", cid];
 
   const base = useTable<any, BankAccount>(
     "bank_accounts",
@@ -561,12 +560,13 @@ export function useBankAccounts() {
       const { data, error } = await db
         .from("bank_accounts")
         .select("*")
-        .eq("company_id", companyId())
+        .eq("company_id", cid)
         .not("deleted_at", "is", null)
         .order("deleted_at", { ascending: false });
       if (error) throw error;
       return (data || []).map((r: any) => dbToBankAccount(r));
     },
+    enabled: !!cid,
   });
 
   // Bank accounts são lidas pelo Financeiro via dataCache global (DataContext).
@@ -607,7 +607,7 @@ export function useBankAccounts() {
       .from("bank_accounts")
       .update({ deleted_at: new Date().toISOString() })
       .eq("id", id)
-      .eq("company_id", companyId());
+      .eq("company_id", cid);
     if (error) throw error;
     qc.invalidateQueries({ queryKey: activeKey });
     qc.invalidateQueries({ queryKey: archiveKey });
@@ -620,7 +620,7 @@ export function useBankAccounts() {
       .from("bank_accounts")
       .update({ deleted_at: null })
       .eq("id", id)
-      .eq("company_id", companyId());
+      .eq("company_id", cid);
     if (error) throw error;
     qc.invalidateQueries({ queryKey: activeKey });
     qc.invalidateQueries({ queryKey: archiveKey });
@@ -647,7 +647,9 @@ export function useBankAccounts() {
 
 export function useBulkSave(table: string, queryKey: string, toRow: (item: any) => any) {
   const qc = useQueryClient();
-  const key = [queryKey, companyId()];
+  const { activeCompany } = useCompany();
+  const cid = activeCompany?.id ?? "";
+  const key = [queryKey, cid];
   const db = supabase as any;
 
   return useMutation({
@@ -655,14 +657,14 @@ export function useBulkSave(table: string, queryKey: string, toRow: (item: any) 
       const { error: delError } = await db
         .from(table)
         .delete()
-        .eq("company_id", companyId());
+        .eq("company_id", cid);
       if (delError) throw delError;
 
       if (items.length > 0) {
         const rows = items.map(item => ({
           ...toRow(item),
           id: item.id,
-          company_id: companyId(),
+          company_id: cid,
         }));
         const { error } = await db.from(table).insert(rows);
         if (error) throw error;
