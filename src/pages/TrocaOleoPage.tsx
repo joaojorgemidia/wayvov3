@@ -665,7 +665,7 @@ export default function TrocaOleoPage() {
     const kmPassouLimite = kmAtraso > 0;
 
     const isAtencao = status?.situation === "atencao";
-    const templateKey = isAtencao ? "oleo:atencao" : "oleo:em-dia";
+    const templateKey = kmPassouLimite ? "oleo:km-ultrapassado" : isAtencao ? "oleo:atencao" : "oleo:em-dia";
 
     const linhas: string[] = [];
     linhas.push(`Olá, ${clienteNome || "[NOME]"}! 👋`);
@@ -1492,11 +1492,12 @@ function ConfigDialog({
   const [keywordsText, setKeywordsText] = useState("");
   // Templates de mensagem por etapa (atencao + 3 cobranças de vencida).
   const TPL_KEYS = [
-    { key: "oleo:em-dia",    label: "Em dia (lembrete)",           tone: "warning" as const },
-    { key: "oleo:atencao",   label: "Atenção (próxima do limite)", tone: "warning" as const },
-    { key: "oleo:vencida-1", label: "Vencida · 1ª cobrança",       tone: "danger"  as const },
-    { key: "oleo:vencida-2", label: "Vencida · 2ª cobrança",       tone: "danger"  as const },
-    { key: "oleo:vencida-3", label: "Vencida · 3ª cobrança",       tone: "danger"  as const },
+    { key: "oleo:em-dia",          label: "Em dia (lembrete)",           tone: "warning" as const },
+    { key: "oleo:atencao",         label: "Atenção (próxima do limite)", tone: "warning" as const },
+    { key: "oleo:km-ultrapassado", label: "Km limite ultrapassado",      tone: "danger"  as const },
+    { key: "oleo:vencida-1",       label: "Vencida · 1ª cobrança",       tone: "danger"  as const },
+    { key: "oleo:vencida-2",       label: "Vencida · 2ª cobrança",       tone: "danger"  as const },
+    { key: "oleo:vencida-3",       label: "Vencida · 3ª cobrança",       tone: "danger"  as const },
   ];
   const [tplValues, setTplValues] = useState<Record<string, string>>({});
   const [tplActive, setTplActive] = useState<string>("oleo:vencida-1");
@@ -1521,7 +1522,7 @@ function ConfigDialog({
       const next: Record<string, string> = {};
       for (const t of TPL_KEYS) {
         try {
-          next[t.key] = localStorage.getItem("wayvo:msg-template:" + t.key) ?? "";
+          next[t.key] = localStorage.getItem("wayvo:msg-template:v3:" + t.key) ?? "";
         } catch { next[t.key] = ""; }
       }
       setTplValues(next);
@@ -1798,8 +1799,8 @@ function ConfigDialog({
               try {
                 for (const t of TPL_KEYS) {
                   const v = (tplValues[t.key] ?? "").trim();
-                  if (v) localStorage.setItem("wayvo:msg-template:" + t.key, v);
-                  else localStorage.removeItem("wayvo:msg-template:" + t.key);
+                  if (v) localStorage.setItem("wayvo:msg-template:v3:" + t.key, v);
+                  else localStorage.removeItem("wayvo:msg-template:v3:" + t.key);
                 }
               } catch { /* ignora */ }
             }}
