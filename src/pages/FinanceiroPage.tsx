@@ -2204,7 +2204,13 @@ export default function FinanceiroPage() {
     });
 
     // ── Cria entrada pendente de juros/multa quando houver saldo devedor ────
-    let finalEntries = updatedEntries;
+    // Remove stale juros_atraso desta locação/período (tentativas anteriores que falharam)
+    const entriesWithoutStaleFee = updatedEntries.filter(e =>
+      !(e.categoria === "juros_atraso" && e.rentalId === confirmToggleEntry.rentalId && !e.pago && e.dataPrevista === payDate)
+    );
+    // Deduplicar por id para evitar conflito de upsert
+    const deduped = entriesWithoutStaleFee.filter((e, i, arr) => arr.findIndex(x => x.id === e.id) === i);
+    let finalEntries = deduped;
     if (isRentalPayment && pendente > 0.009) {
       const dueFmt = dueDateStr ? new Date(dueDateStr + "T12:00:00").toLocaleDateString("pt-BR") : "?";
       const feeEntry: FinancialEntry = {
@@ -2230,7 +2236,7 @@ export default function FinanceiroPage() {
         ignorada: false,
         createdAt: new Date().toISOString(),
       };
-      finalEntries = [...updatedEntries, feeEntry];
+      finalEntries = [...deduped, feeEntry];
     }
 
     persist(finalEntries).catch(err => {
