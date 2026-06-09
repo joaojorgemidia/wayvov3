@@ -53,6 +53,7 @@ export const DEFAULT_CATEGORIAS = {
     { value: "pecas_receita", label: "Peças", icon: Package },
     { value: "juros_atraso", label: "Juros por Atraso", icon: DollarSign },
     { value: "ajuste_saldo", label: "Ajuste de Saldo", icon: ArrowLeftRight },
+    { value: "transferencia", label: "Transferência", icon: ArrowLeftRight },
     { value: "outro_receita", label: "Outros", icon: DollarSign },
   ],
   despesa: [
@@ -70,9 +71,24 @@ export const DEFAULT_CATEGORIAS = {
     { value: "assinaturas", label: "Assinaturas", icon: CreditCard },
     { value: "ajuste_saldo", label: "Ajuste de Saldo", icon: ArrowLeftRight },
     { value: "fatura_cartao", label: "Fatura de Cartão", icon: CreditCard },
+    { value: "transferencia", label: "Transferência", icon: ArrowLeftRight },
     { value: "outro_despesa", label: "Outros", icon: DollarSign },
   ],
 };
+
+/** Categorias geradas automaticamente pelo sistema — sempre exibidas, não podem ser removidas. */
+export const SYSTEM_CATEGORY_VALUES = new Set([
+  "aluguel",
+  "caucao",
+  "juros_atraso",
+  "transferencia",
+  "fatura_cartao",
+  "ajuste_saldo",
+  "compra_moto",
+  "venda_moto",
+  "manutencao_receita",
+  "manutencao_despesa",
+]);
 
 export const DEFAULT_SUBCATEGORIAS: Record<string, string[]> = {
   manutencao_receita: ["Corretiva", "Preventiva"],

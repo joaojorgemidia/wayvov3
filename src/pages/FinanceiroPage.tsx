@@ -58,6 +58,7 @@ import {
   DEFAULT_SUBCATEGORIAS,
   DEFAULT_TAGS,
   CATEGORY_COLORS,
+  SYSTEM_CATEGORY_VALUES,
 } from "@/lib/financeiro-constants";
 function normalizeCategoryValue(label: string, tipo: "receita" | "despesa"): string {
   if (tipo === "despesa" && CATEGORY_LABEL_TO_VALUE_DESPESA[label]) return CATEGORY_LABEL_TO_VALUE_DESPESA[label];
@@ -603,6 +604,7 @@ function CategoryManagerDialog({
             {categorias.map((cat) => {
               const subs = subcategorias[cat.value] || [];
               const isExpanded = expandedCat === cat.value;
+              const isSystem = SYSTEM_CATEGORY_VALUES.has(cat.value);
               return (
                 <div key={cat.value} className="border rounded-lg overflow-hidden">
                   {/* Category row */}
@@ -627,18 +629,25 @@ function CategoryManagerDialog({
                         >
                           <ChevronDown className={`h-3.5 w-3.5 text-muted-foreground transition-transform ${isExpanded ? "" : "-rotate-90"}`} />
                           <span className="text-sm font-medium text-foreground">{cat.label}</span>
+                          {isSystem && (
+                            <span className="text-[9px] uppercase tracking-wide font-semibold text-muted-foreground bg-muted px-1.5 py-0.5 rounded">sistema</span>
+                          )}
                           {subs.length > 0 && (
                             <span className="text-[10px] text-muted-foreground">({subs.length} sub)</span>
                           )}
                         </button>
-                        <Button size="sm" variant="ghost" className="h-7 w-7 opacity-0 group-hover:opacity-100 transition-opacity"
-                          onClick={() => { setEditingCat(cat.label); setEditValue(cat.label); }}>
-                          <Pencil className="h-3 w-3" />
-                        </Button>
-                        <Button size="sm" variant="ghost" className="h-7 w-7 opacity-0 group-hover:opacity-100 transition-opacity"
-                          onClick={() => { setDeletingItem({ type: "cat", catValue: cat.value, label: cat.label }); setRedirectTo("__blank__"); }}>
-                          <Trash2 className="h-3 w-3 text-destructive" />
-                        </Button>
+                        {!isSystem && (
+                          <Button size="sm" variant="ghost" className="h-7 w-7 opacity-0 group-hover:opacity-100 transition-opacity"
+                            onClick={() => { setEditingCat(cat.label); setEditValue(cat.label); }}>
+                            <Pencil className="h-3 w-3" />
+                          </Button>
+                        )}
+                        {!isSystem && (
+                          <Button size="sm" variant="ghost" className="h-7 w-7 opacity-0 group-hover:opacity-100 transition-opacity"
+                            onClick={() => { setDeletingItem({ type: "cat", catValue: cat.value, label: cat.label }); setRedirectTo("__blank__"); }}>
+                            <Trash2 className="h-3 w-3 text-destructive" />
+                          </Button>
+                        )}
                       </>
                     )}
                   </div>
@@ -923,8 +932,9 @@ export default function FinanceiroPage() {
       const rest = arr.filter(c => !c.value.startsWith("outro_"));
       return [...rest.sort((a, b) => a.label.localeCompare(b.label, "pt-BR")), ...outros];
     };
-    const removedReceita = new Set(finConfig.removedDefaults?.receita || []);
-    const removedDespesa = new Set(finConfig.removedDefaults?.despesa || []);
+    // Categorias do sistema nunca são removidas — sempre visíveis
+    const removedReceita = new Set((finConfig.removedDefaults?.receita || []).filter(v => !SYSTEM_CATEGORY_VALUES.has(v)));
+    const removedDespesa = new Set((finConfig.removedDefaults?.despesa || []).filter(v => !SYSTEM_CATEGORY_VALUES.has(v)));
     return {
       receita: sortWithOutrosLast([
         ...DEFAULT_CATEGORIAS.receita.filter(c => !removedReceita.has(c.value)),
