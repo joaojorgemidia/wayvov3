@@ -2235,10 +2235,13 @@ export default function FinanceiroPage() {
 
     persist(finalEntries).catch(err => {
       console.error("[confirmTogglePago] persist failed:", err);
-      if (!(err instanceof Error && err.message.includes("Despesa operacional"))) {
-        const detail = err instanceof Error ? err.message : String(err);
-        toast.error(`Erro ao salvar pagamento: ${detail}`);
-      }
+      if (err instanceof Error && err.message.includes("Despesa operacional")) return;
+      const detail = err instanceof Error
+        ? err.message
+        : (err as any)?.message || (err as any)?.details || (err as any)?.code
+          ? `${(err as any).code ?? ""} ${(err as any).message ?? ""} ${(err as any).details ?? ""}`.trim()
+          : JSON.stringify(err);
+      toast.error(`Erro ao salvar pagamento: ${detail}`);
     });
 
     // ── Success panel para pagamentos de aluguel ─────────────────────────────
