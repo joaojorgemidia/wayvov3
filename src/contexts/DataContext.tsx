@@ -97,6 +97,8 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
   const cid = activeCompany?.id;
   const queryKey = useMemo(() => ["all-data", user?.id, cid], [user?.id, cid]);
   const mutationQueueRef = useRef<Record<string, Promise<unknown>>>({});
+  // Conta saves em andamento — realtime refetches são bloqueados enquanto > 0
+  const activeSavesRef = useRef(0);
 
   const authReady = !authLoading && !!user;
 
@@ -157,6 +159,8 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     }
 
     return runQueuedMutation(table, async () => {
+    activeSavesRef.current++;
+    try {
     if (!cid) throw new Error("No active company selected");
 
     const mapper = TABLE_MAP[table];
@@ -261,9 +265,17 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
       }
     })();
 
-    // Do NOT invalidate the React Query cache here — the optimistic
-    // setDataCache() above already broadcast the new state to all subscribers.
-    // Refetching all 7 tables on every save is what caused the perceived lag.
+    // Após todos os writes completarem, sincroniza o React Query cache com o
+    // estado otimista. Isso evita que um refetch de realtime que disparou no
+    // meio dos writes (e.g. após o INSERT mas antes do UPDATE) sobrescreva o
+    // cache com dados desatualizados do banco.
+    if (cacheKey) {
+      const existing = qc.getQueryData<any>(queryKey);
+      if (existing) qc.setQueryData(queryKey, { ...existing, [cacheKey]: items });
+    }
+    } finally {
+      activeSavesRef.current = Math.max(0, activeSavesRef.current - 1);
+    }
     });
   }, [cid, qc, queryKey, runQueuedMutation, user]);
 
@@ -335,12 +347,11 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
       channel.on(
         "postgres_changes" as any,
         { event: "*", schema: "public", table: t, filter: `company_id=eq.${cid}` },
-        (payload: any) => {
-          // Skip events from our own user (we already updated optimistically)
-          const actor = payload?.new?.updated_by || payload?.new?.user_id;
-          if (actor && user?.id && actor === user.id) {
-            // still refetch action_history for self? handled separately
-          }
+        (_payload: any) => {
+          // Bloqueia refetch enquanto um save nosso está em progresso — evita
+          // que um evento realtime disparado pelo INSERT da primeira operação
+          // busque dados desatualizados antes que o UPDATE seguinte complete.
+          if (activeSavesRef.current > 0) return;
           scheduleRefetch();
         }
       );
