@@ -661,6 +661,8 @@ export default function TrocaOleoPage() {
     const kmAtual = moto.kmAtual ?? 0;
     const proxOleoKm = status?.proxOleoKm ?? (last?.km ?? kmAtual) + cfg.oilKm;
     const kmRestantes = Math.max(0, proxOleoKm - kmAtual);
+    const kmAtraso = status?.kmAtraso ?? 0;
+    const kmPassouLimite = kmAtraso > 0;
 
     const isAtencao = status?.situation === "atencao";
     const templateKey = isAtencao ? "oleo:atencao" : "oleo:em-dia";
@@ -668,7 +670,9 @@ export default function TrocaOleoPage() {
     const linhas: string[] = [];
     linhas.push(`Olá, ${clienteNome || "[NOME]"}! 👋`);
     linhas.push("");
-    if (isAtencao) {
+    if (kmPassouLimite) {
+      linhas.push(`⚠️ *ALERTA:* Sua moto *${moto.placa}*${moto.modelo ? ` (${moto.modelo})` : ""} já ultrapassou o limite de quilometragem para troca de óleo!`);
+    } else if (isAtencao) {
       linhas.push(`Sua moto *${moto.placa}*${moto.modelo ? ` (${moto.modelo})` : ""} está se aproximando do limite da próxima troca de óleo. ⚠️`);
     } else {
       linhas.push(`Passando para confirmar a situação da sua moto *${moto.placa}*${moto.modelo ? ` (${moto.modelo})` : ""}. ✅`);
@@ -676,8 +680,16 @@ export default function TrocaOleoPage() {
     linhas.push("");
     linhas.push(`📍 *Próxima troca de óleo:* ${proxOleoKm.toLocaleString("pt-BR")} Km`);
     linhas.push(`🔵 *Km atual:* ${kmAtual.toLocaleString("pt-BR")} Km`);
-    linhas.push(`🟢 *Restam:* ${kmRestantes.toLocaleString("pt-BR")} Km`);
+    if (kmPassouLimite) {
+      linhas.push(`🔴 *Ultrapassou:* +${kmAtraso.toLocaleString("pt-BR")} Km além do limite`);
+    } else {
+      linhas.push(`🟢 *Restam:* ${kmRestantes.toLocaleString("pt-BR")} Km`);
+    }
     linhas.push("");
+    if (kmPassouLimite) {
+      linhas.push(`Por favor, agende a troca de óleo o quanto antes para evitar danos ao motor. 🏍️`);
+      linhas.push("");
+    }
     linhas.push(`Pode nos enviar uma *foto do painel* atualizada para confirmarmos a quilometragem? 📸`);
     linhas.push("");
     linhas.push(`Qualquer dúvida, estamos à disposição. 🏍️`);
@@ -685,15 +697,22 @@ export default function TrocaOleoPage() {
 
     setMessagePopup({
       open: true,
-      title: isAtencao ? "Aviso · Próxima Troca de Óleo" : "Mensagem para o Locatário",
+      title: kmPassouLimite
+        ? "⚠️ Alerta · Km Limite Ultrapassado"
+        : isAtencao ? "Aviso · Próxima Troca de Óleo" : "Mensagem para o Locatário",
       mensagem,
       placa: moto.placa,
       cliente: clienteNome,
       telefone,
-      highlights: [
-        { label: "Próxima troca", value: `${proxOleoKm.toLocaleString("pt-BR")} km`, tone: "primary" },
-        { label: "Restam", value: `${kmRestantes.toLocaleString("pt-BR")} km`, tone: isAtencao ? "warning" : "primary" },
-      ],
+      highlights: kmPassouLimite
+        ? [
+            { label: "Próxima troca", value: `${proxOleoKm.toLocaleString("pt-BR")} km`, tone: "primary" as const },
+            { label: "Ultrapassou", value: `+${kmAtraso.toLocaleString("pt-BR")} km`, tone: "danger" as const },
+          ]
+        : [
+            { label: "Próxima troca", value: `${proxOleoKm.toLocaleString("pt-BR")} km`, tone: "primary" as const },
+            { label: "Restam", value: `${kmRestantes.toLocaleString("pt-BR")} km`, tone: isAtencao ? "warning" : "primary" as const },
+          ],
       templateKey,
       motoId: moto.id,
       tokens: buildAllTokens({
