@@ -2177,6 +2177,13 @@ export default function FinanceiroPage() {
     const pendente     = totalComAcrescimos > 0 ? Math.max(0, Math.round((totalComAcrescimos - finalValor) * 100) / 100) : 0;
     const temAcrescimo = daysOverdue > 0 && (multa > 0 || totalJuros > 0);
 
+    // ── Verifica se a entrada ainda existe no estado atual ─────────────────
+    if (!entries.find(e => e.id === id)) {
+      toast.error("Lançamento não encontrado. Recarregue a página e tente novamente.");
+      setConfirmToggleEntry(null);
+      return;
+    }
+
     // ── Atualiza a entrada original ──────────────────────────────────────────
     const updatedEntries = entries.map(e => {
       if (e.id !== id) return e;
@@ -2226,7 +2233,12 @@ export default function FinanceiroPage() {
       finalEntries = [...updatedEntries, feeEntry];
     }
 
-    persist(finalEntries);
+    persist(finalEntries).catch(err => {
+      console.error("[confirmTogglePago] persist failed:", err);
+      if (!(err instanceof Error && err.message.includes("Despesa operacional"))) {
+        toast.error("Erro ao salvar pagamento. Verifique sua conexão e tente novamente.");
+      }
+    });
 
     // ── Success panel para pagamentos de aluguel ─────────────────────────────
     if (isRentalPayment) {
