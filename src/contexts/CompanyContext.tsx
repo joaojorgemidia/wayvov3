@@ -134,6 +134,17 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
     setActiveCompanyId(id);
   }, []);
 
+  // Sincroniza a empresa ativa com outras abas abertas
+  useEffect(() => {
+    const handler = (e: StorageEvent) => {
+      if (e.key === "moto-fleet-active-company" && e.newValue && e.newValue !== activeId) {
+        setActiveId(e.newValue);
+      }
+    };
+    window.addEventListener("storage", handler);
+    return () => window.removeEventListener("storage", handler);
+  }, [activeId]);
+
   const addCompany = useCallback(async (company: Company) => {
     if (!user) {
       toast.error("Faça login para adicionar uma empresa");
