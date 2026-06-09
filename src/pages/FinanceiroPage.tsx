@@ -2236,7 +2236,8 @@ export default function FinanceiroPage() {
     persist(finalEntries).catch(err => {
       console.error("[confirmTogglePago] persist failed:", err);
       if (!(err instanceof Error && err.message.includes("Despesa operacional"))) {
-        toast.error("Erro ao salvar pagamento. Verifique sua conexão e tente novamente.");
+        const detail = err instanceof Error ? err.message : String(err);
+        toast.error(`Erro ao salvar pagamento: ${detail}`);
       }
     });
 
