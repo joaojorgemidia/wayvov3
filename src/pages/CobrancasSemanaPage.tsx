@@ -20,6 +20,7 @@ import {
   Bell, Wrench, MoreHorizontal, Phone, Copy,
   CalendarClock, ExternalLink, Search, TrendingUp,
   LayoutDashboard, SlidersHorizontal, Check, ChevronDown, ChevronUp, AlertCircle,
+  Scissors, X, Pencil, Loader2, FileText,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useDataCacheSnapshot } from "@/lib/data-cache";
@@ -32,6 +33,14 @@ import { buildCobrancaEvent, computeSemanaPeriodo, computeSemanaNumero } from "@
 import { useCompany } from "@/contexts/CompanyContext";
 import { DEFAULT_COBRANCA_CONFIG } from "@/lib/companies";
 import { buildWhatsAppUrl } from "@/lib/whatsapp";
+
+const SNOOZE_LS_KEY = "wayvo-cobranca-snooze";
+function readSnoozeMap(): Record<string, string> {
+  try { return JSON.parse(localStorage.getItem(SNOOZE_LS_KEY) || "{}"); } catch { return {}; }
+}
+function writeSnoozeMap(map: Record<string, string>) {
+  localStorage.setItem(SNOOZE_LS_KEY, JSON.stringify(map));
+}
 
 const WEEK_LONG = ["Domingo", "Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado"];
 const WEEK_SHORT = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
@@ -111,6 +120,7 @@ interface RowItem {
   motoId: string | null;
   totalPendente: number;
   semanasEmAtraso: number;
+  pendingCount: number;
   ultimoPagamento: string | null;
 }
 
@@ -190,10 +200,88 @@ export default function CobrancasSemanaPage() {
   const [reschedDate, setReschedDate] = useState("");
   const [missingExpanded, setMissingExpanded] = useState(false);
   const [snoozedExpanded, setSnoozedExpanded] = useState(false);
+  const [debtDetailClientId, setDebtDetailClientId] = useState<string | null>(null);
+  const [adiarEntry, setAdiarEntry] = useState<FinancialEntry | null>(null);
+  const [adiarDate, setAdiarDate] = useState("");
+  const [adiarAtrasadas, setAdiarAtrasadas] = useState<FinancialEntry[]>([]);
+  const [snoozeMap, setSnoozeMap] = useState<Record<string, string>>(() => readSnoozeMap());
+  const [loadingBoleto, setLoadingBoleto] = useState<string | null>(null);
+  const [generatingBoleto, setGeneratingBoleto] = useState<string | null>(null);
+  const [parcelandoEntry, setParcelandoEntry] = useState<FinancialEntry | null>(null);
+  const [parcelForm, setParcelForm] = useState({ entrada: "", primeiraData: new Date().toISOString().slice(0, 10), nParcelas: "2" });
+  const [parcelSalvando, setParcelSalvando] = useState(false);
+  const [debtFuturasOpen, setDebtFuturasOpen] = useState(false);
+  const [debtPagasOpen, setDebtPagasOpen] = useState(false);
+  const [reschedClientItems, setReschedClientItems] = useState<RowItem[]>([]);
+  const [reschedClientDate, setReschedClientDate] = useState("");
+  const [editRefEntry, setEditRefEntry] = useState<FinancialEntry | null>(null);
+  const [editRefDate, setEditRefDate] = useState("");
 
   const handleMessage = (item: RowItem, type: MsgType) => setMsgState({ item, type });
 
-  const today = startOfDay(new Date());
+  const handleGerarBoleto = async (e: FinancialEntry) => {
+    setGeneratingBoleto(e.id);
+    try {
+      const { data, error } = await supabase.functions.invoke("asaas-charge", {
+        body: { entryId: e.id },
+      });
+      if (error || data?.error) throw new Error(data?.error || error?.message || "Erro ao gerar boleto");
+      const next = loadFinancial().map(f =>
+        f.id === e.id
+          ? { ...f, asaasPaymentId: data.paymentId, asaasStatus: data.status, asaasBoletoUrl: data.boletoUrl || null, asaasInvoiceUrl: data.invoiceUrl || null }
+          : f
+      );
+      await saveFinancial(next);
+      const url = data.invoiceUrl || data.boletoUrl;
+      if (url) window.open(url, "_blank");
+      toast.success("Boleto gerado com sucesso!");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Erro ao gerar boleto");
+    } finally {
+      setGeneratingBoleto(null);
+    }
+  };
+
+  const fetchAndOpenBoleto = async (e: FinancialEntry) => {
+    const url = e.asaasInvoiceUrl || e.asaasBoletoUrl;
+    if (url) { window.open(url, "_blank"); return; }
+    if (!e.asaasPaymentId) return;
+    setLoadingBoleto(e.id);
+    try {
+      await supabase.functions.invoke("asaas-sync-status");
+      const { data } = await supabase.from("financial_entries")
+        .select("asaas_boleto_url, asaas_invoice_url")
+        .eq("id", e.id)
+        .single();
+      const freshUrl = data?.asaas_invoice_url || data?.asaas_boleto_url;
+      if (freshUrl) { window.open(freshUrl, "_blank"); }
+      else { toast.error("Link do boleto não disponível no momento"); }
+    } catch {
+      toast.error("Erro ao buscar link do boleto");
+    } finally {
+      setLoadingBoleto(null);
+    }
+  };
+
+  const [today, setToday] = useState(() => startOfDay(new Date()));
+  // Atualiza `today` automaticamente no 1º minuto de cada dia
+  React.useEffect(() => {
+    const msUntilMidnight = () => {
+      const now = new Date();
+      const midnight = new Date(now);
+      midnight.setHours(24, 1, 0, 0); // 00:01 do dia seguinte
+      return midnight.getTime() - now.getTime();
+    };
+    let timer: ReturnType<typeof setTimeout>;
+    const schedule = () => {
+      timer = setTimeout(() => {
+        setToday(startOfDay(new Date()));
+        schedule();
+      }, msUntilMidnight());
+    };
+    schedule();
+    return () => clearTimeout(timer);
+  }, []);
   const monday = useMemo(() => {
     const d = new Date(today);
     const dow = d.getDay();
@@ -219,19 +307,35 @@ export default function CobrancasSemanaPage() {
     () => new Map(cache.rentals.map((r) => [r.id, r])),
     [cache.rentals],
   );
+  const financialById = useMemo(
+    () => new Map(cache.financial.map((e) => [e.id, e])),
+    [cache.financial],
+  );
+
+  const calcValorAtualizado = (e: FinancialEntry, days: number) => {
+    if (days <= 0) return e.valor || 0;
+    const cfg = activeCompany?.cobrancaConfig ?? { multaAtraso: 15, jurosDiario: 7, jurosMes: 0 };
+    const rental = e.rentalId ? rentalsById.get(e.rentalId) : undefined;
+    const valor = e.valor || 0;
+    const multa = rental?.multaAtraso ?? cfg.multaAtraso ?? 0;
+    const jurosMes = rental?.jurosAtrasoMes ?? cfg.jurosMes ?? 0;
+    const jurosDiario = cfg.jurosDiario ?? 0;
+    const juros = valor * (jurosMes / 100 / 30) * days + jurosDiario * days + multa;
+    return parseFloat((valor + juros).toFixed(2));
+  };
 
   const pending: RowItem[] = useMemo(() => {
     // Passo 1: estatísticas por locação (dívida total, semanas em atraso, último pagamento)
-    const rentalStats = new Map<string, { totalPendente: number; semanasEmAtraso: number; ultimoPagamento: string | null }>();
+    const rentalStats = new Map<string, { totalPendente: number; semanasEmAtraso: number; pendingCount: number; ultimoPagamento: string | null }>();
     for (const e of cache.financial) {
       if (!e.rentalId || e.ignorada) continue;
       if (e.tipo === "receita" && !e.pago) {
-        const st = rentalStats.get(e.rentalId) || { totalPendente: 0, semanasEmAtraso: 0, ultimoPagamento: null };
+        const st = rentalStats.get(e.rentalId) || { totalPendente: 0, semanasEmAtraso: 0, pendingCount: 0, ultimoPagamento: null };
         st.totalPendente += e.valor || 0;
-        if (e.categoria === "aluguel") {
-          const due = parseISO(e.dataPrevista || e.data);
-          if (due && diffDays(today, due) > 0) st.semanasEmAtraso++;
-        }
+        const due = parseISO(e.dataPrevista || e.data);
+        const isOverdueEntry = due && diffDays(today, due) > 0;
+        if (isOverdueEntry) st.pendingCount++;
+        if (e.categoria === "aluguel" && isOverdueEntry) st.semanasEmAtraso++;
         rentalStats.set(e.rentalId, st);
       } else if (e.tipo === "receita" && e.pago && e.data) {
         const st = rentalStats.get(e.rentalId) || { totalPendente: 0, semanasEmAtraso: 0, ultimoPagamento: null };
@@ -245,7 +349,9 @@ export default function CobrancasSemanaPage() {
     for (const e of cache.financial) {
       if (e.tipo !== "receita") continue;
       if (e.pago || e.ignorada) continue;
-      const dueISO = e.dataPrevista || e.data;
+      // Se houver data de adiamento no localStorage, usa ela como data de exibição
+      const snoozeDate = snoozeMap[e.id];
+      const dueISO = snoozeDate || e.dataPrevista || e.data;
       const due = parseISO(dueISO);
       const daysLate = due ? diffDays(today, due) : 0;
       let cli = e.clienteId || null;
@@ -274,6 +380,7 @@ export default function CobrancasSemanaPage() {
         motoId: m?.id || null,
         totalPendente: st?.totalPendente ?? (e.valor || 0),
         semanasEmAtraso: st?.semanasEmAtraso ?? (daysLate > 0 && (e.categoria || "").toLowerCase() === "aluguel" ? 1 : 0),
+        pendingCount: st?.pendingCount ?? (daysLate > 0 ? 1 : 0),
         ultimoPagamento: st?.ultimoPagamento ?? null,
       });
     }
@@ -283,18 +390,60 @@ export default function CobrancasSemanaPage() {
       if (!b.due) return -1;
       return a.due.getTime() - b.due.getTime();
     });
-  }, [cache.financial, clientsById, motosById, rentalsById, today]);
+  }, [cache.financial, clientsById, motosById, rentalsById, today, snoozeMap]);
+
+  const debtDetailEntries = useMemo(() => {
+    if (!debtDetailClientId) return [];
+    // Inclui também entradas sem clienteId mas vinculadas via rentalId (mesmo fallback do pending)
+    const clientRentalIds = new Set(
+      cache.rentals.filter(r => r.clienteId === debtDetailClientId).map(r => r.id)
+    );
+    return cache.financial
+      .filter(e => {
+        if (e.tipo !== "receita" || e.ignorada) return false;
+        if (e.clienteId === debtDetailClientId) return true;
+        if (!e.clienteId && e.rentalId && clientRentalIds.has(e.rentalId)) return true;
+        return false;
+      })
+      .sort((a, b) => {
+        // Extrai número de semana do descricao para ordenação correta (ignora reagendamentos)
+        const getIdxFromDesc = (e: FinancialEntry) => {
+          if (e.descricao) {
+            // Formato novo: "Aluguel – Semana 33: ..."
+            const mNew = e.descricao.match(/(?:Semana|Quinzena|M[eê]s)\s+(\d+):/i);
+            if (mNew) return parseInt(mNew[1]);
+            // Formato antigo: "Aluguel 33ª Semana"
+            const mOld = e.descricao.match(/Aluguel\s+(\d+)[ªa°]?\s*(Semana|Quinzena|M[eê]s)/i);
+            if (mOld) return parseInt(mOld[1]);
+          }
+          return null;
+        };
+        const iA = getIdxFromDesc(a), iB = getIdxFromDesc(b);
+        if (iA !== null && iB !== null) return iB - iA;
+        return (b.dataOriginal || b.dataPrevista || b.data).localeCompare(a.dataOriginal || a.dataPrevista || a.data);
+      });
+  }, [debtDetailClientId, cache.financial, cache.rentals]);
+
+  const debtDetailItem = useMemo(
+    () => pending.find(i => i.clienteId === debtDetailClientId) ?? null,
+    [pending, debtDetailClientId],
+  );
 
   const weekItems = pending.filter(
-    (i) => i.originalDaysLate <= 0 && i.due && i.due >= monday && i.due <= sunday && i.daysLate <= 0,
+    (i) => i.due && i.due >= monday && i.due <= sunday && i.daysLate <= 0 &&
+    (i.originalDaysLate <= 0 || isSnoozed(i.entry.id)),
   );
   const todayItems = weekItems.filter(i => i.daysLate === 0);
   const upcomingItems = weekItems.filter(i => i.daysLate < 0);
-  const overdueItems = pending.filter((i) => i.originalDaysLate > 0);
-  // Vencidos também na data de ação → aparecem por padrão
-  const overdueVisible = overdueItems.filter((i) => i.daysLate > 0);
-  // Adiados → data de ação ainda no futuro, ocultos até vencer de novo
-  const overdueSnoozed = overdueItems.filter((i) => i.daysLate <= 0);
+  const firstDayOfCurrentMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+  const overdueItems = pending.filter((i) => i.originalDaysLate > 0 && i.due && i.due >= firstDayOfCurrentMonth);
+  const todayISO = toISODate(today);
+  // Snoozed via localStorage: oculto até a data escolhida, sem alterar dataPrevista
+  const isSnoozed = (id: string) => { const d = snoozeMap[id]; return !!d && d >= todayISO; };
+  // Vencidos e não ocultados → aparecem por padrão
+  const overdueVisible = overdueItems.filter((i) => i.daysLate > 0 && !isSnoozed(i.entry.id));
+  // Adiados: data de ação no futuro OU snooze ativo
+  const overdueSnoozed = overdueItems.filter((i) => i.daysLate <= 0 || isSnoozed(i.entry.id));
 
   // Faixa de dias: Seg–Dom com contagem e total por dia
   const weekStrip = useMemo(() => {
@@ -408,7 +557,7 @@ export default function CobrancasSemanaPage() {
   }, [cache.rentals, totalsByCat, monday, sunday]);
 
   const totalSemanaPendente = weekItems.reduce((s, i) => s + (i.entry.valor || 0), 0);
-  const totalAtrasado = overdueVisible.reduce((s, i) => s + (i.entry.valor || 0), 0);
+  const totalAtrasado = overdueVisible.reduce((s, i) => s + calcValorAtualizado(i.entry, i.daysLate), 0);
 
   // Previsão total da semana (todas categorias, pago + pendente)
   const weekPrevisao = useMemo(() => {
@@ -623,12 +772,38 @@ export default function CobrancasSemanaPage() {
     setReschedDate(toISODate(base));
   };
 
+  const applyAdiarAtrasadas = () => {
+    if (!adiarAtrasadas.length || !adiarDate) return;
+    const newMap = { ...readSnoozeMap() };
+    adiarAtrasadas.forEach(e => { newMap[e.id] = adiarDate; });
+    writeSnoozeMap(newMap);
+    setSnoozeMap(newMap);
+    const d = new Date(adiarDate + "T00:00:00").toLocaleDateString("pt-BR");
+    toast.success(`${adiarAtrasadas.length} cobrança${adiarAtrasadas.length !== 1 ? "s" : ""} adiada${adiarAtrasadas.length !== 1 ? "s" : ""} para ${d}`);
+    setAdiarEntry(null);
+    setAdiarAtrasadas([]);
+  };
+
+  const applyRescheduleClient = async () => {
+    if (!reschedClientItems.length || !reschedClientDate) return;
+    try {
+      const ids = new Set(reschedClientItems.map(i => i.entry.id));
+      const next = loadFinancial().map(e => ids.has(e.id) ? { ...e, dataPrevista: reschedClientDate, dataOriginal: e.dataOriginal || e.dataPrevista || e.data } : e);
+      await saveFinancial(next);
+      const d = new Date(reschedClientDate + "T00:00:00").toLocaleDateString("pt-BR");
+      toast.success(`${reschedClientItems.length} cobrança${reschedClientItems.length !== 1 ? "s" : ""} adiada${reschedClientItems.length !== 1 ? "s" : ""} para ${d}`);
+      setReschedClientItems([]);
+    } catch {
+      toast.error("Erro ao adiar cobranças");
+    }
+  };
+
   const applyReschedule = async (newDate: string) => {
     const target = reschedItem;
     if (!target || !newDate) return;
     try {
       const next = loadFinancial().map((e) =>
-        e.id === target.entry.id ? { ...e, dataPrevista: newDate } : e,
+        e.id === target.entry.id ? { ...e, dataPrevista: newDate, dataOriginal: e.dataOriginal || e.dataPrevista || e.data } : e,
       );
       await saveFinancial(next);
       toast.success(`Vencimento adiado para ${new Date(newDate + "T00:00:00").toLocaleDateString("pt-BR")}`);
@@ -650,7 +825,7 @@ export default function CobrancasSemanaPage() {
     try {
       const iso = toISODate(nd);
       const next = loadFinancial().map((e) =>
-        e.id === item.entry.id ? { ...e, dataPrevista: iso } : e,
+        e.id === item.entry.id ? { ...e, dataPrevista: iso, dataOriginal: e.dataOriginal || e.dataPrevista || e.data } : e,
       );
       await saveFinancial(next);
       toast.success(`Adiado para ${nd.toLocaleDateString("pt-BR")}`);
@@ -677,6 +852,186 @@ export default function CobrancasSemanaPage() {
       toast.success(`${label} copiado`);
     } catch {
       toast.error("Não foi possível copiar");
+    }
+  };
+
+  const criarParcelamento = async () => {
+    if (!parcelandoEntry) return;
+    const valorOriginal = parcelandoEntry.valor || 0;
+    const entrada = parseFloat(parcelForm.entrada.replace(",", ".")) || 0;
+    const nParcelas = parseInt(parcelForm.nParcelas) || 2;
+    const primeiraData = parcelForm.primeiraData;
+    if (entrada < 0 || entrada >= valorOriginal) { toast.error("Valor de entrada inválido"); return; }
+    if (nParcelas < 1) { toast.error("Mínimo 1 parcela"); return; }
+    if (!primeiraData) { toast.error("Informe a data da 1ª parcela"); return; }
+    const valorRestante = valorOriginal - entrada;
+    const valorParcela = parseFloat((valorRestante / nParcelas).toFixed(2));
+    const groupId = crypto.randomUUID();
+    const rental = parcelandoEntry.rentalId ? rentalsById.get(parcelandoEntry.rentalId) : undefined;
+    // Usa dataOriginal || data — NÃO dataPrevista (pode ter sido reagendada para outra semana)
+    const due = parseISO(parcelandoEntry.dataOriginal || parcelandoEntry.data);
+    let descBase = parcelandoEntry.descricao;
+    if (rental && due) {
+      const num = computeSemanaNumero(rental, due);
+      const { inicio, fim } = computeSemanaPeriodo(rental, due);
+      if (num && inicio && fim) {
+        const fmt = (d: string) => new Date(d + "T00:00:00").toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" });
+        const freq = rental.frequenciaPagamento;
+        const lbl = freq === "quinzenal" ? "Quinzena" : freq === "mensal" ? "Mês" : "Semana";
+        descBase = `Aluguel – ${lbl} ${String(num).padStart(2, "0")}: ${fmt(inicio)} até ${fmt(fim)}`;
+      }
+    }
+    const addDaysLocal = (iso: string, d: number) => {
+      const dt = new Date(iso + "T00:00:00");
+      dt.setDate(dt.getDate() + d);
+      return dt.toISOString().slice(0, 10);
+    };
+    const base = {
+      tipo: "receita" as const,
+      categoria: "aluguel",
+      subcategoria: "Parcelamento",
+      motoId: parcelandoEntry.motoId,
+      rentalId: parcelandoEntry.rentalId,
+      clienteId: parcelandoEntry.clienteId,
+      pago: false,
+      conta: "",
+      natureza: "operacional" as const,
+      placa: parcelandoEntry.placa,
+      clienteNome: parcelandoEntry.clienteNome,
+      recurringGroupId: groupId,
+      fixedOriginId: parcelandoEntry.id,
+      tags: ["parcelamento", "aluguel"],
+    };
+    const newEntries: FinancialEntry[] = [];
+    if (entrada > 0) {
+      newEntries.push({ ...base, id: crypto.randomUUID(), descricao: `${descBase} – Entrada (Parcela 0/${nParcelas})`, valor: entrada, data: primeiraData, dataPrevista: primeiraData });
+    }
+    for (let i = 0; i < nParcelas; i++) {
+      const data = addDaysLocal(primeiraData, i * 7);
+      const v = i === nParcelas - 1 ? parseFloat((valorRestante - valorParcela * (nParcelas - 1)).toFixed(2)) : valorParcela;
+      newEntries.push({ ...base, id: crypto.randomUUID(), descricao: `${descBase} – Parcela ${i + 1}/${nParcelas}`, valor: v, data, dataPrevista: data });
+    }
+    setParcelSalvando(true);
+    try {
+      const all = loadFinancial();
+      const updated = all.map(e => e.id === parcelandoEntry.id ? { ...e, ignorada: true } : e);
+      await saveFinancial([...updated, ...newEntries]);
+      toast.success(`Parcelamento criado: ${nParcelas} parcela${nParcelas !== 1 ? "s" : ""}${entrada > 0 ? " + entrada" : ""}`);
+      setParcelandoEntry(null);
+    } finally {
+      setParcelSalvando(false);
+    }
+  };
+
+  const corrigirReferenciasParcelamentos = async (clienteId: string) => {
+    const all = loadFinancial();
+    const byId = new Map(all.map(e => [e.id, e]));
+    const getSuffix = (desc: string) => {
+      const m = desc.match(/\s*[–-]\s*(Entrada\s*\(Parcela\s+\d+\/\d+\)|Parcela\s+\d+\/\d+)$/i);
+      return m ? ` – ${m[1]}` : "";
+    };
+    let changed = 0;
+    const updated = all.map(e => {
+      if (e.clienteId !== clienteId || e.subcategoria !== "Parcelamento" || !e.fixedOriginId) return e;
+      const original = byId.get(e.fixedOriginId);
+      if (!original) return e;
+      // Usa original.data — nunca dataOriginal (pode ter sido setado com data reagendada por bug antigo)
+      const due = parseISO(original.data);
+      const rental = e.rentalId ? rentalsById.get(e.rentalId) : undefined;
+      let descBase = original.descricao || "";
+      if (rental && due) {
+        const num = computeSemanaNumero(rental, due);
+        const { inicio, fim } = computeSemanaPeriodo(rental, due);
+        if (num && inicio && fim) {
+          const fmt = (d: string) => new Date(d + "T00:00:00").toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" });
+          const freq = rental.frequenciaPagamento;
+          const lbl = freq === "quinzenal" ? "Quinzena" : freq === "mensal" ? "Mês" : "Semana";
+          descBase = `Aluguel – ${lbl} ${String(num).padStart(2, "0")}: ${fmt(inicio)} até ${fmt(fim)}`;
+        }
+      }
+      const newDesc = descBase + getSuffix(e.descricao || "");
+      if (newDesc === e.descricao) return e;
+      changed++;
+      return { ...e, descricao: newDesc };
+    });
+    if (changed === 0) { toast.info("Nenhuma referência precisava ser corrigida"); return; }
+    await saveFinancial(updated);
+    toast.success(`${changed} referência${changed !== 1 ? "s" : ""} atualizada${changed !== 1 ? "s" : ""}`);
+  };
+
+  const applyEditRef = async () => {
+    if (!editRefEntry || !editRefDate) return;
+    const rental = editRefEntry.rentalId ? rentalsById.get(editRefEntry.rentalId) : undefined;
+    const due = parseISO(editRefDate);
+    let newDesc = editRefEntry.descricao || "";
+    if (rental && due) {
+      const num = computeSemanaNumero(rental, due);
+      const { inicio, fim } = computeSemanaPeriodo(rental, due);
+      if (num && inicio && fim) {
+        const fmt = (d: string) => new Date(d + "T00:00:00").toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" });
+        const freq = rental.frequenciaPagamento;
+        const lbl = freq === "quinzenal" ? "Quinzena" : freq === "mensal" ? "Mês" : "Semana";
+        const periodoLabel = `Aluguel – ${lbl} ${String(num).padStart(2, "0")}: ${fmt(inicio)} até ${fmt(fim)}`;
+        // Preserva sufixo após o período se houver (ex: "– Entrada (Parcela 1/4)")
+        const suffix = (editRefEntry.descricao || "").replace(/^Aluguel\s*[–-]\s*(?:Semana|Quinzena|Mês)\s+\d+:\s+\d{2}\/\d{2}\s+até\s+\d{2}\/\d{2}/i, "").trim();
+        newDesc = suffix ? `${periodoLabel} – ${suffix.replace(/^[–-]\s*/, "")}` : periodoLabel;
+      }
+    }
+    try {
+      const next = loadFinancial().map(e =>
+        e.id === editRefEntry.id ? { ...e, descricao: newDesc } : e
+      );
+      await saveFinancial(next);
+      toast.success("Referência de semana atualizada");
+      setEditRefEntry(null);
+      setEditRefDate("");
+    } catch (err) {
+      console.error("[applyEditRef] erro:", err);
+      toast.error("Erro ao atualizar referência");
+    }
+  };
+
+  // Corrige a semana de referência de um lote de parcelamentos a partir de uma data informada pelo usuário
+  const applyEditParcelamento = async () => {
+    if (!editRefEntry || !editRefDate) return;
+    const all = loadFinancial();
+    const rental = editRefEntry.rentalId ? rentalsById.get(editRefEntry.rentalId) : undefined;
+    if (!rental) { toast.error("Locação não encontrada"); return; }
+    const due = parseISO(editRefDate);
+    const num = computeSemanaNumero(rental, due);
+    const { inicio, fim } = computeSemanaPeriodo(rental, due);
+    if (!num || !inicio || !fim) { toast.error("Data inválida para esta locação"); return; }
+    const fmt = (d: string) => new Date(d + "T00:00:00").toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" });
+    const freq = rental.frequenciaPagamento;
+    const lbl = freq === "quinzenal" ? "Quinzena" : freq === "mensal" ? "Mês" : "Semana";
+    const descBase = `Aluguel – ${lbl} ${String(num).padStart(2, "0")}: ${fmt(inicio)} até ${fmt(fim)}`;
+    const getSuffix = (desc: string) => {
+      const m = desc.match(/\s*[–-]\s*(Entrada\s*\(Parcela\s+\d+\/\d+\)|Parcela\s+\d+\/\d+)$/i);
+      return m ? ` – ${m[1]}` : "";
+    };
+    const groupId = editRefEntry.recurringGroupId;
+    const originId = editRefEntry.fixedOriginId;
+    let changed = 0;
+    const updated = all.map(e => {
+      const inGroup = groupId
+        ? e.recurringGroupId === groupId
+        : originId
+          ? e.fixedOriginId === originId
+          : e.id === editRefEntry.id;
+      if (!inGroup || e.subcategoria !== "Parcelamento") return e;
+      const newDesc = descBase + getSuffix(e.descricao || "");
+      changed++;
+      return { ...e, descricao: newDesc };
+    });
+    if (changed === 0) { toast.error("Nenhuma parcela encontrada no grupo"); return; }
+    try {
+      await saveFinancial(updated);
+      toast.success(`${changed} parcela${changed !== 1 ? "s" : ""} atualizada${changed !== 1 ? "s" : ""}`);
+      setEditRefEntry(null);
+      setEditRefDate("");
+    } catch (err) {
+      console.error("[applyEditParcelamento] erro ao salvar:", err);
+      toast.error("Erro ao atualizar referências");
     }
   };
 
@@ -1060,97 +1415,163 @@ export default function CobrancasSemanaPage() {
         {/* Em atraso */}
         {(filteredOverdueVisible.length > 0 || filteredOverdueSnoozed.length > 0) && (
           <div className="rounded-[10px] overflow-hidden border border-destructive/30 shadow-sm">
-            {/* Cabeçalho — só aparece quando há itens visíveis */}
-            {filteredOverdueVisible.length > 0 && (
-              <div className="bg-destructive/[.08] border-b border-destructive/20 px-3.5 py-2.5 flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <AlertTriangle className="h-3.5 w-3.5 text-destructive" />
-                  <span className="text-[10px] font-bold uppercase tracking-[.6px] text-destructive">Em atraso</span>
-                  <span className="text-[10px] font-bold bg-destructive text-destructive-foreground rounded-full px-1.5 py-px leading-none">
-                    {filteredOverdueVisible.length}
-                  </span>
-                </div>
-                <span className="text-[13px] font-bold text-destructive tabular-nums">
-                  {fmtBRL(filteredOverdueVisible.reduce((s, i) => s + (i.entry.valor || 0), 0))}
-                </span>
-              </div>
-            )}
-            <div className="bg-background">
-              {/* Grupos de urgência — apenas itens vencidos na data de ação */}
-              {filteredOverdueVisible.length > 0 && [
-                { label: "1–3 dias",  min: 1, max: 3,        subBg: "bg-amber-50/80 dark:bg-amber-950/10",    subBorder: "border-amber-200/60 dark:border-amber-900/30",    textCls: "text-amber-700 dark:text-amber-400" },
-                { label: "4–7 dias",  min: 4, max: 7,        subBg: "bg-orange-50/80 dark:bg-orange-950/10",  subBorder: "border-orange-200/60 dark:border-orange-900/30",  textCls: "text-orange-700 dark:text-orange-400" },
-                { label: "+7 dias",   min: 8, max: Infinity,  subBg: "bg-destructive/[.05]",                   subBorder: "border-destructive/15",                           textCls: "text-destructive" },
-              ].map(({ label, min, max, subBg, subBorder, textCls }) => {
-                const grp = filteredOverdueVisible.filter(i => i.originalDaysLate >= min && i.originalDaysLate <= max);
-                if (grp.length === 0) return null;
-                return (
-                  <div key={label} className="border-t border-border/40">
-                    <div className={`px-3.5 py-1.5 flex items-center justify-between border-b ${subBg} ${subBorder}`}>
-                      <span className={`text-[9px] font-bold uppercase tracking-[.5px] ${textCls}`}>{label}</span>
-                      <span className={`text-[9px] font-semibold tabular-nums ${textCls}`}>
-                        {grp.length} · {fmtBRL(grp.reduce((s, i) => s + (i.entry.valor || 0), 0))}
+            {filteredOverdueVisible.length > 0 && (() => {
+              // Agrupa por cliente — resolve nome→id para evitar duplicatas quando clienteId está ausente em algumas entradas
+              const nomeToId = new Map<string, string>();
+              filteredOverdueVisible.forEach(i => { if (i.clienteId && i.clienteNome) nomeToId.set(i.clienteNome, i.clienteId); });
+              const byClient = new Map<string, RowItem[]>();
+              filteredOverdueVisible.forEach(i => {
+                const key = i.clienteId || nomeToId.get(i.clienteNome) || i.clienteNome;
+                byClient.set(key, [...(byClient.get(key) || []), i]);
+              });
+              // Ordena pelo maior atraso de cada cliente (desc)
+              const clientGroups = [...byClient.entries()]
+                .map(([key, items]) => ({
+                  key,
+                  items,
+                  maxDays: Math.max(...items.map(i => i.originalDaysLate)),
+                  total: items.reduce((s, i) => s + calcValorAtualizado(i.entry, i.daysLate), 0),
+                }))
+                .sort((a, b) => b.maxDays - a.maxDays);
+
+              const urgencyStyle = (days: number) =>
+                days >= 8
+                  ? { textCls: "text-destructive", badgeCls: "bg-destructive/15", dot: "bg-destructive" }
+                  : days >= 4
+                  ? { textCls: "text-orange-700 dark:text-orange-400", badgeCls: "bg-orange-500/15", dot: "bg-orange-500" }
+                  : { textCls: "text-amber-700 dark:text-amber-400", badgeCls: "bg-amber-500/15", dot: "bg-amber-500" };
+
+              return (
+                <>
+                  <div className="bg-destructive/[.08] border-b border-destructive/20 px-3.5 py-2.5 flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <AlertTriangle className="h-3.5 w-3.5 text-destructive" />
+                      <span className="text-[10px] font-bold uppercase tracking-[.6px] text-destructive">Em atraso</span>
+                      <span className="text-[10px] font-bold bg-destructive text-destructive-foreground rounded-full px-1.5 py-px leading-none">
+                        {clientGroups.length} cliente{clientGroups.length !== 1 ? "s" : ""}
                       </span>
                     </div>
-                    <div className="divide-y divide-border/50">
-                      {grp.map((it) => (
-                        <RowItemView key={it.entry.id} item={it} onConfirm={openConfirm} onMessage={handleMessage}
-                          onWhatsApp={openWhatsApp} onCopy={copyText} onRescheduleQuick={quickReschedule}
-                          onRescheduleCustom={openReschedule} onIgnore={handleIgnore} />
-                      ))}
-                    </div>
+                    <span className="text-[13px] font-bold text-destructive tabular-nums">
+                      {fmtBRL(filteredOverdueVisible.reduce((s, i) => s + calcValorAtualizado(i.entry, i.daysLate), 0))}
+                    </span>
                   </div>
-                );
-              })}
-
-            </div>
+                  <div className="bg-background divide-y divide-border/30">
+                    {clientGroups.map(({ key, items, maxDays, total }) => {
+                      const { textCls, badgeCls, dot } = urgencyStyle(maxDays);
+                      const clienteId = items[0].clienteId;
+                      const placas = [...new Set(items.map(i => i.entry.placa).filter(Boolean))];
+                      return (
+                        <div key={key} className="flex items-center gap-1 pr-1 hover:bg-muted/30 transition-colors">
+                          <button
+                            className="flex-1 px-3.5 py-2.5 flex items-center justify-between gap-3 text-left min-w-0"
+                            onClick={() => clienteId && setDebtDetailClientId(clienteId)}
+                          >
+                            <div className="flex items-center gap-2 min-w-0 flex-1">
+                              <span className={`h-2 w-2 rounded-full flex-shrink-0 ${dot}`} />
+                              <span className={`text-[12px] font-bold truncate ${textCls}`}>{items[0].clienteNome}</span>
+                              {placas.map(p => (
+                                <span key={p} className="font-mono text-[10px] bg-muted border border-border/50 rounded px-1.5 py-px text-muted-foreground flex-shrink-0">{p}</span>
+                              ))}
+                            </div>
+                            <div className="flex items-center gap-2 flex-shrink-0">
+                              <span className={`text-[10px] font-bold ${badgeCls} rounded-full px-2 py-px ${textCls}`}>
+                                {items.length} pendente{items.length !== 1 ? "s" : ""} · {maxDays}d
+                              </span>
+                              <span className={`text-[13px] font-bold tabular-nums ${textCls}`}>{fmtBRL(total)}</span>
+                            </div>
+                          </button>
+                          <button
+                            title="Adiar cobranças"
+                            onClick={() => {
+                              const base = new Date();
+                              base.setHours(0, 0, 0, 0);
+                              setReschedClientItems(items);
+                              setReschedClientDate(toISODate(base));
+                            }}
+                            className="p-1.5 rounded text-muted-foreground hover:text-amber-600 hover:bg-amber-50 transition-colors flex-shrink-0"
+                          >
+                            <CalendarClock className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </>
+              );
+            })()}
           </div>
         )}
 
         {/* Adiadas — expandido via KPI */}
-        {snoozedExpanded && filteredOverdueSnoozed.length > 0 && (
-          <div className="rounded-[10px] overflow-hidden border border-amber-300 dark:border-amber-800 shadow-sm">
-            <div className="bg-amber-50 dark:bg-amber-950/30 border-b border-amber-200 dark:border-amber-800 px-3.5 py-2.5 flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <AlertTriangle className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400" />
-                <span className="text-[10px] font-bold uppercase tracking-[.6px] text-amber-700 dark:text-amber-400">Adiadas · risco de inadimplência</span>
-                <span className="text-[10px] font-bold bg-amber-500 text-white rounded-full px-1.5 py-px leading-none">
-                  {filteredOverdueSnoozed.length}
+        {snoozedExpanded && filteredOverdueSnoozed.length > 0 && (() => {
+          const nomeToId = new Map<string, string>();
+          filteredOverdueSnoozed.forEach(i => { if (i.clienteId && i.clienteNome) nomeToId.set(i.clienteNome, i.clienteId); });
+          const byClient = new Map<string, RowItem[]>();
+          filteredOverdueSnoozed.forEach(i => {
+            const key = i.clienteId || nomeToId.get(i.clienteNome) || i.clienteNome;
+            byClient.set(key, [...(byClient.get(key) || []), i]);
+          });
+          const clientGroups = [...byClient.entries()]
+            .map(([key, items]) => ({
+              key,
+              items,
+              maxDays: Math.max(...items.map(i => i.originalDaysLate)),
+              total: items.reduce((s, i) => s + (i.entry.valor || 0), 0),
+            }))
+            .sort((a, b) => b.maxDays - a.maxDays);
+
+          const urgencyStyle = (days: number) =>
+            days >= 8
+              ? { textCls: "text-destructive", badgeCls: "bg-destructive/15", dot: "bg-destructive" }
+              : days >= 4
+              ? { textCls: "text-orange-700 dark:text-orange-400", badgeCls: "bg-orange-500/15", dot: "bg-orange-500" }
+              : { textCls: "text-amber-700 dark:text-amber-400", badgeCls: "bg-amber-500/15", dot: "bg-amber-500" };
+
+          return (
+            <div className="rounded-[10px] overflow-hidden border border-amber-300 dark:border-amber-800 shadow-sm">
+              <div className="bg-amber-50 dark:bg-amber-950/30 border-b border-amber-200 dark:border-amber-800 px-3.5 py-2.5 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <AlertTriangle className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400" />
+                  <span className="text-[10px] font-bold uppercase tracking-[.6px] text-amber-700 dark:text-amber-400">Adiadas · risco de inadimplência</span>
+                  <span className="text-[10px] font-bold bg-amber-500 text-white rounded-full px-1.5 py-px leading-none">
+                    {clientGroups.length} cliente{clientGroups.length !== 1 ? "s" : ""}
+                  </span>
+                </div>
+                <span className="text-[13px] font-bold text-amber-700 dark:text-amber-400 tabular-nums">
+                  {fmtBRL(filteredOverdueSnoozed.reduce((s, i) => s + (i.entry.valor || 0), 0))}
                 </span>
               </div>
-              <span className="text-[13px] font-bold text-amber-700 dark:text-amber-400 tabular-nums">
-                {fmtBRL(filteredOverdueSnoozed.reduce((s, i) => s + (i.entry.valor || 0), 0))}
-              </span>
+              <div className="bg-background divide-y divide-border/30">
+                {clientGroups.map(({ key, items, maxDays, total }) => {
+                  const { textCls, badgeCls, dot } = urgencyStyle(maxDays);
+                  const clienteId = items[0].clienteId;
+                  const placas = [...new Set(items.map(i => i.entry.placa).filter(Boolean))];
+                  return (
+                    <button
+                      key={key}
+                      className="w-full px-3.5 py-2.5 flex items-center justify-between gap-3 hover:bg-muted/30 transition-colors text-left"
+                      onClick={() => clienteId && setDebtDetailClientId(clienteId)}
+                    >
+                      <div className="flex items-center gap-2 min-w-0 flex-1">
+                        <span className={`h-2 w-2 rounded-full flex-shrink-0 ${dot}`} />
+                        <span className={`text-[12px] font-bold truncate ${textCls}`}>{items[0].clienteNome}</span>
+                        {placas.map(p => (
+                          <span key={p} className="font-mono text-[10px] bg-muted border border-border/50 rounded px-1.5 py-px text-muted-foreground flex-shrink-0">{p}</span>
+                        ))}
+                      </div>
+                      <div className="flex items-center gap-2 flex-shrink-0">
+                        <span className={`text-[10px] font-bold ${badgeCls} rounded-full px-2 py-px ${textCls}`}>
+                          {items.length} pendente{items.length !== 1 ? "s" : ""} · {maxDays}d
+                        </span>
+                        <span className={`text-[13px] font-bold tabular-nums ${textCls}`}>{fmtBRL(total)}</span>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
             </div>
-            <div className="bg-background">
-              {[
-                { label: "1–3 dias",  min: 1, max: 3,        subBg: "bg-amber-50/80 dark:bg-amber-950/10",    subBorder: "border-amber-200/60 dark:border-amber-900/30",    textCls: "text-amber-700 dark:text-amber-400" },
-                { label: "4–7 dias",  min: 4, max: 7,        subBg: "bg-orange-50/80 dark:bg-orange-950/10",  subBorder: "border-orange-200/60 dark:border-orange-900/30",  textCls: "text-orange-700 dark:text-orange-400" },
-                { label: "+7 dias",   min: 8, max: Infinity,  subBg: "bg-destructive/[.05]",                   subBorder: "border-destructive/15",                           textCls: "text-destructive" },
-              ].map(({ label, min, max, subBg, subBorder, textCls }) => {
-                const grp = filteredOverdueSnoozed.filter(i => i.originalDaysLate >= min && i.originalDaysLate <= max);
-                if (grp.length === 0) return null;
-                return (
-                  <div key={label} className="border-t border-border/40">
-                    <div className={`px-3.5 py-1.5 flex items-center justify-between border-b ${subBg} ${subBorder}`}>
-                      <span className={`text-[9px] font-bold uppercase tracking-[.5px] ${textCls}`}>{label}</span>
-                      <span className={`text-[9px] font-semibold tabular-nums ${textCls}`}>
-                        {grp.length} · {fmtBRL(grp.reduce((s, i) => s + (i.entry.valor || 0), 0))}
-                      </span>
-                    </div>
-                    <div className="divide-y divide-border/50">
-                      {grp.map((it) => (
-                        <RowItemView key={it.entry.id} item={it} onConfirm={openConfirm} onMessage={handleMessage}
-                          onWhatsApp={openWhatsApp} onCopy={copyText} onRescheduleQuick={quickReschedule}
-                          onRescheduleCustom={openReschedule} onIgnore={handleIgnore} />
-                      ))}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
+          );
+        })()}
 
         {/* Hoje */}
         {filteredToday.length > 0 && (
@@ -1385,13 +1806,660 @@ export default function CobrancasSemanaPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* ── Dialog: Adiar cobranças do cliente ───────────────────── */}
+      <Dialog open={reschedClientItems.length > 0} onOpenChange={(o) => !o && setReschedClientItems([])}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Adiar cobranças</DialogTitle>
+            <DialogDescription>
+              {reschedClientItems[0]?.clienteNome} · {reschedClientItems.length} cobrança{reschedClientItems.length !== 1 ? "s" : ""} pendente{reschedClientItems.length !== 1 ? "s" : ""}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label>Nova data de vencimento</Label>
+            <Input type="date" value={reschedClientDate} onChange={(e) => setReschedClientDate(e.target.value)} />
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setReschedClientItems([])}>Cancelar</Button>
+            <Button onClick={applyRescheduleClient}>
+              <CalendarClock className="h-4 w-4 mr-1.5" />
+              Adiar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Dialog: Adiar cobranças em atraso ─────────────────────── */}
+      <Dialog open={!!adiarEntry} onOpenChange={(o) => { if (!o) { setAdiarEntry(null); setAdiarAtrasadas([]); } }}>
+        <DialogContent className="sm:max-w-xs">
+          <DialogHeader>
+            <DialogTitle>Adiar cobranças</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              As <span className="font-semibold text-foreground">{adiarAtrasadas.length} cobrança{adiarAtrasadas.length !== 1 ? "s" : ""}</span> em atraso passarão a aparecer no dia escolhido junto com as demais cobranças. O valor nas finanças não é alterado.
+            </p>
+            <div className="flex gap-2">
+              {[7, 14, 30].map(d => {
+                const b = new Date(today.getTime()); b.setDate(b.getDate() + d);
+                const iso = toISODate(b);
+                return (
+                  <button key={d} onClick={() => setAdiarDate(iso)}
+                    className={`flex-1 rounded-lg border px-2 py-1.5 text-xs font-medium transition-colors ${adiarDate === iso ? "border-primary bg-primary/10 text-primary" : "border-border hover:bg-muted"}`}>
+                    +{d}d
+                  </button>
+                );
+              })}
+            </div>
+            <div>
+              <Label className="text-xs">Nova data de vencimento</Label>
+              <Input type="date" value={adiarDate} onChange={e => setAdiarDate(e.target.value)} className="mt-1" />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => { setAdiarEntry(null); setAdiarAtrasadas([]); }}>Cancelar</Button>
+            <Button disabled={!adiarDate} onClick={applyAdiarAtrasadas}>
+              <CalendarClock className="h-4 w-4 mr-1.5" />
+              Adiar para {adiarDate ? new Date(adiarDate + "T00:00:00").toLocaleDateString("pt-BR") : "..."}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Dialog: Histórico do cliente ──────────────────────────── */}
+      <Dialog open={!!debtDetailClientId} onOpenChange={(o) => !o && setDebtDetailClientId(null)}>
+        <DialogContent className="sm:max-w-lg max-h-[90vh] flex flex-col p-0 gap-0 overflow-hidden rounded-2xl">
+          {(() => {
+            const isOv = (e: FinancialEntry) => { const d = parseISO(e.dataPrevista || e.data); return !!(d && diffDays(today, d) > 0 && d >= firstDayOfCurrentMonth); };
+            const atrasadas = debtDetailEntries.filter(e => !e.pago && isOv(e));
+            const futuras   = debtDetailEntries.filter(e => !e.pago && !isOv(e));
+            const pagas     = debtDetailEntries.filter(e => e.pago);
+            const totalAtrasado = atrasadas.reduce((s, e) => {
+              const due = parseISO(e.dataPrevista || e.data);
+              const days = due ? diffDays(today, due) : 0;
+              return s + calcValorAtualizado(e, days);
+            }, 0);
+            const totalFuturo   = futuras.reduce((s, e) => s + (e.valor || 0), 0);
+            const totalPago     = pagas.reduce((s, e) => s + (e.valor || 0), 0);
+
+            const buildPeriodo = (e: FinancialEntry) => {
+              const rental = e.rentalId ? rentalsById.get(e.rentalId) : null;
+              const fmt = (d: string) => new Date(d + "T00:00:00").toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" });
+              const calcLabel = (due: Date) => {
+                if (!rental) return null;
+                const num = computeSemanaNumero(rental, due);
+                const { inicio, fim } = computeSemanaPeriodo(rental, due);
+                if (!num || !inicio || !fim) return null;
+                const freq = rental.frequenciaPagamento;
+                const lbl = freq === "quinzenal" ? "Quinzena" : freq === "mensal" ? "Mês" : "Semana";
+                return `${lbl} ${String(num).padStart(2, "0")}: ${fmt(inicio)} até ${fmt(fim)}`;
+              };
+              const extractFromDesc = (desc: string | undefined) => {
+                if (!desc) return null;
+                const mNew = desc.match(/((?:Semana|Quinzena|Mês)\s+\d+:\s+\d{2}\/\d{2}\s+até\s+\d{2}\/\d{2})/i);
+                if (mNew) return mNew[1];
+                const mOld = desc.match(/Aluguel\s+(\d+)[ªa°]?\s*(Semana|Quinzena|M[eê]s)\s+\((\d{2}\/\d{2})\s+a\s+(\d{2}\/\d{2})\)/i);
+                if (mOld) {
+                  const num = String(parseInt(mOld[1])).padStart(2, "0");
+                  const lbl = /quinzena/i.test(mOld[2]) ? "Quinzena" : /m[eê]s/i.test(mOld[2]) ? "Mês" : "Semana";
+                  return `${lbl} ${num}: ${mOld[3]} até ${mOld[4]}`;
+                }
+                return null;
+              };
+              if (e.subcategoria === "Parcelamento") {
+                // descricao primeiro: pode ter sido corrigida manualmente via lápis
+                const fromDesc = extractFromDesc(e.descricao);
+                if (fromDesc) return fromDesc;
+                // Fallback: via fixedOriginId → usa original.data
+                if (e.fixedOriginId) {
+                  const original = financialById.get(e.fixedOriginId);
+                  if (original) {
+                    const label = calcLabel(parseISO(original.data));
+                    if (label) return label;
+                  }
+                }
+                // Fallback: via irmão no mesmo recurringGroupId que tenha fixedOriginId
+                if (e.recurringGroupId) {
+                  const sibling = cache.financial.find(x =>
+                    x.id !== e.id && x.recurringGroupId === e.recurringGroupId && !!x.fixedOriginId
+                  );
+                  if (sibling?.fixedOriginId) {
+                    const original = financialById.get(sibling.fixedOriginId);
+                    if (original) {
+                      const label = calcLabel(parseISO(original.data));
+                      if (label) return label;
+                    }
+                  }
+                }
+                // Fallback: aluguel ignorado do mesmo rental (quando fixedOriginId não foi persistido)
+                if (e.rentalId && rental) {
+                  const candidates = cache.financial.filter(x =>
+                    x.rentalId === e.rentalId &&
+                    x.categoria === "aluguel" &&
+                    x.ignorada === true &&
+                    x.subcategoria !== "Parcelamento" &&
+                    !x.recurringGroupId
+                  );
+                  if (candidates.length === 1) {
+                    const label = calcLabel(parseISO(candidates[0].data));
+                    if (label) return label;
+                  }
+                }
+                return null;
+              }
+              // Aluguel regular: descricao primeiro (preserva semana original)
+              const fromDesc = extractFromDesc(e.descricao);
+              if (fromDesc) return fromDesc;
+              // Fallback: calcula pela dataOriginal (preserva semana mesmo após reagendamentos)
+              if (e.categoria === "aluguel" && rental) {
+                const due = parseISO(e.dataOriginal || e.dataPrevista || e.data);
+                return calcLabel(due);
+              }
+              return null;
+            };
+
+            const getCatLabel = (e: FinancialEntry) => {
+              const base = e.categoria === "aluguel" ? "Aluguel" : e.categoria === "caucao" ? "Caução" : (e.categoria || "—");
+              return e.subcategoria && e.subcategoria !== "Parcelamento" ? `${base} · ${e.subcategoria}` : base;
+            };
+
+
+
+            // Linha compacta para entrada em atraso — chamada como função, não componente
+            const renderOverdueRow = (e: FinancialEntry) => {
+              const due = parseISO(e.dataPrevista || e.data);
+              const days = due ? diffDays(today, due) : 0;
+              const periodo = buildPeriodo(e);
+              const hasAsaas = !!(e.asaasPaymentId);
+              const isParcelamento = e.subcategoria === "Parcelamento";
+              const rowItem = pending.find(i => i.entry.id === e.id);
+              const valorAtualizado = calcValorAtualizado(e, days);
+              const temJuros = valorAtualizado > (e.valor || 0);
+              return (
+                <div key={e.id} className="flex items-start gap-3 px-4 py-3 border-b border-border/30 transition-colors group hover:bg-red-50/40 dark:hover:bg-red-950/20">
+                  <div className="flex-1 min-w-0 space-y-1">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="text-[13px] font-semibold text-foreground leading-tight truncate">
+                        {periodo || getCatLabel(e)}
+                      </span>
+                      {isParcelamento && (
+                        <span className="inline-flex items-center rounded-full bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-400 text-[10px] font-medium px-1.5 py-0.5 flex-shrink-0">
+                          parcelado
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="inline-flex items-center rounded-full text-[10px] font-semibold px-2 py-0.5 bg-red-100 dark:bg-red-900/40 text-red-600 dark:text-red-400">
+                        {days}d em atraso
+                      </span>
+                      <span className="text-[10px] text-muted-foreground">venc. {due ? due.toLocaleDateString("pt-BR") : "—"}</span>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1 flex-shrink-0 pt-0.5">
+                    <>
+                      {hasAsaas ? (
+                        <button
+                          title={e.asaasInvoiceUrl || e.asaasBoletoUrl ? "Abrir boleto" : "Buscar link do boleto"}
+                          onClick={() => fetchAndOpenBoleto(e)}
+                          disabled={loadingBoleto === e.id}
+                          className="p-1.5 rounded-md text-muted-foreground hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/40 transition-colors disabled:opacity-50"
+                        >
+                          {loadingBoleto === e.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ExternalLink className="h-3.5 w-3.5" />}
+                        </button>
+                      ) : (
+                        <button
+                          title="Gerar boleto Asaas"
+                          onClick={() => handleGerarBoleto(e)}
+                          disabled={generatingBoleto === e.id}
+                          className="p-1.5 rounded-md text-muted-foreground hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 transition-colors disabled:opacity-50"
+                        >
+                          {generatingBoleto === e.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FileText className="h-3.5 w-3.5" />}
+                        </button>
+                      )}
+                      {!isParcelamento && e.categoria === "aluguel" && (
+                        <button title="Parcelar" onClick={() => { setParcelandoEntry(e); setParcelForm({ entrada: "", primeiraData: new Date().toISOString().slice(0, 10), nParcelas: "2" }); }}
+                          className="p-1.5 rounded-md text-muted-foreground hover:text-orange-600 hover:bg-orange-50 dark:hover:bg-orange-950/40 transition-colors">
+                          <Scissors className="h-3.5 w-3.5" />
+                        </button>
+                      )}
+                      {rowItem && (
+                        <button title="Confirmar pagamento" onClick={() => openConfirm(rowItem)}
+                          className="p-1.5 rounded-md text-muted-foreground hover:text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 transition-colors">
+                          <CheckCircle2 className="h-3.5 w-3.5" />
+                        </button>
+                      )}
+                    </>
+                    <div className="text-right min-w-[80px] ml-1">
+                      <div className="text-[14px] font-bold tabular-nums text-red-600 dark:text-red-400">{fmtBRL(valorAtualizado)}</div>
+                      {temJuros && (
+                        <div className="text-[10px] text-muted-foreground tabular-nums line-through">{fmtBRL(e.valor || 0)}</div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            };
+
+            // Linha simples para futuras/pagas — chamada como função
+            const renderSimpleRow = (e: FinancialEntry) => {
+              const due = parseISO(e.dataPrevista || e.data);
+              const periodo = buildPeriodo(e);
+              const hasBoletoSimple = !e.pago && !!e.asaasPaymentId;
+              const dateStr = e.pago
+                ? new Date(e.data + "T00:00:00").toLocaleDateString("pt-BR")
+                : due ? due.toLocaleDateString("pt-BR") : "—";
+              const podeEditarRef = e.categoria === "aluguel" && e.subcategoria !== "Parcelamento";
+              return (
+                <div key={e.id} className="flex items-center gap-3 px-4 py-2.5 border-b border-border/20 hover:bg-muted/20 transition-colors group">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-1.5">
+                      <span className={`text-[12px] truncate ${e.pago ? "text-muted-foreground" : "text-foreground/85"}`}>
+                        {periodo || getCatLabel(e)}
+                      </span>
+                      {e.subcategoria === "Parcelamento" && (
+                        <button
+                          title="Corrigir semana de referência do parcelamento"
+                          onClick={() => { setEditRefEntry(e); setEditRefDate(e.data); }}
+                          className="opacity-0 group-hover:opacity-100 p-0.5 text-muted-foreground/60 hover:text-muted-foreground transition-all flex-shrink-0"
+                        >
+                          <Pencil className="h-2.5 w-2.5" />
+                        </button>
+                      )}
+                      {podeEditarRef && (
+                        <button
+                          title="Corrigir semana de referência"
+                          onClick={() => { setEditRefEntry(e); setEditRefDate(e.dataOriginal || e.dataPrevista || e.data); }}
+                          className="opacity-0 group-hover:opacity-100 p-0.5 text-muted-foreground/60 hover:text-muted-foreground transition-all flex-shrink-0"
+                        >
+                          <Pencil className="h-2.5 w-2.5" />
+                        </button>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-1.5 mt-0.5">
+                      {e.pago
+                        ? <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-medium">✓ pago {dateStr}</span>
+                        : <span className="text-[10px] text-muted-foreground">venc. {dateStr}</span>
+                      }
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1.5 flex-shrink-0">
+                    {hasBoletoSimple && (
+                      <button
+                        title={e.asaasInvoiceUrl || e.asaasBoletoUrl ? "Abrir boleto" : "Buscar link do boleto"}
+                        onClick={() => fetchAndOpenBoleto(e)}
+                        disabled={loadingBoleto === e.id}
+                        className="p-1 rounded text-muted-foreground hover:text-blue-600 transition-colors disabled:opacity-50"
+                      >
+                        {loadingBoleto === e.id
+                          ? <Loader2 className="h-3 w-3 animate-spin" />
+                          : <ExternalLink className="h-3 w-3" />}
+                      </button>
+                    )}
+                    <span className={`text-[12px] font-semibold tabular-nums min-w-[72px] text-right ${e.pago ? "text-emerald-600 dark:text-emerald-400" : "text-orange-500 dark:text-orange-400"}`}>
+                      {fmtBRL(e.valor || 0)}
+                    </span>
+                  </div>
+                </div>
+              );
+            };
+
+            const clientePlacas = [...new Set(debtDetailEntries.map(e => e.placa).filter(Boolean))];
+            const temParcelamentos = debtDetailEntries.some(e => e.subcategoria === "Parcelamento" && e.fixedOriginId);
+            const clienteTelefone = debtDetailClientId ? clientsById.get(debtDetailClientId)?.telefone ?? null : null;
+
+            return (
+              <>
+                {/* ── Cabeçalho ── */}
+                <div className="px-4 pt-4 pb-3 flex-shrink-0">
+                  {/* Nome + placa + config */}
+                  <div className="flex items-center justify-between gap-2 min-w-0">
+                    <div className="min-w-0 flex-1">
+                      <h2 className="text-[16px] font-bold leading-tight tracking-tight truncate">{debtDetailItem?.clienteNome || "—"}</h2>
+                      <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+                        {clientePlacas.map(p => (
+                          <span key={p} className="font-mono text-[10px] font-semibold text-foreground/60 bg-muted border border-border/60 rounded px-1.5 py-px tracking-wider">{p}</span>
+                        ))}
+                      </div>
+                    </div>
+                    {temParcelamentos && (
+                      <button title="Corrigir referências" onClick={() => debtDetailClientId && corrigirReferenciasParcelamentos(debtDetailClientId)}
+                        className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted rounded-lg transition-colors flex-shrink-0">
+                        <SlidersHorizontal className="h-3.5 w-3.5" />
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Barra de ação: telefone + copiar + adiar */}
+                  <div className="flex items-center gap-2 mt-2.5 p-2 rounded-xl bg-muted/40 border border-border/50">
+                    <Phone className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400 flex-shrink-0" />
+                    <span className="text-[13px] font-bold tabular-nums flex-1 text-foreground">
+                      {clienteTelefone || <span className="text-muted-foreground font-normal text-[12px]">Sem telefone</span>}
+                    </span>
+                    {clienteTelefone && (
+                      <button
+                        title="Copiar telefone"
+                        onClick={() => { navigator.clipboard.writeText(clienteTelefone); toast.success("Telefone copiado!"); }}
+                        className="flex items-center gap-1 text-[11px] font-semibold text-foreground/70 hover:text-foreground bg-background border border-border rounded-lg px-2.5 py-1.5 transition-colors hover:bg-accent"
+                      >
+                        <Copy className="h-3 w-3" />
+                        Copiar
+                      </button>
+                    )}
+                    {atrasadas.length > 0 && (
+                      <button
+                        title="Ocultar cobranças em atraso até uma data"
+                        onClick={() => {
+                          const base = new Date(today.getTime());
+                          base.setDate(base.getDate() + 7);
+                          setAdiarAtrasadas(atrasadas);
+                          setAdiarEntry(atrasadas[0]);
+                          setAdiarDate(toISODate(base));
+                        }}
+                        className="flex items-center gap-1.5 text-[11px] font-semibold text-amber-700 dark:text-amber-400 bg-amber-100 dark:bg-amber-950/40 hover:bg-amber-200 dark:hover:bg-amber-900/50 border border-amber-300 dark:border-amber-700 rounded-lg px-2.5 py-1.5 transition-colors"
+                      >
+                        <CalendarClock className="h-3.5 w-3.5" />
+                        Adiar atraso
+                      </button>
+                    )}
+                  </div>
+
+                  {/* ── KPIs ── */}
+                  <div className="grid grid-cols-3 gap-2 mt-3">
+                    {atrasadas.length > 0 ? (
+                      <div className="rounded-xl bg-red-50 dark:bg-red-950/30 border border-red-100 dark:border-red-900/40 px-3 py-2.5">
+                        <p className="text-[10px] text-red-500/80 font-medium uppercase tracking-wide">Em atraso</p>
+                        <p className="text-[15px] font-bold text-red-600 dark:text-red-400 tabular-nums mt-0.5">{fmtBRL(totalAtrasado)}</p>
+                        <p className="text-[10px] text-red-400/70">{atrasadas.length} cobr.</p>
+                      </div>
+                    ) : <div />}
+                    {futuras.length > 0 ? (
+                      <div className="rounded-xl bg-muted/40 border border-border/50 px-3 py-2.5">
+                        <p className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide">A vencer</p>
+                        <p className="text-[13px] font-semibold text-foreground/70 tabular-nums mt-0.5">{fmtBRL(totalFuturo)}</p>
+                        <p className="text-[10px] text-muted-foreground/60">{futuras.length} cobr.</p>
+                      </div>
+                    ) : <div />}
+                    {pagas.length > 0 ? (
+                      <div className="rounded-xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-100 dark:border-emerald-900/40 px-3 py-2.5">
+                        <p className="text-[10px] text-emerald-600/80 font-medium uppercase tracking-wide">Recebido</p>
+                        <p className="text-[15px] font-bold text-emerald-600 dark:text-emerald-400 tabular-nums mt-0.5">{fmtBRL(totalPago)}</p>
+                        <p className="text-[10px] text-emerald-500/70">{pagas.length} cobr.</p>
+                      </div>
+                    ) : <div />}
+                  </div>
+                </div>
+
+                {/* ── Conteúdo rolável ── */}
+                <div className="overflow-y-auto flex-1 border-t border-border/40">
+
+                  {/* Atrasadas */}
+                  {atrasadas.length > 0 && (
+                    <div>
+                      <div className="sticky top-0 z-10 px-4 py-2 flex items-center justify-between bg-red-50/80 dark:bg-red-950/40 backdrop-blur-sm border-b border-red-100 dark:border-red-900/30">
+                        <span className="text-[11px] font-bold text-red-600 dark:text-red-400 uppercase tracking-widest">Em atraso · {atrasadas.length}</span>
+                        <span className="text-[12px] font-bold text-red-600 dark:text-red-400 tabular-nums">{fmtBRL(totalAtrasado)}</span>
+                      </div>
+                      <div>
+                        {atrasadas.map(e => renderOverdueRow(e))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* A vencer — colapsável */}
+                  {futuras.length > 0 && (
+                    <div className="border-t border-border/40">
+                      <button
+                        className="sticky top-0 z-10 w-full px-4 py-2.5 flex items-center justify-between bg-background/95 backdrop-blur-sm hover:bg-muted/30 transition-colors border-b border-border/30"
+                        onClick={() => setDebtFuturasOpen(v => !v)}
+                      >
+                        <span className="text-[11px] font-bold text-orange-500 dark:text-orange-400 uppercase tracking-widest">A vencer · {futuras.length}</span>
+                        <div className="flex items-center gap-2">
+                          <span className="text-[12px] font-semibold text-orange-500 dark:text-orange-400 tabular-nums">{fmtBRL(totalFuturo)}</span>
+                          {debtFuturasOpen ? <ChevronUp className="h-3.5 w-3.5 text-muted-foreground" /> : <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />}
+                        </div>
+                      </button>
+                      {debtFuturasOpen && (
+                        <div>
+                          {futuras.map(e => renderSimpleRow(e))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Recebidas — colapsável */}
+                  {pagas.length > 0 && (
+                    <div className="border-t border-border/40">
+                      <button
+                        className="sticky top-0 z-10 w-full px-4 py-2.5 flex items-center justify-between bg-background/95 backdrop-blur-sm hover:bg-muted/30 transition-colors border-b border-border/30"
+                        onClick={() => setDebtPagasOpen(v => !v)}
+                      >
+                        <span className="text-[11px] font-bold text-emerald-600 dark:text-emerald-400 uppercase tracking-widest">Recebidas · {pagas.length}</span>
+                        <div className="flex items-center gap-2">
+                          <span className="text-[12px] font-semibold text-emerald-600 dark:text-emerald-400 tabular-nums">{fmtBRL(totalPago)}</span>
+                          {debtPagasOpen ? <ChevronUp className="h-3.5 w-3.5 text-muted-foreground" /> : <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />}
+                        </div>
+                      </button>
+                      {debtPagasOpen && (
+                        <div>
+                          {pagas.map(e => renderSimpleRow(e))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {debtDetailEntries.length === 0 && (
+                    <p className="text-sm text-muted-foreground text-center py-10">Nenhum lançamento encontrado.</p>
+                  )}
+                </div>
+              </>
+            );
+          })()}
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Dialog: Parcelamento de semana ──────────────────────── */}
+      {(() => {
+        if (!parcelandoEntry) return null;
+        const valorOriginal = parcelandoEntry.valor || 0;
+        const entradaNum = parseFloat(parcelForm.entrada.replace(",", ".")) || 0;
+        const nParcelasNum = parseInt(parcelForm.nParcelas) || 2;
+        const valorRestante = Math.max(0, valorOriginal - entradaNum);
+        const valorParcela = nParcelasNum > 0 ? valorRestante / nParcelasNum : 0;
+        const totalGerado = entradaNum + valorParcela * nParcelasNum;
+        const entradaValida = entradaNum >= 0 && entradaNum < valorOriginal;
+        const podeSalvar = entradaValida && nParcelasNum >= 1 && !!parcelForm.primeiraData && totalGerado <= valorOriginal + 0.02;
+
+        const addDaysLocal = (iso: string, d: number) => {
+          const dt = new Date(iso + "T00:00:00");
+          dt.setDate(dt.getDate() + d);
+          return dt.toISOString().slice(0, 10);
+        };
+        const fmtDt = (iso: string) => new Date(iso + "T00:00:00").toLocaleDateString("pt-BR");
+
+        const due = parseISO(parcelandoEntry.dataPrevista || parcelandoEntry.data);
+        const rental = parcelandoEntry.rentalId ? rentalsById.get(parcelandoEntry.rentalId) : undefined;
+        let periodoLabel: string | null = null;
+        if (rental && due) {
+          const num = computeSemanaNumero(rental, due);
+          const { inicio, fim } = computeSemanaPeriodo(rental, due);
+          if (num && inicio && fim) {
+            const fmt = (d: string) => new Date(d + "T00:00:00").toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" });
+            const freq = rental.frequenciaPagamento;
+            const lbl = freq === "quinzenal" ? "Quinzena" : freq === "mensal" ? "Mês" : "Semana";
+            periodoLabel = `${lbl} ${String(num).padStart(2, "0")}: ${fmt(inicio)} até ${fmt(fim)}`;
+          }
+        }
+
+        const previewParcelas = nParcelasNum >= 1 && parcelForm.primeiraData
+          ? Array.from({ length: nParcelasNum }, (_, i) => {
+              const data = addDaysLocal(parcelForm.primeiraData, i * 7);
+              const v = i === nParcelasNum - 1 ? parseFloat((valorRestante - valorParcela * (nParcelasNum - 1)).toFixed(2)) : parseFloat(valorParcela.toFixed(2));
+              return { index: i + 1, data, v };
+            })
+          : [];
+
+        return (
+          <>
+          <Dialog open={!!parcelandoEntry} onOpenChange={(o) => !o && setParcelandoEntry(null)}>
+            <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-2">
+                  <Scissors className="h-4 w-4 text-orange-500" /> Parcelar cobrança
+                </DialogTitle>
+              </DialogHeader>
+
+              {/* Info da cobrança */}
+              <div className="rounded-lg border border-orange-200 bg-orange-50 dark:bg-orange-950/20 dark:border-orange-800 px-4 py-3 space-y-0.5">
+                <p className="text-[11px] font-bold text-orange-700 dark:text-orange-400 uppercase tracking-wide">Cobrança a parcelar</p>
+                {periodoLabel
+                  ? <p className="text-sm font-semibold text-foreground">{periodoLabel}</p>
+                  : <p className="text-sm text-muted-foreground">{parcelandoEntry.descricao}</p>
+                }
+                <p className="text-lg font-bold text-orange-600 dark:text-orange-400 tabular-nums">{fmtBRL(valorOriginal)}</p>
+                <p className="text-[11px] text-orange-600/70 dark:text-orange-400/70">O lançamento original será cancelado e substituído pelas parcelas.</p>
+              </div>
+
+              <div className="space-y-4 py-1">
+                {/* Entrada */}
+                <div className="space-y-1.5">
+                  <Label>Entrada (opcional)</Label>
+                  <Input
+                    type="number"
+                    placeholder="0,00"
+                    value={parcelForm.entrada}
+                    onChange={e => setParcelForm(f => ({ ...f, entrada: e.target.value }))}
+                    min={0}
+                    max={valorOriginal - 0.01}
+                    step={0.01}
+                  />
+                  {entradaNum > 0 && (
+                    <p className="text-xs text-muted-foreground">Restante a parcelar: {fmtBRL(valorRestante)}</p>
+                  )}
+                </div>
+
+                {/* Grade: data + nParcelas */}
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <Label>Data da 1ª parcela</Label>
+                    <Input
+                      type="date"
+                      value={parcelForm.primeiraData}
+                      onChange={e => setParcelForm(f => ({ ...f, primeiraData: e.target.value }))}
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Nº de parcelas</Label>
+                    <Input
+                      type="number"
+                      value={parcelForm.nParcelas}
+                      onChange={e => setParcelForm(f => ({ ...f, nParcelas: e.target.value }))}
+                      min={1}
+                      max={52}
+                    />
+                  </div>
+                </div>
+
+                {/* Preview */}
+                {previewParcelas.length > 0 && (
+                  <div className="space-y-1">
+                    <Label className="text-xs text-muted-foreground">Prévia</Label>
+                    <div className="border rounded-md divide-y text-sm max-h-40 overflow-y-auto">
+                      {entradaNum > 0 && (
+                        <div className="flex justify-between px-3 py-1.5 text-xs bg-muted/20">
+                          <span className="text-muted-foreground">Entrada · {fmtDt(parcelForm.primeiraData)}</span>
+                          <span className="font-semibold">{fmtBRL(entradaNum)}</span>
+                        </div>
+                      )}
+                      {previewParcelas.map(p => (
+                        <div key={p.index} className="flex justify-between px-3 py-1.5 text-xs">
+                          <span className="text-muted-foreground">Parcela {p.index}/{nParcelasNum} · {fmtDt(p.data)}</span>
+                          <span className="font-semibold">{fmtBRL(p.v)}</span>
+                        </div>
+                      ))}
+                      <div className="flex justify-between px-3 py-1.5 text-xs font-semibold bg-muted/30">
+                        <span>Total</span>
+                        <span className={totalGerado > valorOriginal + 0.02 ? "text-destructive" : ""}>{fmtBRL(totalGerado)}</span>
+                      </div>
+                    </div>
+                    {totalGerado > valorOriginal + 0.02 && (
+                      <p className="text-xs text-destructive font-medium">Total não pode ultrapassar {fmtBRL(valorOriginal)}</p>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setParcelandoEntry(null)} disabled={parcelSalvando}>Cancelar</Button>
+                <Button
+                  onClick={criarParcelamento}
+                  disabled={!podeSalvar || parcelSalvando}
+                  className="bg-orange-600 hover:bg-orange-700 text-white"
+                >
+                  {parcelSalvando ? "Salvando…" : `Criar ${nParcelasNum} parcela${nParcelasNum !== 1 ? "s" : ""}${entradaNum > 0 ? " + entrada" : ""}`}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+          </>
+        );
+      })()}
+
+      {/* ── Dialog: Corrigir semana de referência ─────────────────── */}
+      <Dialog open={!!editRefEntry} onOpenChange={open => { if (!open) { setEditRefEntry(null); setEditRefDate(""); } }}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Corrigir semana de referência</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 py-2">
+            <p className="text-xs text-muted-foreground">
+              {editRefEntry?.subcategoria === "Parcelamento"
+                ? "Informe a data de vencimento original do aluguel que foi parcelado. Todas as parcelas do mesmo grupo serão atualizadas."
+                : "Informe a data original de vencimento desta cobrança. O número da semana será recalculado a partir dessa data."}
+            </p>
+            <div className="space-y-1.5">
+              <Label>Data original de vencimento</Label>
+              <Input
+                type="date"
+                value={editRefDate}
+                onChange={e => setEditRefDate(e.target.value)}
+              />
+            </div>
+            {editRefDate && editRefEntry?.rentalId && (() => {
+              const rental = rentalsById.get(editRefEntry.rentalId!);
+              const due = parseISO(editRefDate);
+              if (!rental || !due) return null;
+              const num = computeSemanaNumero(rental, due);
+              const { inicio, fim } = computeSemanaPeriodo(rental, due);
+              if (!num || !inicio || !fim) return null;
+              const fmt = (d: string) => new Date(d + "T00:00:00").toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" });
+              const freq = rental.frequenciaPagamento;
+              const lbl = freq === "quinzenal" ? "Quinzena" : freq === "mensal" ? "Mês" : "Semana";
+              return (
+                <p className="text-xs font-medium text-foreground/80 bg-muted/50 rounded px-3 py-2">
+                  {lbl} {String(num).padStart(2, "0")}: {fmt(inicio)} até {fmt(fim)}
+                </p>
+              );
+            })()}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setEditRefEntry(null); setEditRefDate(""); }}>Cancelar</Button>
+            <Button
+              onClick={editRefEntry?.subcategoria === "Parcelamento" ? applyEditParcelamento : applyEditRef}
+              disabled={!editRefDate}
+            >
+              Salvar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
 
 // ─── Linha de cobrança ─────────────────────────────────────────────
 function RowItemView({
-  item, onConfirm, onMessage, onWhatsApp, onCopy, onRescheduleQuick, onRescheduleCustom, onIgnore,
+  item, onConfirm, onMessage, onWhatsApp, onCopy, onRescheduleQuick, onRescheduleCustom, onIgnore, onClientClick,
 }: {
   item: RowItem;
   onConfirm: (i: RowItem) => void;
@@ -1401,6 +2469,7 @@ function RowItemView({
   onRescheduleQuick: (i: RowItem, deltaDays: number) => void;
   onRescheduleCustom: (i: RowItem) => void;
   onIgnore: (i: RowItem) => void;
+  onClientClick?: (clienteId: string) => void;
 }) {
   const meta = metaFor(item.catKey);
   const isOverdue = item.originalDaysLate > 0;
@@ -1494,7 +2563,14 @@ function RowItemView({
 
         {/* Linha 2: nome + placa */}
         <div className="flex items-center justify-between gap-2 mt-1.5">
-          <span className="text-[13px] font-semibold truncate flex-1 leading-none">{item.clienteNome}</span>
+          {onClientClick && item.clienteId ? (
+            <button
+              className="text-[13px] font-semibold truncate flex-1 leading-none text-left hover:underline hover:text-primary transition-colors"
+              onClick={e => { e.stopPropagation(); onClientClick(item.clienteId!); }}
+            >{item.clienteNome}</button>
+          ) : (
+            <span className="text-[13px] font-semibold truncate flex-1 leading-none">{item.clienteNome}</span>
+          )}
           {item.placa && (
             <span className="font-mono text-[9px] bg-muted/70 border border-border/50 rounded-[3px] px-1.5 py-px tracking-[.5px] text-muted-foreground flex-shrink-0">
               {item.placa}
@@ -1503,11 +2579,14 @@ function RowItemView({
         </div>
 
         {/* Linha 3: dívida total / último pagamento (somente em atraso) */}
-        {isOverdue && item.semanasEmAtraso > 1 && (
-          <div className="mt-1.5 flex items-center gap-1 text-[10px] text-destructive font-semibold">
+        {isOverdue && item.pendingCount > 1 && (
+          <button
+            className="mt-1.5 flex items-center gap-1 text-[10px] text-destructive font-semibold hover:underline"
+            onClick={e => { e.stopPropagation(); setDebtDetailClientId(item.clienteId || null); }}
+          >
             <AlertTriangle className="h-3 w-3 shrink-0" />
-            <span>{item.semanasEmAtraso} semanas em débito · {fmtBRL(item.totalPendente)} total</span>
-          </div>
+            <span>{item.pendingCount} pagamentos em aberto · {fmtBRL(item.totalPendente)} total</span>
+          </button>
         )}
         {isOverdue && item.ultimoPagamento && (
           <p className="mt-1 text-[10px] text-muted-foreground">
