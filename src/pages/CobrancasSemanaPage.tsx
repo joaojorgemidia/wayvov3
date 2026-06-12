@@ -647,6 +647,9 @@ export default function CobrancasSemanaPage() {
           : e,
       );
       await saveFinancial(next);
+      // Fecha o dialog e mostra o toast imediatamente, antes de montar o popup
+      setConfirmItem(null);
+      toast.success("Pagamento confirmado!");
 
       // Sync automático de taxas Asaas em background (não bloqueia o fluxo)
       if (item.entry.asaasPaymentId && item.entry.asaasStatus === "RECEIVED" && activeCompany?.id) {
@@ -753,11 +756,9 @@ export default function CobrancasSemanaPage() {
           }),
         }),
       });
-
-      toast.success("Pagamento confirmado");
-      setConfirmItem(null);
     } catch (err) {
       console.error(err);
+      setConfirmItem(null);
       toast.error("Erro ao confirmar pagamento");
     }
   };

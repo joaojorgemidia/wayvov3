@@ -1,7 +1,5 @@
 import React, { useEffect, useState, useMemo, useCallback, useRef } from "react";
-function entriesSignature(arr) {
-  return arr.map(e => `${e.id}:${e.pago}:${e.valor}:${e.data}:${e.conta}`).join("|");
-}
+import { localToday } from "@/lib/utils";
 import { toast } from "sonner";
 import { FinancialEntry, Motorcycle } from "@/lib/types";
 import { loadFinancial, saveFinancial, loadMotos, saveMotos, loadClients, loadRentals, loadFinConfig, saveFinConfig, FinConfig } from "@/lib/store";
@@ -29,7 +27,7 @@ import {
   PieChart as PieChartIcon, BarChart3, Settings2, HelpCircle,
   EyeOff, Pin, Tag as TagIcon, Check, ChevronsUpDown, Bookmark, AlertTriangle,
   MoreVertical, CheckCheck, Banknote, X, Eye, ChevronsLeft, ChevronsRight, ArrowLeftRight, ChevronDown,
-  ExternalLink, Loader2, Link2, RefreshCw
+  ExternalLink, Loader2, Link2, RefreshCw, Scissors
 } from "lucide-react";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Textarea } from "@/components/ui/textarea";
@@ -47,6 +45,7 @@ import { useBankAccounts } from "@/hooks/useSupabaseData";
 import { supabase } from "@/integrations/supabase/client";
 import { reconcileCardInvoices, getCardInvoicesList, computeCardInvoiceYm } from "@/lib/credit-card-invoices";
 import { calculateAccountBalances } from "@/lib/account-balances";
+import { computeSemanaNumero, computeSemanaPeriodo } from "@/lib/cobranca-week-stats";
 import { usePermissions } from "@/hooks/usePermissions";
 
 // ─── Label → Internal value mapping for imported data ───
@@ -63,6 +62,10 @@ import {
 function normalizeCategoryValue(label: string, tipo: "receita" | "despesa"): string {
   if (tipo === "despesa" && CATEGORY_LABEL_TO_VALUE_DESPESA[label]) return CATEGORY_LABEL_TO_VALUE_DESPESA[label];
   return CATEGORY_LABEL_TO_VALUE[label] || label;
+}
+
+function entriesSignature(arr: { id: string; pago: boolean; valor: number; data: string; conta?: string }[]) {
+  return arr.map(e => `${e.id}:${e.pago}:${e.valor}:${e.data}:${e.conta}`).join("|");
 }
 
 function applyCompraMotoCorrections(entries: FinancialEntry[], motos: Motorcycle[] = []) {
@@ -102,7 +105,7 @@ function buildImportReconciliationKey(entry: FinancialEntry) {
 
 const emptyEntry = (): FinancialEntry => ({
   id: crypto.randomUUID(), tipo: "receita", categoria: "", subcategoria: "", descricao: "",
-  valor: 0, data: new Date().toISOString().split("T")[0], dataPrevista: "",
+  valor: 0, data: localToday(), dataPrevista: "",
   motoId: null, rentalId: null, clienteId: null, pago: true,
   recorrente: false, recorrenciaTipo: "mensal", recorrenciaVezes: 1, recorrenciaPorPeriodo: 1,
   despesaFixa: false, ignorada: false, observacao: "", tags: [],
@@ -833,12 +836,12 @@ export default function FinanceiroPage() {
   const [transferFrom, setTransferFrom] = useState("");
   const [transferTo, setTransferTo] = useState("");
   const [transferValor, setTransferValor] = useState("");
-  const [transferData, setTransferData] = useState(new Date().toISOString().split("T")[0]);
+  const [transferData, setTransferData] = useState(localToday());
   const [transferObs, setTransferObs] = useState("");
   const [advOpen, setAdvOpen] = useState(false);
   const [advCardId, setAdvCardId] = useState("");
   const [advAmount, setAdvAmount] = useState("");
-  const [advDate, setAdvDate] = useState(new Date().toISOString().split("T")[0]);
+  const [advDate, setAdvDate] = useState(localToday());
   const [advBank, setAdvBank] = useState("");
   const [advNote, setAdvNote] = useState("");
   const [activeTab, setActiveTab] = useState("transacoes");
@@ -907,13 +910,25 @@ export default function FinanceiroPage() {
   const [confirmDate, setConfirmDate] = useState("");
   const [confirmConta, setConfirmConta] = useState("");
   const [confirmValor, setConfirmValor] = useState("");
+  const [confirmValorEditado, setConfirmValorEditado] = useState(false);
   const [confirmPayBank, setConfirmPayBank] = useState("");
+  const [lastConfirmedId, setLastConfirmedId] = useState<string | null>(null);
   const [rentalPaySuccess, setRentalPaySuccess] = useState<{
     nome: string; telefone: string;
     vencimento: string; pagamento: string;
     valor: number; periodoLabel: string; mensagem: string;
   } | null>(null);
+  const [parcelandoEntryFin, setParcelandoEntryFin] = useState<FinancialEntry | null>(null);
+  const [parcelFormFin, setParcelFormFin] = useState({ entrada: "", primeiraData: new Date().toISOString().slice(0, 10), nParcelas: "2" });
+  const [parcelSalvandoFin, setParcelSalvandoFin] = useState(false);
+  const [corrigirParcelaEntry, setCorrigirParcelaEntry] = useState<FinancialEntry | null>(null);
+  const [corrigirOrigemId, setCorrigirOrigemId] = useState<string>("");
+  const [corrigirOrigemDate, setCorrigirOrigemDate] = useState<string>("");
+  const [corrigirIgnoredWeeks, setCorrigirIgnoredWeeks] = useState<number[]>([]);
   const [detailEntry, setDetailEntry] = useState<FinancialEntry | null>(null);
+  // Refs para auto-sync de taxas Asaas quando pagamento chega via webhook
+  const autoSyncedFeesRef = useRef<Set<string>>(new Set());
+  const prevPaidAsaasRef = useRef<Set<string> | null>(null);
 
   // Fecha o Sheet de detalhe automaticamente quando a entrada for removida de entries
   // (evita o overlay do Sheet bloquear cliques no AlertDialog de exclusão).
@@ -922,6 +937,65 @@ export default function FinanceiroPage() {
       setDetailEntry(null);
     }
   }, [entries]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Auto-sync taxas Asaas: dispara para entradas pagas recentemente (últimos 7 dias)
+  // Roda na montagem e a cada 3 minutos para capturar pagamentos que chegaram via webhook
+  const syncRecentAsaasFees = useCallback(async () => {
+    if (!currentCompanyId) return;
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - 7);
+    const cutoffStr = cutoff.toISOString().slice(0, 10);
+    const candidates = entries.filter(
+      e => e.pago && !!e.asaasPaymentId && (e.data || "") >= cutoffStr,
+    );
+    for (const e of candidates) {
+      if (autoSyncedFeesRef.current.has(e.id)) continue;
+      supabase.functions.invoke("asaas-sync-fees", {
+        body: { asaasPaymentId: e.asaasPaymentId, entryId: e.id, companyId: currentCompanyId },
+      }).then(({ data }) => {
+        const fees = data?.registeredFees ?? 0;
+        // Marca como sincronizado apenas quando as taxas foram registradas
+        // ou quando a edge function confirma que não há taxas esperadas (ex: PIX sem custo)
+        if (fees > 0 || data?.noFeesExpected) {
+          autoSyncedFeesRef.current.add(e.id);
+          if (fees > 0) toast.success(`${fees} taxa(s) Asaas registrada(s).`);
+        }
+      }).catch(() => {});
+    }
+  }, [entries, currentCompanyId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Roda na montagem (captura histórico recente) e depois a cada 3 minutos
+  useEffect(() => {
+    if (!entries.length || !currentCompanyId) return;
+    syncRecentAsaasFees();
+    const interval = setInterval(syncRecentAsaasFees, 3 * 60 * 1000);
+    return () => clearInterval(interval);
+  }, [entries, currentCompanyId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Detecta novas transições pago via realtime (complementa o intervalo)
+  useEffect(() => {
+    if (!currentCompanyId || !entries.length) return;
+    const currentPaidAsaas = entries.filter(e => e.pago && !!e.asaasPaymentId);
+    if (prevPaidAsaasRef.current === null) {
+      prevPaidAsaasRef.current = new Set(currentPaidAsaas.map(e => e.id));
+      return;
+    }
+    const prev = prevPaidAsaasRef.current;
+    for (const e of currentPaidAsaas) {
+      if (autoSyncedFeesRef.current.has(e.id)) continue;
+      if (prev.has(e.id)) continue;
+      supabase.functions.invoke("asaas-sync-fees", {
+        body: { asaasPaymentId: e.asaasPaymentId, entryId: e.id, companyId: currentCompanyId },
+      }).then(({ data }) => {
+        const fees = data?.registeredFees ?? 0;
+        if (fees > 0 || data?.noFeesExpected) {
+          autoSyncedFeesRef.current.add(e.id);
+          if (fees > 0) toast.success(`${fees} taxa(s) Asaas registrada(s).`);
+        }
+      }).catch(() => {});
+    }
+    prevPaidAsaasRef.current = new Set(currentPaidAsaas.map(e => e.id));
+  }, [entries, currentCompanyId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const persistConfig = useCallback((c: FinConfig) => { setFinConfig(c); saveFinConfig(c); }, []);
 
@@ -1239,7 +1313,6 @@ export default function FinanceiroPage() {
           if (entryEffDate !== occurrenceDate) return false;
           if (entry.tipo !== base.tipo) return false;
           if (normalizeCategoryValue(entry.categoria, entry.tipo) !== normalizeCategoryValue(base.categoria, base.tipo)) return false;
-          if (entry.valor !== base.valor) return false;
           const sameMoto = (entry.motoId || null) === (base.motoId || null) || (entry.placa || "") === (base.placa || "");
           const sameClient = (entry.clienteId || null) === (base.clienteId || null);
           return sameMoto && sameClient;
@@ -1435,24 +1508,26 @@ export default function FinanceiroPage() {
       if (!groups[effectiveDate]) groups[effectiveDate] = [];
       groups[effectiveDate].push(e);
     });
-    // Dentro de cada grupo: mais recentes primeiro; transferências do mesmo par: saída antes da entrada; taxas Asaas após recebimento
+    // Dentro de cada grupo: último confirmado primeiro; transferências do mesmo par: saída antes da entrada; taxas Asaas antes do recebimento; depois mais recentes
     Object.values(groups).forEach(arr => arr.sort((a, b) => {
+      if (a.id === lastConfirmedId) return -1;
+      if (b.id === lastConfirmedId) return 1;
       if (a.categoria === "transferencia" && b.categoria === "transferencia" && a.serieId && a.serieId === b.serieId) {
         if (a.tipo !== b.tipo) return a.tipo === "despesa" ? -1 : 1;
       }
       const aIsFee = a.id.startsWith("asaas-fee-");
       const bIsFee = b.id.startsWith("asaas-fee-");
-      if (aIsFee !== bIsFee) return aIsFee ? 1 : -1;
+      if (aIsFee !== bIsFee) return aIsFee ? -1 : 1;
       return (b.createdAt || "").localeCompare(a.createdAt || "");
     }));
     return Object.entries(groups).sort(([a], [b]) => b.localeCompare(a));
-  }, [filtered]);
+  }, [filtered, lastConfirmedId]);
 
   // Is date overdue?
   const isOverdue = (e: FinancialEntry) => {
     if (e.pago) return false;
     const dueDate = e.dataPrevista || e.data;
-    const today = new Date().toISOString().split("T")[0];
+    const today = localToday();
     return dueDate < today;
   };
 
@@ -1558,31 +1633,6 @@ export default function FinanceiroPage() {
 
   const [editScopeTarget, setEditScopeTarget] = useState<FinancialEntry | null>(null);
   const [asaasLoadingId, setAsaasLoadingId] = useState<string | null>(null);
-  const [syncingFeesId, setSyncingFeesId] = useState<string | null>(null);
-
-  const handleSyncAsaasFees = async (entry: FinancialEntry) => {
-    if (!entry.asaasPaymentId) return;
-    setSyncingFeesId(entry.id);
-    try {
-      const { data, error } = await supabase.functions.invoke("asaas-sync-fees", {
-        body: { asaasPaymentId: entry.asaasPaymentId, entryId: entry.id, companyId: currentCompanyId },
-      });
-      if (error) throw error;
-      const totalRegistered = (data?.registeredFees ?? 0) + (data?.registeredJuros ?? 0);
-      if (totalRegistered > 0) {
-        const parts: string[] = [];
-        if (data?.registeredFees > 0) parts.push(`${data.registeredFees} taxa(s) Asaas`);
-        if (data?.registeredJuros > 0) parts.push(`juros/multa`);
-        toast.success(`Registrado: ${parts.join(" e ")}.`);
-      } else {
-        toast.info("Nenhuma taxa ou juros encontrados no Asaas para este pagamento.");
-      }
-    } catch (e: any) {
-      toast.error("Erro ao buscar taxas: " + (e?.message || "Tente novamente."));
-    } finally {
-      setSyncingFeesId(null);
-    }
-  };
 
   const handleGenerateAsaasBoleto = async (entry: FinancialEntry) => {
     setAsaasLoadingId(entry.id);
@@ -1909,7 +1959,7 @@ export default function FinanceiroPage() {
     persist([...entries, saida, entrada]).catch(err => { console.error("[FinanceiroPage] persist error:", err); toast.error("Erro ao salvar. Verifique sua conexão."); });
     setTransferOpen(false);
     setTransferFrom(""); setTransferTo(""); setTransferValor(""); setTransferObs("");
-    setTransferData(new Date().toISOString().split("T")[0]);
+    setTransferData(localToday());
     // Navega para o mês da transferência sem aplicar filtros, depois faz scroll até a linha.
     try {
       const transferDateObj = parseISO(transferData);
@@ -1966,7 +2016,7 @@ export default function FinanceiroPage() {
       setAdvOpen(false);
       setAdvAmount("");
       setAdvNote("");
-      setAdvDate(new Date().toISOString().split("T")[0]);
+      setAdvDate(localToday());
     }
   };
 
@@ -1974,6 +2024,125 @@ export default function FinanceiroPage() {
 
   // Nunca usar confirm() nativo — pode ser bloqueado pelo browser.
   // Sempre abre o AlertDialog para qualquer exclusão (com ou sem série).
+  const criarParcelamentoFin = async () => {
+    if (!parcelandoEntryFin) return;
+    const valorOriginal = parcelandoEntryFin.valor || 0;
+    const entrada = parseFloat(parcelFormFin.entrada.replace(",", ".")) || 0;
+    const nParcelas = parseInt(parcelFormFin.nParcelas) || 2;
+    const primeiraData = parcelFormFin.primeiraData;
+    if (entrada < 0 || entrada >= valorOriginal) { toast.error("Valor de entrada inválido"); return; }
+    if (nParcelas < 1) { toast.error("Mínimo 1 parcela"); return; }
+    if (!primeiraData) { toast.error("Informe a data da 1ª parcela"); return; }
+    const valorRestante = valorOriginal - entrada;
+    const valorParcela = parseFloat((valorRestante / nParcelas).toFixed(2));
+    const groupId = crypto.randomUUID();
+    const rental = parcelandoEntryFin.rentalId ? rentals.find(r => r.id === parcelandoEntryFin.rentalId) : undefined;
+    // Usa dataOriginal || data — NÃO dataPrevista (pode ter sido reagendada para outra semana)
+    const due = parseISO(parcelandoEntryFin.dataOriginal || parcelandoEntryFin.data);
+    let descBase = parcelandoEntryFin.descricao;
+    if (rental && due) {
+      const num = computeSemanaNumero(rental, due);
+      const { inicio, fim } = computeSemanaPeriodo(rental, due);
+      if (num && inicio && fim) {
+        const fmt = (d: string) => new Date(d + "T00:00:00").toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" });
+        const freq = rental.frequenciaPagamento;
+        const lbl = freq === "quinzenal" ? "Quinzena" : freq === "mensal" ? "Mês" : "Semana";
+        descBase = `Aluguel – ${lbl} ${String(num).padStart(2, "0")}: ${fmt(inicio)} até ${fmt(fim)}`;
+      }
+    }
+    const base: Partial<FinancialEntry> = {
+      tipo: "receita",
+      categoria: "aluguel",
+      subcategoria: "Parcelamento",
+      motoId: parcelandoEntryFin.motoId,
+      rentalId: parcelandoEntryFin.rentalId,
+      clienteId: parcelandoEntryFin.clienteId,
+      pago: false,
+      conta: "",
+      natureza: "operacional",
+      placa: parcelandoEntryFin.placa,
+      clienteNome: parcelandoEntryFin.clienteNome,
+      recurringGroupId: groupId,
+      fixedOriginId: parcelandoEntryFin.id,
+      tags: ["parcelamento", "aluguel"],
+    };
+    const newEntries: FinancialEntry[] = [];
+    if (entrada > 0) {
+      newEntries.push({ ...base, id: crypto.randomUUID(), descricao: `${descBase} – Entrada (Parcela 0/${nParcelas})`, valor: entrada, data: primeiraData, dataPrevista: primeiraData } as FinancialEntry);
+    }
+    for (let i = 0; i < nParcelas; i++) {
+      const dt = new Date(primeiraData + "T00:00:00");
+      dt.setDate(dt.getDate() + i * 7);
+      const data = dt.toISOString().slice(0, 10);
+      const v = i === nParcelas - 1 ? parseFloat((valorRestante - valorParcela * (nParcelas - 1)).toFixed(2)) : valorParcela;
+      newEntries.push({ ...base, id: crypto.randomUUID(), descricao: `${descBase} – Parcela ${i + 1}/${nParcelas}`, valor: v, data, dataPrevista: data } as FinancialEntry);
+    }
+    setParcelSalvandoFin(true);
+    try {
+      const all = loadFinancial();
+      const updated = all.map(e => e.id === parcelandoEntryFin.id ? { ...e, ignorada: true } : e);
+      await saveFinancial([...updated, ...newEntries]);
+      toast.success(`Parcelamento criado: ${nParcelas} parcela${nParcelas !== 1 ? "s" : ""}${entrada > 0 ? " + entrada" : ""}`);
+      setParcelandoEntryFin(null);
+    } finally {
+      setParcelSalvandoFin(false);
+    }
+  };
+
+  const aplicarCorrecaoParcelamento = async (parcelaEntry: FinancialEntry, originDate: string, originEntryId?: string) => {
+    const all = loadFinancial();
+    const rental = parcelaEntry.rentalId ? rentals.find(r => r.id === parcelaEntry.rentalId) : undefined;
+    const due = parseISO(originDate);
+    let descBase = "";
+    if (rental && due) {
+      const num = computeSemanaNumero(rental, due);
+      const { inicio, fim } = computeSemanaPeriodo(rental, due);
+      if (num && inicio && fim) {
+        const fmt = (d: string) => new Date(d + "T00:00:00").toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" });
+        const freq = rental.frequenciaPagamento;
+        const lbl = freq === "quinzenal" ? "Quinzena" : freq === "mensal" ? "Mês" : "Semana";
+        descBase = `Aluguel – ${lbl} ${String(num).padStart(2, "0")}: ${fmt(inicio)} até ${fmt(fim)}`;
+      }
+    }
+    if (!descBase) {
+      toast.error("Não foi possível calcular a semana de referência");
+      return;
+    }
+    const getSuffix = (desc: string) => {
+      const m = desc.match(/\s*[–-]\s*(Entrada\s*\(Parcela\s+\d+\/\d+\)|Parcela\s+\d+\/\d+)$/i);
+      return m ? ` – ${m[1]}` : "";
+    };
+    // Identifica grupo: pelo recurringGroupId ou, se não houver, pelo fixedOriginId em comum
+    const groupId = parcelaEntry.recurringGroupId;
+    const originId = parcelaEntry.fixedOriginId;
+    let changed = 0;
+    const updated = all.map(e => {
+      const isGroup = groupId
+        ? e.recurringGroupId === groupId
+        : originId
+          ? e.fixedOriginId === originId
+          : e.id === parcelaEntry.id;
+      if (!isGroup || e.subcategoria !== "Parcelamento") return e;
+      const newDesc = descBase + getSuffix(e.descricao || "");
+      changed++;
+      return { ...e, descricao: newDesc, ...(originEntryId ? { fixedOriginId: originEntryId } : {}) };
+    });
+    if (changed === 0) { toast.error("Nenhuma parcela encontrada para corrigir. Verifique se o parcelamento está vinculado à locação."); return; }
+    await saveFinancial(updated);
+    toast.success(`${changed} parcela${changed !== 1 ? "s" : ""} atualizada${changed !== 1 ? "s" : ""}`);
+    setCorrigirParcelaEntry(null);
+    setCorrigirOrigemId("");
+    setCorrigirOrigemDate("");
+    setCorrigirIgnoredWeeks([]);
+  };
+
+  const corrigirReferenciaParcelamento = (entry: FinancialEntry) => {
+    setCorrigirParcelaEntry(entry);
+    setCorrigirOrigemId("");
+    setCorrigirOrigemDate("");
+    setCorrigirIgnoredWeeks([]);
+  };
+
   const handleDelete = (id: string) => {
     const entry = entries.find(e => e.id === id);
     if (!entry) return;
@@ -2104,7 +2273,7 @@ export default function FinanceiroPage() {
     const entry = entries.find(e => e.id === id);
     if (entry) {
       setConfirmToggleEntry(entry);
-      const payDate = !entry.pago ? new Date().toISOString().split("T")[0] : "";
+      const payDate = !entry.pago ? localToday() : "";
       setConfirmDate(payDate);
       setConfirmConta(entry.conta || "");
       const card = creditCards.find(c => c.nome === (entry.conta || ""));
@@ -2129,26 +2298,28 @@ export default function FinanceiroPage() {
           }
         }
       }
-      setConfirmValor(initialValor.toLocaleString("pt-BR", { minimumFractionDigits: 2 }));
+      setConfirmValor(initialValor.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
+      setConfirmValorEditado(false);
     }
   };
 
   // Recalcula confirmValor com multa+juros quando a data de pagamento muda
   useEffect(() => {
     if (!confirmToggleEntry || confirmToggleEntry.pago || !confirmDate) return;
-    const rental = confirmToggleEntry.rentalId
+    if (confirmValorEditado) return;
+    const rental = confirmToggleEntry.rentalId && confirmToggleEntry.tipo === "receita"
       ? rentals.find(r => r.id === confirmToggleEntry.rentalId)
       : null;
     const dueDateStr = confirmToggleEntry.dataPrevista || confirmToggleEntry.data;
     if (!rental || !dueDateStr) {
-      setConfirmValor(confirmToggleEntry.valor.toLocaleString("pt-BR", { minimumFractionDigits: 2 }));
+      setConfirmValor(confirmToggleEntry.valor.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
       return;
     }
     const due = new Date(dueDateStr + "T00:00:00");
     const pay = new Date(confirmDate + "T00:00:00");
     const daysOverdue = Math.max(0, Math.floor((pay.getTime() - due.getTime()) / 86400000));
     if (daysOverdue === 0) {
-      setConfirmValor(confirmToggleEntry.valor.toLocaleString("pt-BR", { minimumFractionDigits: 2 }));
+      setConfirmValor(confirmToggleEntry.valor.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
       return;
     }
     const cfg = activeCompany?.cobrancaConfig ?? DEFAULT_COBRANCA_CONFIG;
@@ -2157,16 +2328,20 @@ export default function FinanceiroPage() {
     const jurosCalc = (confirmToggleEntry.valor * (jurosMes / 100 / 30)) * daysOverdue;
     const jurosDiarioFix = (cfg.jurosDiario || 0) * daysOverdue;
     const total = confirmToggleEntry.valor + multa + jurosCalc + jurosDiarioFix;
-    setConfirmValor(total.toLocaleString("pt-BR", { minimumFractionDigits: 2 }));
+    setConfirmValor(total.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [confirmDate, confirmToggleEntry, activeCompany]);
+  }, [confirmDate, confirmToggleEntry, activeCompany, confirmValorEditado]);
 
   const confirmTogglePago = () => {
     if (!confirmToggleEntry) return;
+    if (!confirmToggleEntry.pago && !confirmConta) {
+      toast.error("Selecione a conta bancária antes de confirmar.");
+      return;
+    }
     const id = confirmToggleEntry.id;
     const parsedValor = parseFloat(confirmValor.replace(/\./g, "").replace(",", "."));
     const finalValor = !isNaN(parsedValor) && parsedValor > 0 ? parsedValor : confirmToggleEntry.valor;
-    const payDate = confirmDate || new Date().toISOString().split("T")[0];
+    const payDate = confirmDate || localToday();
     const isRentalPayment = !confirmToggleEntry.pago && !!confirmToggleEntry.rentalId
       && confirmToggleEntry.tipo === "receita" && confirmToggleEntry.categoria === "aluguel";
 
@@ -2260,6 +2435,22 @@ export default function FinanceiroPage() {
       toast.error(`Erro ao salvar pagamento: ${detail}`);
     });
 
+    // Auto-sync taxas Asaas em background ao confirmar recebimento
+    if (!confirmToggleEntry.pago && confirmToggleEntry.asaasPaymentId && currentCompanyId) {
+      supabase.functions.invoke("asaas-sync-fees", {
+        body: { asaasPaymentId: confirmToggleEntry.asaasPaymentId, entryId: confirmToggleEntry.id, companyId: currentCompanyId },
+      }).then(({ data }) => {
+        const fees = data?.registeredFees ?? 0;
+        if (fees > 0 || data?.noFeesExpected) {
+          autoSyncedFeesRef.current.add(confirmToggleEntry.id);
+        }
+        const parts: string[] = [];
+        if (fees > 0) parts.push(`${fees} taxa(s) Asaas`);
+        if ((data?.registeredJuros ?? 0) > 0) parts.push(`juros/multa`);
+        if (parts.length > 0) toast.success(`Registrado automaticamente: ${parts.join(" e ")}.`);
+      }).catch(() => {});
+    }
+
     // ── Success panel para pagamentos de aluguel ─────────────────────────────
     if (isRentalPayment) {
       const client = clients.find(c => c.id === confirmToggleEntry.clienteId);
@@ -2310,6 +2501,7 @@ export default function FinanceiroPage() {
         mensagem,
       });
     }
+    setLastConfirmedId(id);
     setConfirmToggleEntry(null);
   };
 
@@ -3080,7 +3272,7 @@ export default function FinanceiroPage() {
                   categoria: "fatura_cartao",
                   descricao: `Fatura ${card.nome} • ${ccViewYm}`,
                   valor: totalFatura,
-                  data: new Date().toISOString().split("T")[0],
+                  data: localToday(),
                   dataPrevista: currentInvoice.dueDate,
                   pago: false,
                   conta: card.contaPagamento || "",
@@ -3658,11 +3850,49 @@ export default function FinanceiroPage() {
                         <td className="py-2 px-2 max-w-[200px]">
                           {(() => {
                             const obsText = e.categoria === "aluguel" && fmtClientName ? fmtClientName : (e.observacao || "");
-                            const fullText = [obsText, parcelaLabel].filter(Boolean).join(" ");
-                            return fullText ? (
-                              <span className="text-xs font-medium text-foreground/80 italic truncate block" title={fullText}>
-                                {obsText || ""}{parcelaLabel && <span className="text-muted-foreground/70 not-italic ml-1">{parcelaLabel}</span>}
-                              </span>
+                            // Referência semanal para entradas de aluguel e juros por atraso
+                            let refSemanal: string | null = null;
+                            const calcRefFromRental = (due: Date | null, rentalId: string | null | undefined) => {
+                              const rental = rentalId ? rentals.find(r => r.id === rentalId) : undefined;
+                              if (!rental || !due) return null;
+                              const num = computeSemanaNumero(rental, due);
+                              const { inicio, fim } = computeSemanaPeriodo(rental, due);
+                              if (!num || !inicio || !fim) return null;
+                              const fmt = (d: string) => new Date(d + "T00:00:00").toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" });
+                              const lbl = rental.frequenciaPagamento === "quinzenal" ? "Quinzena" : rental.frequenciaPagamento === "mensal" ? "Mês" : "Semana";
+                              return `${lbl} ${String(num).padStart(2, "0")}: ${fmt(inicio)} até ${fmt(fim)}`;
+                            };
+                            if (e.categoria === "aluguel") {
+                              if (e.subcategoria === "Parcelamento" && e.descricao) {
+                                const m = e.descricao.match(/((?:Semana|Quinzena|M[eê]s)\s+\d+:\s+\d{2}\/\d{2}\s+até\s+\d{2}\/\d{2})/i);
+                                if (m) refSemanal = m[1];
+                              } else {
+                                const due = e.dataPrevista ? parseISO(e.dataPrevista) : parseISO(e.data);
+                                refSemanal = calcRefFromRental(due, e.rentalId);
+                              }
+                            } else if (e.categoria === "juros_atraso") {
+                              // Tenta extrair do texto da descrição ou observação
+                              const src = (e.descricao || "") + " " + (e.observacao || "");
+                              const m = src.match(/((?:Semana|Quinzena|M[eê]s)\s+\d+:\s*\d{2}\/\d{2}\s+até\s+\d{2}\/\d{2})/i);
+                              if (m) {
+                                refSemanal = m[1];
+                              } else {
+                                const due = e.dataPrevista ? parseISO(e.dataPrevista) : parseISO(e.data);
+                                refSemanal = calcRefFromRental(due, e.rentalId);
+                              }
+                            }
+                            const hasContent = !!(obsText || parcelaLabel || refSemanal);
+                            return hasContent ? (
+                              <div className="min-w-0">
+                                {(obsText || parcelaLabel) && (
+                                  <span className="text-xs font-medium text-foreground/80 italic truncate block" title={[obsText, parcelaLabel].filter(Boolean).join(" ")}>
+                                    {obsText}{parcelaLabel && <span className="text-muted-foreground/70 not-italic ml-1">{parcelaLabel}</span>}
+                                  </span>
+                                )}
+                                {refSemanal && (
+                                  <span className="text-[10px] text-muted-foreground truncate block" title={refSemanal}>{refSemanal}</span>
+                                )}
+                              </div>
                             ) : <span className="text-xs text-muted-foreground/40">—</span>;
                           })()}
                         </td>
@@ -3826,16 +4056,20 @@ export default function FinanceiroPage() {
                                   <ExternalLink className="h-3.5 w-3.5" /> Ver Boleto
                                 </DropdownMenuItem>
                               )}
-                              {/* Asaas: sincronizar taxas de pagamentos já recebidos */}
-                              {e.asaasPaymentId && e.pago && e.asaasStatus === "RECEIVED" && (
+                              {!e.pago && e.tipo === "receita" && e.categoria === "aluguel" && e.subcategoria !== "Parcelamento" && (
                                 <DropdownMenuItem
-                                  onClick={() => handleSyncAsaasFees(e)}
-                                  disabled={syncingFeesId === e.id}
-                                  className="gap-2 text-xs"
+                                  onClick={() => { setParcelandoEntryFin(e); setParcelFormFin({ entrada: "", primeiraData: new Date().toISOString().slice(0, 10), nParcelas: "2" }); }}
+                                  className="gap-2 text-xs text-orange-600 focus:text-orange-600 dark:text-orange-400"
                                 >
-                                  {syncingFeesId === e.id
-                                    ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Buscando taxas...</>
-                                    : <><RefreshCw className="h-3.5 w-3.5" /> Sincronizar taxas</>}
+                                  <Scissors className="h-3.5 w-3.5" /> Parcelar
+                                </DropdownMenuItem>
+                              )}
+                              {e.subcategoria === "Parcelamento" && (
+                                <DropdownMenuItem
+                                  onClick={() => corrigirReferenciaParcelamento(e)}
+                                  className="gap-2 text-xs text-muted-foreground"
+                                >
+                                  <RefreshCw className="h-3.5 w-3.5" /> Corrigir referência
                                 </DropdownMenuItem>
                               )}
                               {canDelete && (
@@ -4077,13 +4311,13 @@ export default function FinanceiroPage() {
                   </Label>
                 </div>
                 <div className="flex items-center gap-2">
-                  <button type="button" className={`text-xs px-3 py-1.5 rounded-full border transition-colors ${form.data === new Date().toISOString().split("T")[0] ? "bg-primary text-primary-foreground border-primary" : "bg-muted/50 text-muted-foreground border-border hover:bg-muted"}`}
-                    onClick={() => setForm({ ...form, data: new Date().toISOString().split("T")[0], pago: true })}>Hoje</button>
+                  <button type="button" className={`text-xs px-3 py-1.5 rounded-full border transition-colors ${form.data === localToday() ? "bg-primary text-primary-foreground border-primary" : "bg-muted/50 text-muted-foreground border-border hover:bg-muted"}`}
+                    onClick={() => setForm({ ...form, data: localToday(), pago: true })}>Hoje</button>
                   <button type="button" className={`text-xs px-3 py-1.5 rounded-full border transition-colors ${(() => { const d = new Date(); d.setDate(d.getDate()-1); return form.data === d.toISOString().split("T")[0]; })() ? "bg-primary text-primary-foreground border-primary" : "bg-muted/50 text-muted-foreground border-border hover:bg-muted"}`}
                     onClick={() => { const d = new Date(); d.setDate(d.getDate()-1); setForm({ ...form, data: d.toISOString().split("T")[0], pago: true }); }}>Ontem</button>
                   <Input type="date" value={form.data} onChange={e => {
                     const selected = e.target.value;
-                    const today = new Date().toISOString().split("T")[0];
+                    const today = localToday();
                     const isFuture = selected > today;
                     setForm({ ...form, data: selected, pago: isFuture ? false : form.pago });
                   }} className="flex-1 h-8 text-sm" />
@@ -4092,7 +4326,7 @@ export default function FinanceiroPage() {
 
               {/* Status pago */}
               {(() => {
-                const today = new Date().toISOString().split("T")[0];
+                const today = localToday();
                 const isFuture = form.data > today;
                 return (
                   <div className="flex items-center justify-between py-1">
@@ -4507,8 +4741,8 @@ export default function FinanceiroPage() {
 
       {/* ═══ Confirm Toggle Dialog ═══ */}
       <Dialog open={!!confirmToggleEntry} onOpenChange={(v) => { if (!v) setConfirmToggleEntry(null); }}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
+        <DialogContent className="sm:max-w-md flex flex-col max-h-[90vh]">
+          <DialogHeader className="shrink-0">
             <DialogTitle>
               {confirmToggleEntry && !confirmToggleEntry.pago
                 ? (confirmToggleEntry.tipo === "receita" ? "✅ Confirmar Recebimento" : "✅ Confirmar Pagamento")
@@ -4516,7 +4750,7 @@ export default function FinanceiroPage() {
             </DialogTitle>
           </DialogHeader>
           {confirmToggleEntry && !confirmToggleEntry.pago ? (
-            <div className="space-y-4">
+            <div className="space-y-4 overflow-y-auto flex-1 pr-1">
               {/* Summary */}
               <div className="rounded-lg border bg-muted/30 p-3 space-y-1.5 text-sm">
                 <div className="flex justify-between">
@@ -4527,7 +4761,28 @@ export default function FinanceiroPage() {
                   <span className="text-muted-foreground">Categoria:</span>
                   <span className="font-medium">{getCatLabel(confirmToggleEntry.categoria, confirmToggleEntry.tipo)}</span>
                 </div>
-                {confirmToggleEntry.rentalId && (() => {
+                {(() => {
+                  const dueDateStr = confirmToggleEntry.dataPrevista || confirmToggleEntry.data;
+                  const moto = confirmToggleEntry.motoId ? motos.find(m => m.id === confirmToggleEntry.motoId) : null;
+                  const placaLabel = moto ? `${moto.placa}${moto.modelo ? " · " + moto.modelo : ""}` : (confirmToggleEntry.placa || null);
+                  return (
+                    <>
+                      {dueDateStr && (
+                        <div className="flex justify-between">
+                          <span className="text-muted-foreground">Vencimento:</span>
+                          <span className="font-medium">{new Date(dueDateStr + "T12:00:00").toLocaleDateString("pt-BR")}</span>
+                        </div>
+                      )}
+                      {placaLabel && (
+                        <div className="flex justify-between">
+                          <span className="text-muted-foreground">Moto:</span>
+                          <span className="font-medium">{placaLabel}</span>
+                        </div>
+                      )}
+                    </>
+                  );
+                })()}
+                {confirmToggleEntry.rentalId && confirmToggleEntry.tipo === "receita" && (() => {
                   const rental = rentals.find(r => r.id === confirmToggleEntry.rentalId);
                   const client = clients.find(c => c.id === confirmToggleEntry.clienteId);
                   const dueDateStr = confirmToggleEntry.dataPrevista || confirmToggleEntry.data;
@@ -4563,16 +4818,18 @@ export default function FinanceiroPage() {
                           {confirmDate ? new Date(confirmDate + "T12:00:00").toLocaleDateString("pt-BR") : "—"}
                         </span>
                       </div>
-                      <div className="flex justify-between">
-                        <span className="text-muted-foreground">Referência:</span>
-                        <span className="font-semibold text-primary">{periodoLabel}</span>
-                      </div>
+                      {confirmToggleEntry.categoria === "aluguel" && (
+                        <div className="flex justify-between">
+                          <span className="text-muted-foreground">Referência:</span>
+                          <span className="font-semibold text-primary">{periodoLabel}</span>
+                        </div>
+                      )}
                     </>
                   );
                 })()}
                 <div className="flex justify-between items-center">
                   <span className="text-muted-foreground">{(() => {
-                    if (!confirmToggleEntry.rentalId || confirmToggleEntry.pago) return "Valor:";
+                    if (!confirmToggleEntry.rentalId || confirmToggleEntry.tipo !== "receita" || confirmToggleEntry.pago) return "Valor:";
                     const dueDateStr = confirmToggleEntry.dataPrevista || confirmToggleEntry.data;
                     if (!dueDateStr || !confirmDate) return "Valor:";
                     const days = Math.max(0, Math.floor((new Date(confirmDate + "T00:00:00").getTime() - new Date(dueDateStr + "T00:00:00").getTime()) / 86400000));
@@ -4585,8 +4842,11 @@ export default function FinanceiroPage() {
                       style={{ color: confirmToggleEntry.tipo === "receita" ? "#16a34a" : "#dc2626" }}
                       value={confirmValor}
                       onChange={e => {
-                        let v = e.target.value.replace(/[^\d,]/g, "");
-                        setConfirmValor(v);
+                        const digits = e.target.value.replace(/\D/g, "");
+                        if (!digits) { setConfirmValor(""); setConfirmValorEditado(true); return; }
+                        const num = parseInt(digits, 10) / 100;
+                        setConfirmValor(num.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
+                        setConfirmValorEditado(true);
                       }}
                     />
                   </div>
@@ -4594,7 +4854,7 @@ export default function FinanceiroPage() {
               </div>
 
               {/* Bloco de atraso — aparece quando há multa/juros configurados e a data de pagamento é posterior ao vencimento */}
-              {confirmToggleEntry.rentalId && confirmDate && (() => {
+              {confirmToggleEntry.rentalId && confirmToggleEntry.tipo === "receita" && confirmDate && (() => {
                 const rental = rentals.find(r => r.id === confirmToggleEntry.rentalId);
                 const dueDateStr = confirmToggleEntry.dataPrevista || confirmToggleEntry.data;
                 if (!rental || !dueDateStr) return null;
@@ -4679,8 +4939,8 @@ export default function FinanceiroPage() {
                 <Label className="text-sm">Data do {confirmToggleEntry.tipo === "receita" ? "recebimento" : "pagamento"}</Label>
                 <div className="flex items-center gap-2">
                   <Button type="button" size="sm"
-                    variant={confirmDate === new Date().toISOString().split("T")[0] ? "default" : "outline"}
-                    onClick={() => setConfirmDate(new Date().toISOString().split("T")[0])}>
+                    variant={confirmDate === localToday() ? "default" : "outline"}
+                    onClick={() => setConfirmDate(localToday())}>
                     Hoje
                   </Button>
                   <Button type="button" size="sm"
@@ -4692,17 +4952,24 @@ export default function FinanceiroPage() {
                 </div>
               </div>
 
-              {/* Conta bancária */}
-              <div className="flex items-center gap-3">
-                <Wallet className="h-5 w-5 text-muted-foreground shrink-0" />
-                <Select value={confirmConta} onValueChange={setConfirmConta}>
-                  <SelectTrigger className="h-9"><SelectValue placeholder="Selecione a conta" /></SelectTrigger>
-                  <SelectContent>
-                    {CONTAS.map(c => (
-                      <SelectItem key={c} value={c}>{c}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+              {/* Conta bancária — obrigatória */}
+              <div className="space-y-1">
+                <div className="flex items-center gap-3">
+                  <Wallet className={`h-5 w-5 shrink-0 ${!confirmConta ? "text-destructive" : "text-muted-foreground"}`} />
+                  <Select value={confirmConta} onValueChange={setConfirmConta}>
+                    <SelectTrigger className={`h-9 ${!confirmConta ? "border-destructive ring-1 ring-destructive" : ""}`}>
+                      <SelectValue placeholder="Selecione a conta *" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {CONTAS.map(c => (
+                        <SelectItem key={c} value={c}>{c}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                {!confirmConta && (
+                  <p className="text-xs text-destructive pl-8">Obrigatório: selecione a conta para confirmar.</p>
+                )}
               </div>
 
               {/* Banco que pagou (quando a conta é um cartão) */}
@@ -4723,48 +4990,52 @@ export default function FinanceiroPage() {
                 </div>
               )}
 
-              {/* Botões */}
-              <div className="flex justify-between pt-2">
-                <Button variant="outline" onClick={() => setConfirmToggleEntry(null)}>Cancelar</Button>
-                <Button
-                  style={{ backgroundColor: confirmToggleEntry.tipo === "receita" ? "#16a34a" : "#dc2626", color: "white" }}
-                  onClick={confirmTogglePago}
-                  disabled={!confirmDate}
-                >
-                  {confirmToggleEntry.tipo === "receita" ? "Receber" : "Pagar"}
-                </Button>
-              </div>
             </div>
-          ) : confirmToggleEntry ? (
-            <div className="space-y-4">
-              <p className="text-sm text-muted-foreground">
-                Ao desfazer, o lançamento voltará para o status pendente com a data prevista.
-              </p>
-              <div className="rounded-lg border bg-muted/30 p-3 space-y-1.5 text-sm">
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Descrição:</span>
-                  <span className="font-medium">{confirmToggleEntry.descricao || "—"}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Valor:</span>
-                  <span className={`font-semibold ${mono}`}>R$ {confirmToggleEntry.valor.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Voltará para:</span>
-                  <span className="font-medium">
-                    {confirmToggleEntry.dataPrevista
-                      ? new Date(confirmToggleEntry.dataPrevista + "T12:00:00").toLocaleDateString("pt-BR")
-                      : confirmToggleEntry.data
-                        ? new Date(confirmToggleEntry.data + "T12:00:00").toLocaleDateString("pt-BR")
-                        : "—"}
-                  </span>
+          ) : null}
+          {confirmToggleEntry && !confirmToggleEntry.pago && (
+            <div className="flex justify-between pt-3 shrink-0 border-t">
+              <Button variant="outline" onClick={() => setConfirmToggleEntry(null)}>Cancelar</Button>
+              <Button
+                style={confirmDate && confirmConta ? { backgroundColor: confirmToggleEntry.tipo === "receita" ? "#16a34a" : "#dc2626", color: "white" } : undefined}
+                onClick={confirmTogglePago}
+                disabled={!confirmDate || !confirmConta}
+              >
+                {confirmToggleEntry.tipo === "receita" ? "Receber" : "Pagar"}
+              </Button>
+            </div>
+          )}
+          {confirmToggleEntry && confirmToggleEntry.pago ? (
+            <>
+              <div className="space-y-4 overflow-y-auto flex-1 pr-1">
+                <p className="text-sm text-muted-foreground">
+                  Ao desfazer, o lançamento voltará para o status pendente com a data prevista.
+                </p>
+                <div className="rounded-lg border bg-muted/30 p-3 space-y-1.5 text-sm">
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Descrição:</span>
+                    <span className="font-medium">{confirmToggleEntry.descricao || "—"}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Valor:</span>
+                    <span className={`font-semibold ${mono}`}>R$ {confirmToggleEntry.valor.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Voltará para:</span>
+                    <span className="font-medium">
+                      {confirmToggleEntry.dataPrevista
+                        ? new Date(confirmToggleEntry.dataPrevista + "T12:00:00").toLocaleDateString("pt-BR")
+                        : confirmToggleEntry.data
+                          ? new Date(confirmToggleEntry.data + "T12:00:00").toLocaleDateString("pt-BR")
+                          : "—"}
+                    </span>
+                  </div>
                 </div>
               </div>
-              <div className="flex justify-between pt-2">
+              <div className="flex justify-between pt-3 shrink-0 border-t">
                 <Button variant="outline" onClick={() => setConfirmToggleEntry(null)}>Cancelar</Button>
                 <Button variant="destructive" onClick={confirmTogglePago}>Desfazer</Button>
               </div>
-            </div>
+            </>
           ) : null}
         </DialogContent>
       </Dialog>
@@ -4936,17 +5207,19 @@ export default function FinanceiroPage() {
                 </div>
 
                 {/* Actions */}
-                <div className="flex gap-2 pt-2">
-                  {!creditCards.some(c => c.nome === de.conta) && (
-                    <Button variant="outline" className="flex-1 gap-1.5" onClick={() => { togglePago(de.id); setDetailEntry(null); }}>
-                      {de.pago ? <><Circle className="h-4 w-4" /> Desfazer</> : <><CheckCheck className="h-4 w-4" /> {de.tipo === "receita" ? "Receber" : "Pagar"}</>}
-                    </Button>
-                  )}
-                  {canDelete && (
-                    <Button variant="destructive" size="icon" className="shrink-0" onClick={() => handleDelete(de.id)}>
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  )}
+                <div className="flex flex-col gap-2 pt-2">
+                  <div className="flex gap-2">
+                    {!creditCards.some(c => c.nome === de.conta) && (
+                      <Button variant="outline" className="flex-1 gap-1.5" onClick={() => { togglePago(de.id); setDetailEntry(null); }}>
+                        {de.pago ? <><Circle className="h-4 w-4" /> Desfazer</> : <><CheckCheck className="h-4 w-4" /> {de.tipo === "receita" ? "Receber" : "Pagar"}</>}
+                      </Button>
+                    )}
+                    {canDelete && (
+                      <Button variant="destructive" size="icon" className="shrink-0" onClick={() => handleDelete(de.id)}>
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    )}
+                  </div>
                 </div>
               </div>
             );
@@ -5070,7 +5343,7 @@ export default function FinanceiroPage() {
                 <Input className="pl-9" value={advAmount} onChange={e => {
                   const raw = e.target.value.replace(/[^\d]/g, "");
                   if (!raw) { setAdvAmount(""); return; }
-                  setAdvAmount((parseInt(raw, 10) / 100).toLocaleString("pt-BR", { minimumFractionDigits: 2 }));
+                  setAdvAmount((parseInt(raw, 10) / 100).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
                 }} placeholder="0,00" />
               </div>
             </div>
@@ -5079,8 +5352,8 @@ export default function FinanceiroPage() {
             <div className="space-y-1.5">
               <Label>Data do pagamento</Label>
               <div className="flex items-center gap-2">
-                <button type="button" onClick={() => setAdvDate(new Date().toISOString().split("T")[0])}
-                  className={`text-xs px-3 py-1.5 rounded-full border transition-colors ${advDate === new Date().toISOString().split("T")[0] ? "bg-primary text-primary-foreground border-primary" : "bg-muted/50 text-muted-foreground border-border hover:bg-muted"}`}>Hoje</button>
+                <button type="button" onClick={() => setAdvDate(localToday())}
+                  className={`text-xs px-3 py-1.5 rounded-full border transition-colors ${advDate === localToday() ? "bg-primary text-primary-foreground border-primary" : "bg-muted/50 text-muted-foreground border-border hover:bg-muted"}`}>Hoje</button>
                 <button type="button" onClick={() => { const d = new Date(); d.setDate(d.getDate() - 1); setAdvDate(d.toISOString().split("T")[0]); }}
                   className="text-xs px-3 py-1.5 rounded-full border bg-muted/50 text-muted-foreground border-border hover:bg-muted transition-colors">Ontem</button>
                 <Input type="date" value={advDate} onChange={e => setAdvDate(e.target.value)} className="flex-1 h-8 text-sm" />
@@ -5122,6 +5395,272 @@ export default function FinanceiroPage() {
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* ── Dialog: Corrigir referência de parcelamento ──────────── */}
+      {corrigirParcelaEntry && (() => {
+        const rental = corrigirParcelaEntry.rentalId
+          ? rentals.find(r => r.id === corrigirParcelaEntry.rentalId)
+          : undefined;
+
+        // Gera todas as semanas esperadas do início da locação até hoje
+        type WeekSlot = { num: number; dueISO: string; inicio: string; fim: string; entry?: FinancialEntry };
+        const weekSlots: WeekSlot[] = [];
+        if (rental) {
+          const periodDays = rental.frequenciaPagamento === "quinzenal" ? 14
+            : rental.frequenciaPagamento === "mensal" ? 30 : 7;
+          const hojeDate = new Date(); hojeDate.setHours(0,0,0,0);
+          let d = new Date(rental.dataInicio + "T00:00:00");
+          if (!rental.cobrancaPrePaga) d.setDate(d.getDate() + periodDays);
+          const todosFinanceiros = loadFinancial();
+          const aluguelEntries = todosFinanceiros.filter(e =>
+            e.categoria === "aluguel" &&
+            e.subcategoria !== "Parcelamento" &&
+            e.rentalId === rental.id
+          );
+          while (d <= hojeDate) {
+            const num = computeSemanaNumero(rental, d);
+            const { inicio, fim } = computeSemanaPeriodo(rental, d);
+            if (num !== null && inicio && fim) {
+              // Todas as entradas desta semana (via descricao ou dataPrevista)
+              const entriesDaSemana = aluguelEntries.filter(e => {
+                const mD = e.descricao?.match(/Aluguel\s+(\d+)[ªa°]/i);
+                if (mD) return parseInt(mD[1]) === num;
+                const eDue = parseISO(e.dataPrevista || e.data);
+                return !!eDue && computeSemanaNumero(rental, eDue) === num;
+              });
+              // Se qualquer entrada desta semana está paga → semana quitada, não mostrar
+              const algumaPaga = entriesDaSemana.some(e => e.pago);
+              // Se todas as entradas estão ignoradas, verificar se foi por parcelamento
+              // (nesse caso ainda deve aparecer no picker para vinculação)
+              const todasIgnoradas = entriesDaSemana.length > 0 && entriesDaSemana.every(e => e.ignorada);
+              const ignoradasSoporParcelamento = todasIgnoradas && entriesDaSemana.every(e =>
+                todosFinanceiros.some(p => p.subcategoria === "Parcelamento" && p.fixedOriginId === e.id)
+              );
+              if (!algumaPaga && (!todasIgnoradas || ignoradasSoporParcelamento)) {
+                const pendente = entriesDaSemana.find(e => !e.pago && !e.ignorada);
+                // Para semanas parceladas, usa o entry original (ignorado) para vinculação de fixedOriginId
+                const origemEntry = pendente ?? (ignoradasSoporParcelamento ? entriesDaSemana[0] : undefined);
+                weekSlots.push({ num, dueISO: d.toISOString().slice(0, 10), inicio, fim, entry: origemEntry });
+              }
+            }
+            d = new Date(d); d.setDate(d.getDate() + periodDays);
+          }
+        }
+
+        const fmt = (s: string) => new Date(s + "T00:00:00").toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" });
+        const freqLbl = rental?.frequenciaPagamento === "quinzenal" ? "Quinzena"
+          : rental?.frequenciaPagamento === "mensal" ? "Mês" : "Semana";
+
+        const slotsVisiveis = weekSlots.filter(w => !corrigirIgnoredWeeks.includes(w.num));
+        const selectedSlot = slotsVisiveis.find(w => w.dueISO === corrigirOrigemDate);
+
+        return (
+          <Dialog open onOpenChange={(o) => { if (!o) { setCorrigirParcelaEntry(null); setCorrigirOrigemDate(""); setCorrigirIgnoredWeeks([]); } }}>
+            <DialogContent className="max-w-sm">
+              <DialogHeader>
+                <DialogTitle>Indicar semana de origem</DialogTitle>
+              </DialogHeader>
+              <p className="text-[12px] text-muted-foreground">
+                Semanas em atraso sem pagamento identificado. Selecione a que corresponde a este parcelamento:
+              </p>
+              <div className="max-h-64 overflow-y-auto divide-y divide-border/40 rounded border border-border/40">
+                {slotsVisiveis.length === 0 && (
+                  <p className="px-3 py-4 text-[12px] text-muted-foreground text-center">Nenhuma semana pendente encontrada</p>
+                )}
+                {slotsVisiveis.map(w => {
+                  const isSelected = corrigirOrigemDate === w.dueISO;
+                  const label = `${freqLbl} ${String(w.num).padStart(2, "0")}: ${fmt(w.inicio)} até ${fmt(w.fim)}`;
+                  return (
+                    <div key={w.num} className={`flex items-center gap-2 pr-2 transition-colors ${isSelected ? "bg-primary/10" : "hover:bg-muted/40"}`}>
+                      <button
+                        className="flex-1 text-left px-3 py-2.5"
+                        onClick={() => { setCorrigirOrigemDate(w.dueISO); setCorrigirOrigemId(w.entry?.id ?? ""); }}
+                      >
+                        <p className={`text-[12px] font-medium ${isSelected ? "text-primary" : "text-foreground"}`}>{label}</p>
+                        <p className="text-[10px] text-muted-foreground">
+                          {w.entry ? `em atraso · venc. ${fmt(w.dueISO)}` : "sem entrada no sistema"}
+                        </p>
+                      </button>
+                      {isSelected && <Check className="h-3.5 w-3.5 text-primary flex-shrink-0" />}
+                      <button
+                        title="Ignorar esta semana permanentemente"
+                        onClick={async () => {
+                          if (isSelected) { setCorrigirOrigemDate(""); setCorrigirOrigemId(""); }
+                          setCorrigirIgnoredWeeks(prev => [...prev, w.num]);
+                          // Se não há entrada no sistema para esta semana, cria um placeholder ignorado
+                          // para que não apareça novamente no futuro
+                          if (!w.entry && rental) {
+                            const placeholder: FinancialEntry = {
+                              id: crypto.randomUUID(),
+                              tipo: "receita", categoria: "aluguel",
+                              descricao: `${label} [ignorado]`,
+                              valor: 0, data: w.dueISO, dataPrevista: w.dueISO,
+                              motoId: corrigirParcelaEntry!.motoId,
+                              rentalId: rental.id,
+                              clienteId: corrigirParcelaEntry!.clienteId,
+                              pago: false, ignorada: true,
+                              natureza: "operacional",
+                              placa: corrigirParcelaEntry!.placa,
+                              clienteNome: corrigirParcelaEntry!.clienteNome,
+                            };
+                            const all = loadFinancial();
+                            await saveFinancial([...all, placeholder]);
+                          } else if (w.entry) {
+                            // Marca a entrada existente como ignorada
+                            const all = loadFinancial();
+                            await saveFinancial(all.map(e => e.id === w.entry!.id ? { ...e, ignorada: true } : e));
+                          }
+                        }}
+                        className="p-1 text-muted-foreground/40 hover:text-muted-foreground transition-colors"
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="flex gap-2 justify-end pt-1">
+                <Button variant="ghost" size="sm" onClick={() => { setCorrigirParcelaEntry(null); setCorrigirOrigemDate(""); setCorrigirIgnoredWeeks([]); }}>Cancelar</Button>
+                <Button size="sm" disabled={!corrigirOrigemDate}
+                  onClick={() => corrigirOrigemDate && aplicarCorrecaoParcelamento(corrigirParcelaEntry!, corrigirOrigemDate, corrigirOrigemId || undefined)}>
+                  <RefreshCw className="h-3.5 w-3.5 mr-1.5" /> Corrigir
+                </Button>
+              </div>
+            </DialogContent>
+          </Dialog>
+        );
+      })()}
+
+      {/* ── Dialog: Parcelamento de aluguel ──────────────────────── */}
+      {(() => {
+        if (!parcelandoEntryFin) return null;
+        const valorOriginal = parcelandoEntryFin.valor || 0;
+        const entradaNum = parseFloat(parcelFormFin.entrada.replace(",", ".")) || 0;
+        const nParcelasNum = parseInt(parcelFormFin.nParcelas) || 2;
+        const valorRestante = Math.max(0, valorOriginal - entradaNum);
+        const valorParcela = nParcelasNum > 0 ? valorRestante / nParcelasNum : 0;
+        const totalGerado = entradaNum + valorParcela * nParcelasNum;
+        const entradaValida = entradaNum >= 0 && entradaNum < valorOriginal;
+        const podeSalvar = entradaValida && nParcelasNum >= 1 && !!parcelFormFin.primeiraData && totalGerado <= valorOriginal + 0.02;
+
+        const fmtDt = (iso: string) => new Date(iso + "T00:00:00").toLocaleDateString("pt-BR");
+        const addDaysLocal = (iso: string, d: number) => {
+          const dt = new Date(iso + "T00:00:00");
+          dt.setDate(dt.getDate() + d);
+          return dt.toISOString().slice(0, 10);
+        };
+
+        const rental = parcelandoEntryFin.rentalId ? rentals.find(r => r.id === parcelandoEntryFin.rentalId) : undefined;
+        const due = parseISO(parcelandoEntryFin.dataPrevista || parcelandoEntryFin.data);
+        let periodoLabel: string | null = null;
+        if (rental && due) {
+          const num = computeSemanaNumero(rental, due);
+          const { inicio, fim } = computeSemanaPeriodo(rental, due);
+          if (num && inicio && fim) {
+            const fmt = (d: string) => new Date(d + "T00:00:00").toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" });
+            const freq = rental.frequenciaPagamento;
+            const lbl = freq === "quinzenal" ? "Quinzena" : freq === "mensal" ? "Mês" : "Semana";
+            periodoLabel = `${lbl} ${String(num).padStart(2, "0")}: ${fmt(inicio)} até ${fmt(fim)}`;
+          }
+        }
+
+        const previewParcelas = nParcelasNum >= 1 && parcelFormFin.primeiraData
+          ? Array.from({ length: nParcelasNum }, (_, i) => {
+              const data = addDaysLocal(parcelFormFin.primeiraData, i * 7);
+              const v = i === nParcelasNum - 1 ? parseFloat((valorRestante - valorParcela * (nParcelasNum - 1)).toFixed(2)) : parseFloat(valorParcela.toFixed(2));
+              return { index: i + 1, data, v };
+            })
+          : [];
+
+        return (
+          <Dialog open={!!parcelandoEntryFin} onOpenChange={(o) => !o && setParcelandoEntryFin(null)}>
+            <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-2">
+                  <Scissors className="h-4 w-4 text-orange-500" /> Parcelar cobrança
+                </DialogTitle>
+              </DialogHeader>
+
+              <div className="rounded-lg border border-orange-200 bg-orange-50 dark:bg-orange-950/20 dark:border-orange-800 px-4 py-3 space-y-0.5">
+                <p className="text-[11px] font-bold text-orange-700 dark:text-orange-400 uppercase tracking-wide">Cobrança a parcelar</p>
+                {periodoLabel
+                  ? <p className="text-sm font-semibold text-foreground">{periodoLabel}</p>
+                  : <p className="text-sm text-muted-foreground">{parcelandoEntryFin.descricao}</p>
+                }
+                <p className="text-lg font-bold text-orange-600 dark:text-orange-400 tabular-nums">
+                  {valorOriginal.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+                </p>
+                <p className="text-[11px] text-orange-600/70 dark:text-orange-400/70">O lançamento original será cancelado e substituído pelas parcelas.</p>
+              </div>
+
+              <div className="space-y-4 py-1">
+                <div className="space-y-1.5">
+                  <Label>Entrada (opcional)</Label>
+                  <Input
+                    type="number"
+                    placeholder="0,00"
+                    value={parcelFormFin.entrada}
+                    onChange={e => setParcelFormFin(f => ({ ...f, entrada: e.target.value }))}
+                    min={0}
+                    max={valorOriginal - 0.01}
+                    step={0.01}
+                  />
+                  {entradaNum > 0 && (
+                    <p className="text-xs text-muted-foreground">Restante a parcelar: {valorRestante.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</p>
+                  )}
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <Label>Data da 1ª parcela</Label>
+                    <Input type="date" value={parcelFormFin.primeiraData} onChange={e => setParcelFormFin(f => ({ ...f, primeiraData: e.target.value }))} />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Nº de parcelas</Label>
+                    <Input type="number" value={parcelFormFin.nParcelas} onChange={e => setParcelFormFin(f => ({ ...f, nParcelas: e.target.value }))} min={1} max={52} />
+                  </div>
+                </div>
+                {previewParcelas.length > 0 && (
+                  <div className="space-y-1">
+                    <Label className="text-xs text-muted-foreground">Prévia</Label>
+                    <div className="border rounded-md divide-y text-sm max-h-44 overflow-y-auto">
+                      {entradaNum > 0 && (
+                        <div className="flex justify-between px-3 py-1.5 text-xs bg-muted/20">
+                          <span className="text-muted-foreground">Entrada · {fmtDt(parcelFormFin.primeiraData)}</span>
+                          <span className="font-semibold">{entradaNum.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</span>
+                        </div>
+                      )}
+                      {previewParcelas.map(p => (
+                        <div key={p.index} className="flex justify-between px-3 py-1.5 text-xs">
+                          <span className="text-muted-foreground">Parcela {p.index}/{nParcelasNum} · {fmtDt(p.data)}</span>
+                          <span className="font-semibold">{p.v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</span>
+                        </div>
+                      ))}
+                      <div className="flex justify-between px-3 py-1.5 text-xs font-semibold bg-muted/30">
+                        <span>Total</span>
+                        <span className={totalGerado > valorOriginal + 0.02 ? "text-destructive" : ""}>{totalGerado.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</span>
+                      </div>
+                    </div>
+                    {totalGerado > valorOriginal + 0.02 && (
+                      <p className="text-xs text-destructive font-medium">Total não pode ultrapassar {valorOriginal.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</p>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2">
+                <Button variant="outline" onClick={() => setParcelandoEntryFin(null)} disabled={parcelSalvandoFin}>Cancelar</Button>
+                <Button
+                  onClick={criarParcelamentoFin}
+                  disabled={!podeSalvar || parcelSalvandoFin}
+                  className="bg-orange-600 hover:bg-orange-700 text-white"
+                >
+                  {parcelSalvandoFin ? "Salvando…" : `Criar ${nParcelasNum} parcela${nParcelasNum !== 1 ? "s" : ""}${entradaNum > 0 ? " + entrada" : ""}`}
+                </Button>
+              </div>
+            </DialogContent>
+          </Dialog>
+        );
+      })()}
     </div>
   );
 }
