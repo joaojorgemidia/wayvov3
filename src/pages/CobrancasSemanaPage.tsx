@@ -313,7 +313,7 @@ export default function CobrancasSemanaPage() {
   );
 
   const calcValorAtualizado = (e: FinancialEntry, days: number) => {
-    if (days <= 0) return e.valor || 0;
+    if (days <= 0 || e.categoria === "juros_atraso") return e.valor || 0;
     const cfg = activeCompany?.cobrancaConfig ?? { multaAtraso: 15, jurosDiario: 7, jurosMes: 0 };
     const rental = e.rentalId ? rentalsById.get(e.rentalId) : undefined;
     const valor = e.valor || 0;
