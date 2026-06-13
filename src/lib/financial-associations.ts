@@ -117,10 +117,15 @@ export function resolveAssociations(
     if (client) updated.clienteNome = client.nome;
   }
 
-  // 6. Natureza: operacional if has plate or category is always operacional
-  // Preserve explicit "investimento" or "administrativa" choices made by the user.
-  if (updated.natureza !== "investimento" && updated.natureza !== "administrativa") {
-    if (updated.placa || ALWAYS_OPERACIONAL.has(updated.categoria)) {
+  // 6. Natureza: despesa com placa nunca pode ser administrativa (regra de negócio).
+  // Preserva "investimento" (escolha explícita do usuário).
+  // Sem placa: preserva "administrativa" se foi definida explicitamente.
+  if (updated.placa || updated.motoId) {
+    if (updated.natureza !== "investimento") {
+      updated.natureza = "operacional";
+    }
+  } else if (updated.natureza !== "investimento" && updated.natureza !== "administrativa") {
+    if (ALWAYS_OPERACIONAL.has(updated.categoria)) {
       updated.natureza = "operacional";
     }
   }

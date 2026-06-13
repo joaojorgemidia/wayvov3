@@ -1,9 +1,10 @@
 import React, { useState, useMemo } from "react";
+import { localToday } from "@/lib/utils";
 import { addDays, format } from "date-fns";
 import { Maintenance, MaintenanceItem, Motorcycle, FinancialEntry, Rental, Client } from "@/lib/types";
 import { useDataCacheSnapshot } from "@/lib/data-cache";
 import { useMaintenance, useBankAccounts, useMotos } from "@/hooks/useSupabaseData";
-import { saveFinancial as storeFinancialAll, loadFinancial, loadMaintenanceConfig, type MaintenanceConfig } from "@/lib/store";
+import { saveFinancial as storeFinancialAll, loadFinancial, loadMaintenanceConfig, saveMaintenanceConfig, type MaintenanceConfig, type Oficina } from "@/lib/store";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
@@ -14,12 +15,14 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
+import { Checkbox } from "@/components/ui/checkbox";
 import { toast } from "sonner";
 import { usePermissions } from "@/hooks/usePermissions";
 import {
   Plus, Search, Wrench, Pencil, Trash2, ClipboardList, X,
-  Package, Hammer, ChevronRight, CalendarDays, Building2, Gauge,
+  Package, Hammer, ChevronRight, ChevronLeft, CalendarDays, Building2, Gauge,
   CheckCircle2, Clock, AlertCircle, MoreVertical, SlidersHorizontal,
+  DollarSign, ListChecks, TrendingDown, Trophy,
 } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 
@@ -76,7 +79,7 @@ function emptyForm(): Maintenance {
     numeroOS: null,
     tipo: "Reparo",
     natureza: "corretiva",
-    data: new Date().toISOString().split("T")[0],
+    data: localToday(),
     dataFim: null,
     km: null,
     custo: 0,
@@ -87,6 +90,7 @@ function emptyForm(): Maintenance {
     dataPagamentoPrevisto: null,
     pagamentoRealizado: false,
     quemPaga: "locadora",
+    vincularLocatario: true,
     valorLocatario: null,
     cobrarParcelado: false,
     entradaLocatario: null,
@@ -111,7 +115,7 @@ function buildReceitaLocatarioEntries(os: Maintenance, motos: Motorcycle[], rent
   if (!rental) return [];
 
   const valor = (os.valorLocatario != null && os.valorLocatario > 0) ? os.valorLocatario : (os.itens.length > 0 ? computeCusto(os.itens) : os.custo);
-  const baseData = os.dataFim || new Date().toISOString().split("T")[0];
+  const baseData = os.dataFim || localToday();
   const descBase = [
     os.numeroOS,
     getTipoLabel(os.tipo),
@@ -182,7 +186,7 @@ function buildReceitaLocatarioEntries(os: Maintenance, motos: Motorcycle[], rent
 
 function buildFinancialEntry(os: Maintenance, motos: Motorcycle[], rentals: Rental[]): FinancialEntry {
   const moto = motos.find((m) => m.id === os.motoId);
-  const rental = findRentalAtDate(rentals, os.motoId, os.data);
+  const rental = os.vincularLocatario !== false ? findRentalAtDate(rentals, os.motoId, os.data) : undefined;
   const custo = os.itens.length > 0 ? computeCusto(os.itens) : os.custo;
   const data = os.dataFim || os.data;
   const dataPrevista = os.dataPagamentoPrevisto || data;
@@ -193,8 +197,8 @@ function buildFinancialEntry(os: Maintenance, motos: Motorcycle[], rentals: Rent
     subcategoria: os.natureza === "preventiva" ? "Preventiva" : "Corretiva",
     descricao: `${os.numeroOS ? os.numeroOS + " – " : ""}${os.oficina || "Manutenção"}`,
     valor: custo,
-    data: dataPrevista,
-    dataPrevista,
+    data: data,
+    dataPrevista: dataPrevista,
     motoId: os.motoId,
     rentalId: rental?.id ?? null,
     clienteId: rental?.clienteId ?? null,
@@ -238,8 +242,138 @@ export default function ManutencoesPage() {
   const [detailOS, setDetailOS] = useState<Maintenance | null>(null);
   const [formOpen, setFormOpen] = useState(false);
   const [form, setForm] = useState<Maintenance>(emptyForm());
-  const [valorLocatarioTipo, setValorLocatarioTipo] = useState<"reais" | "percentual">("reais");
-  const [valorLocatarioPercent, setValorLocatarioPercent] = useState<string>("");
+  const [markupTipo, setMarkupTipo] = useState<"reais" | "percentual">("reais");
+  const [markupValue, setMarkupValue] = useState<string>("");
+
+  // ─── Lançamento em lote ───────────────────────────────────────
+  const [batchLaunchOpen, setBatchLaunchOpen] = useState(false);
+  const [batchLaunching, setBatchLaunching] = useState(false);
+  const [batchSelected, setBatchSelected] = useState<Set<string>>(new Set());
+  const [batchIgnored, setBatchIgnored] = useState<Set<string>>(() => {
+    try { return new Set(JSON.parse(localStorage.getItem("batch_os_ignored") || "[]")); }
+    catch { return new Set(); }
+  });
+
+  const saveBatchIgnored = (next: Set<string>) => {
+    setBatchIgnored(next);
+    localStorage.setItem("batch_os_ignored", JSON.stringify([...next]));
+  };
+
+  const pendingBatchOS = useMemo(() => {
+    const syncedIds = new Set(
+      (cache.financial || []).filter((e) => e.fixedOriginId).map((e) => e.fixedOriginId!),
+    );
+    return (items || []).filter(
+      (os) =>
+        os.status === "concluida" &&
+        os.quemPaga !== "locatario_direto" &&
+        (os.itens.length > 0 ? computeCusto(os.itens) : os.custo) > 0 &&
+        !syncedIds.has(os.id) &&
+        !batchIgnored.has(os.id),
+    );
+  }, [items, cache.financial, batchIgnored]);
+
+  const pendingBatchTotal = useMemo(
+    () => pendingBatchOS.reduce((s, os) => s + (os.itens.length > 0 ? computeCusto(os.itens) : os.custo), 0),
+    [pendingBatchOS],
+  );
+
+  const openBatchLaunch = () => {
+    setBatchSelected(new Set(pendingBatchOS.map((os) => os.id)));
+    setBatchLaunchOpen(true);
+  };
+
+  const ignoreBatchOS = (id: string) => {
+    const next = new Set(batchIgnored);
+    next.add(id);
+    saveBatchIgnored(next);
+  };
+
+  const handleBatchLaunch = async () => {
+    if (pendingBatchOS.length === 0) { toast.info("Nenhuma OS para lançar"); return; }
+    setBatchLaunching(true);
+    try {
+      const all = loadFinancial();
+      const newEntries: FinancialEntry[] = [];
+      for (const os of pendingBatchOS) {
+        newEntries.push(buildFinancialEntry(os, motos, rentals));
+        if (os.quemPaga === "locatario") {
+          buildReceitaLocatarioEntries(os, motos, rentals).forEach((e) => newEntries.push(e));
+        }
+      }
+      await storeFinancialAll([...all, ...newEntries]);
+      toast.success(`${toSync.length} O'S lançadas no financeiro`);
+      setBatchLaunchOpen(false);
+    } catch {
+      toast.error("Erro ao lançar no financeiro");
+    } finally {
+      setBatchLaunching(false);
+    }
+  };
+
+  // ─── Gasto rápido com oficina ─────────────────────────────────
+  const [quickExpenseOpen, setQuickExpenseOpen] = useState(false);
+  const [quickExpense, setQuickExpense] = useState({
+    oficina: "",
+    valor: "",
+    data: localToday(),
+    observacao: "",
+    conta: "",
+    natureza: "corretiva" as "corretiva" | "preventiva",
+    pago: true,
+  });
+  const [quickNewOficina, setQuickNewOficina] = useState("");
+  const [quickNewOficinaOpen, setQuickNewOficinaOpen] = useState(false);
+  const [quickOficinaSearch, setQuickOficinaSearch] = useState("");
+
+  const saveNewOficina = () => {
+    const nome = quickNewOficina.trim();
+    if (!nome) return;
+    const novaOficina: Oficina = { id: crypto.randomUUID(), nome, endereco: "", responsavel: "" };
+    const next = { ...maintConfig, oficinas: [...maintConfig.oficinas, novaOficina] };
+    setMaintConfig(next);
+    saveMaintenanceConfig(next);
+    setQuickExpense((q) => ({ ...q, oficina: nome }));
+    setQuickNewOficina("");
+    setQuickNewOficinaOpen(false);
+  };
+
+  const handleQuickExpenseSave = async () => {
+    if (!quickExpense.oficina.trim()) { toast.error("Informe a oficina"); return; }
+    const valor = parseFloat(quickExpense.valor.replace(",", "."));
+    if (!valor || valor <= 0) { toast.error("Informe o valor"); return; }
+    if (!quickExpense.conta) { toast.error("Selecione a conta"); return; }
+    try {
+      const entry: FinancialEntry = {
+        id: crypto.randomUUID(),
+        tipo: "despesa",
+        categoria: "manutencao_despesa",
+        subcategoria: quickExpense.natureza === "preventiva" ? "Preventiva" : "Corretiva",
+        descricao: quickExpense.oficina,
+        valor,
+        data: quickExpense.data,
+        dataPrevista: quickExpense.data,
+        motoId: null,
+        rentalId: null,
+        clienteId: null,
+        pago: quickExpense.pago,
+        conta: quickExpense.conta,
+        natureza: "operacional",
+        observacao: quickExpense.observacao || undefined,
+        tags: [],
+      };
+      const all = loadFinancial();
+      await storeFinancialAll([...all, entry]);
+      toast.success("Gasto registrado no financeiro");
+      setQuickExpenseOpen(false);
+      setQuickExpense({ oficina: "", valor: "", data: localToday(), observacao: "", conta: "", natureza: "corretiva", pago: true });
+      setQuickNewOficinaOpen(false);
+      setQuickNewOficina("");
+      setQuickOficinaSearch("");
+    } catch {
+      toast.error("Erro ao registrar gasto");
+    }
+  };
 
   const getMoto = (id: string) => motos.find((m) => m.id === id);
   const getMotoLabel = (id: string) => {
@@ -271,10 +405,18 @@ export default function ManutencoesPage() {
         (filterPagamento === "pendente" && !m.pagamentoRealizado);
       const matchQuemPaga = filterQuemPaga === "todos" || m.quemPaga === filterQuemPaga;
       return matchText && matchStatus && matchNatureza && matchDataDe && matchDataAte && matchPlaca && matchLocatario && matchPagamento && matchQuemPaga;
+    }).sort((a, b) => {
+      const da = a.data || "";
+      const db = b.data || "";
+      if (db !== da) return db > da ? 1 : -1;
+      // Desempate por número de OS (decrescente)
+      const na = parseInt((a.numeroOS || "").replace(/\D/g, ""), 10) || 0;
+      const nb = parseInt((b.numeroOS || "").replace(/\D/g, ""), 10) || 0;
+      return nb - na;
     });
   }, [items, search, filterStatus, filterNatureza, filterDataDe, filterDataAte, filterPlaca, filterLocatario, filterPagamento, filterQuemPaga, motos, rentals]);
 
-  // Métricas
+  // Métricas gerais
   const totalCusto = useMemo(
     () => (items || []).reduce((s, m) => s + (m.itens.length > 0 ? computeCusto(m.itens) : m.custo), 0),
     [items],
@@ -282,19 +424,114 @@ export default function ManutencoesPage() {
   const emAndamento = useMemo(() => (items || []).filter((m) => m.status === "em_andamento").length, [items]);
   const concluidas = useMemo(() => (items || []).filter((m) => m.status === "concluida").length, [items]);
 
+  // ─── KPIs por período ─────────────────────────────────────────
+  // Deriva o mês ativo dos filtros de data, caindo para o mês corrente se não houver filtro
+  const activeKpiMonth = useMemo(() => {
+    if (filterDataDe && /^\d{4}-\d{2}-\d{2}$/.test(filterDataDe)) {
+      return filterDataDe.substring(0, 7);
+    }
+    const n = new Date();
+    return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}`;
+  }, [filterDataDe]);
+
+  const kpiData = useMemo(() => {
+    let start: string, end: string;
+    if (filterDataDe && filterDataAte) {
+      start = filterDataDe;
+      end = filterDataAte;
+    } else {
+      const [y, m] = activeKpiMonth.split("-").map(Number);
+      const daysInMonth = new Date(y, m, 0).getDate();
+      start = `${activeKpiMonth}-01`;
+      end = `${activeKpiMonth}-${String(daysInMonth).padStart(2, "0")}`;
+    }
+
+    const osDoMes = (items || []).filter(
+      (os) => os.status === "concluida" && os.data >= start && os.data <= end,
+    );
+
+    let corretiva = 0, preventiva = 0, pecas = 0, maoDeObra = 0;
+    const motoCounts = new Map<string, { count: number; total: number }>();
+
+    for (const os of osDoMes) {
+      const custo = os.itens.length > 0 ? computeCusto(os.itens) : os.custo;
+      if (os.natureza === "corretiva") corretiva += custo;
+      else preventiva += custo;
+
+      if (os.itens.length > 0) {
+        for (const item of os.itens) {
+          const v = item.valorUnitario * item.quantidade;
+          if (item.tipo === "peca") pecas += v;
+          else maoDeObra += v;
+        }
+      }
+
+      const prev = motoCounts.get(os.motoId) ?? { count: 0, total: 0 };
+      motoCounts.set(os.motoId, { count: prev.count + 1, total: prev.total + custo });
+    }
+
+    const totalGasto = corretiva + preventiva;
+    const motosComOS = motoCounts.size;
+    const gastoMedioPorMoto = motosComOS > 0 ? totalGasto / motosComOS : 0;
+
+    const topMotos = [...motoCounts.entries()]
+      .sort((a, b) => b[1].count - a[1].count || b[1].total - a[1].total)
+      .slice(0, 5)
+      .map(([motoId, d]) => ({ motoId, placa: getMoto(motoId)?.placa ?? "N/A", ...d }));
+
+    return { corretiva, preventiva, pecas, maoDeObra, totalGasto, gastoMedioPorMoto, motosComOS, topMotos, qtdOS: osDoMes.length };
+  }, [items, filterDataDe, filterDataAte, activeKpiMonth, motos]);
+
+  const kpiMonthLabel = useMemo(() => {
+    if (filterDataDe && filterDataAte) {
+      const [y, m] = filterDataDe.split("-").map(Number);
+      const daysInMonth = new Date(y, m, 0).getDate();
+      const isFullMonth =
+        filterDataDe === `${filterDataDe.substring(0, 7)}-01` &&
+        filterDataAte === `${filterDataDe.substring(0, 7)}-${String(daysInMonth).padStart(2, "0")}`;
+      if (!isFullMonth) return "Período personalizado";
+    }
+    const [y, m] = activeKpiMonth.split("-").map(Number);
+    return new Date(y, m - 1, 1).toLocaleDateString("pt-BR", { month: "long", year: "numeric" });
+  }, [activeKpiMonth, filterDataDe, filterDataAte]);
+
+  // Navegar meses filtra tanto os KPIs quanto a lista
+  const shiftKpiMonth = (delta: number) => {
+    const [y, m] = activeKpiMonth.split("-").map(Number);
+    const d = new Date(y, m - 1 + delta, 1);
+    const ym = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+    const daysInMonth = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+    setFilterDataDe(`${ym}-01`);
+    setFilterDataAte(`${ym}-${String(daysInMonth).padStart(2, "0")}`);
+  };
+
+  // Oficinas: cadastro formal + nomes já usados em O'S existentes (sem duplicatas)
+  const allOficinaNames = useMemo(() => {
+    const fromConfig = maintConfig.oficinas.map((o) => o.nome);
+    const fromOS = [...new Set((items || []).map((os) => os.oficina).filter(Boolean))];
+    const configSet = new Set(fromConfig);
+    return [...fromConfig, ...fromOS.filter((n) => !configSet.has(n))];
+  }, [maintConfig.oficinas, items]);
+
   // ─── Handlers ────────────────────────────────────────────────
 
   const openNew = () => {
     setForm({ ...emptyForm(), numeroOS: generateOSNumber(items || []) });
-    setValorLocatarioTipo("reais");
-    setValorLocatarioPercent("");
+    setMarkupTipo("reais");
+    setMarkupValue("");
     setFormOpen(true);
   };
 
   const openEdit = (os: Maintenance) => {
     setForm({ ...os });
-    setValorLocatarioTipo("reais");
-    setValorLocatarioPercent("");
+    setMarkupTipo("reais");
+    if (os.quemPaga === "locatario" && os.valorLocatario != null) {
+      const base = os.itens.length > 0 ? computeCusto(os.itens) : os.custo;
+      const delta = os.valorLocatario - base;
+      setMarkupValue(delta > 0 ? delta.toFixed(2) : "");
+    } else {
+      setMarkupValue("");
+    }
     setDetailOS(null);
     setFormOpen(true);
   };
@@ -310,7 +547,7 @@ export default function ManutencoesPage() {
     // Remove todas as entradas vinculadas a esta OS
     let next = all.filter((e) => e.fixedOriginId !== os.id);
 
-    if (os.status === "concluida" && custo > 0 && os.conta) {
+    if (os.status === "concluida" && custo > 0 && os.quemPaga !== "locatario_direto") {
       // Despesa da oficina — preserva ID existente
       next.push({
         ...buildFinancialEntry(os, motos, rentals),
@@ -318,7 +555,7 @@ export default function ManutencoesPage() {
       });
 
       // Receitas do locatário
-      if (os.quemPaga === "locatario") {
+      if (os.quemPaga === "locatario" && os.vincularLocatario !== false) {
         const novas = buildReceitaLocatarioEntries(os, motos, rentals);
 
         if (linkedReceitas.length === 0) {
@@ -361,24 +598,26 @@ export default function ManutencoesPage() {
   const handleSave = async () => {
     if (!form.motoId) { toast.error("Selecione a moto"); return; }
     if (!form.oficina.trim()) { toast.error("Informe a oficina"); return; }
-    if (form.status === "concluida" && !form.conta) {
-      toast.error("Selecione a conta de débito para concluir a OS");
+    if (form.status === "concluida" && form.pagamentoRealizado && !form.conta) {
+      toast.error("Selecione a conta de débito para registrar o pagamento");
       return;
     }
     try {
       await save(form);
-      await syncFinancial(form);
-      // Atualiza kmAtual da moto se o KM informado for maior
+      // Feedback imediato — financeiro e km atualizam em background
+      // (storeFinancialAll atualiza o cache sincronamente antes de qualquer await)
+      toast.success(form.numeroOS ? `${form.numeroOS} salva` : "OS salva");
+      setFormOpen(false);
+      syncFinancial(form).catch(err => console.error("[syncFinancial]", err));
       if (form.km !== null && form.km > 0) {
         const moto = motos.find((m) => m.id === form.motoId);
         if (moto && (moto.kmAtual === null || form.km > moto.kmAtual)) {
-          await saveMoto({ ...moto, kmAtual: form.km });
+          saveMoto({ ...moto, kmAtual: form.km }).catch(err => console.error("[saveMoto km]", err));
         }
       }
-      toast.success(form.numeroOS ? `${form.numeroOS} salva` : "OS salva");
-      setFormOpen(false);
-    } catch {
-      toast.error("Erro ao salvar OS");
+    } catch (err: any) {
+      console.error("[handleSave] Erro ao salvar OS:", err);
+      toast.error(`Erro ao salvar OS: ${err?.message || "erro desconhecido"}`);
     }
   };
 
@@ -388,7 +627,8 @@ export default function ManutencoesPage() {
       const all = loadFinancial();
       const linked = all.filter((e) => e.fixedOriginId === id);
       if (linked.length > 0) {
-        await storeFinancialAll(all.filter((e) => e.fixedOriginId !== id));
+        storeFinancialAll(all.filter((e) => e.fixedOriginId !== id))
+          .catch(err => console.error("[handleDelete financial]", err));
       }
       toast.success("OS removida");
       setDetailOS(null);
@@ -398,18 +638,18 @@ export default function ManutencoesPage() {
   };
 
   const handleQuickStatus = async (os: Maintenance, status: Maintenance["status"]) => {
-    if (status === "concluida" && !os.conta) {
+    if (status === "concluida" && os.pagamentoRealizado && !os.conta && os.quemPaga !== "locatario_direto") {
       setForm({ ...os, status });
       setFormOpen(true);
-      toast.info("Selecione a conta de débito para concluir a OS");
+      toast.info("Selecione a conta de débito para registrar o pagamento");
       return;
     }
     try {
       const updated = { ...os, status };
       await save(updated);
-      await syncFinancial(updated);
       if (detailOS?.id === os.id) setDetailOS(updated);
       toast.success(`Status atualizado para "${STATUS_CONFIG[status].label}"`);
+      syncFinancial(updated).catch(err => console.error("[syncFinancial]", err));
     } catch {
       toast.error("Erro ao atualizar status");
     }
@@ -442,7 +682,19 @@ export default function ManutencoesPage() {
             {(items || []).length} ordens de serviço
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 flex-wrap justify-end">
+          <Button variant="outline" className="gap-2" onClick={() => { setMaintConfig(loadMaintenanceConfig()); setQuickExpenseOpen(true); }}>
+            <DollarSign className="h-4 w-4" /> Gasto com oficina
+          </Button>
+          {pendingBatchOS.length > 0 && (
+            <Button variant="outline" className="gap-2" onClick={openBatchLaunch}>
+              <ListChecks className="h-4 w-4" />
+              Lançar no financeiro
+              <span className="ml-1 rounded-full bg-primary/10 px-2 py-0.5 text-xs font-semibold text-primary">
+                {pendingBatchOS.length}
+              </span>
+            </Button>
+          )}
           {canCreate && (
             <Button onClick={openNew} className="gap-2">
               <Plus className="h-4 w-4" /> Nova OS
@@ -451,12 +703,117 @@ export default function ManutencoesPage() {
         </div>
       </div>
 
-      {/* Métricas */}
+      {/* Métricas gerais */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <MetricCard label="Total de OS" value={String((items || []).length)} icon={<ClipboardList className="h-4 w-4" />} />
         <MetricCard label="Em andamento" value={String(emAndamento)} icon={<Wrench className="h-4 w-4" />} color="blue" />
         <MetricCard label="Concluídas" value={String(concluidas)} icon={<CheckCircle2 className="h-4 w-4" />} color="green" />
         <MetricCard label="Custo total" value={fmt(totalCusto)} icon={<AlertCircle className="h-4 w-4" />} color="amber" />
+      </div>
+
+      {/* KPIs por período */}
+      <div className="space-y-3">
+        {/* Seletor de período — controla KPIs e filtro da lista */}
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => shiftKpiMonth(-1)}
+            className="flex h-7 w-7 items-center justify-center rounded-md border border-border bg-background hover:bg-muted transition-colors"
+          >
+            <ChevronLeft className="h-3.5 w-3.5" />
+          </button>
+          <span className="text-sm font-medium capitalize min-w-[140px] text-center">{kpiMonthLabel}</span>
+          <button
+            onClick={() => shiftKpiMonth(1)}
+            className="flex h-7 w-7 items-center justify-center rounded-md border border-border bg-background hover:bg-muted transition-colors"
+          >
+            <ChevronRight className="h-3.5 w-3.5" />
+          </button>
+          <span className="text-xs text-muted-foreground">
+            {kpiData.qtdOS} OS concluída{kpiData.qtdOS !== 1 ? "s" : ""}
+          </span>
+          {(filterDataDe || filterDataAte) && (
+            <button
+              onClick={() => { setFilterDataDe(""); setFilterDataAte(""); }}
+              className="ml-auto text-[11px] text-muted-foreground hover:text-foreground underline-offset-2 hover:underline transition-colors"
+            >
+              Ver todos os meses
+            </button>
+          )}
+        </div>
+
+        {/* Linha 1: corretiva, preventiva, peças, mão de obra */}
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <Card>
+            <CardContent className="p-4">
+              <p className="text-xs text-muted-foreground mb-1">Corretiva</p>
+              <p className="font-mono text-base font-bold text-red-600">{fmt(kpiData.corretiva)}</p>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="p-4">
+              <p className="text-xs text-muted-foreground mb-1">Preventiva</p>
+              <p className="font-mono text-base font-bold text-violet-600">{fmt(kpiData.preventiva)}</p>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="p-4">
+              <p className="text-xs text-muted-foreground mb-1">Peças</p>
+              <p className="font-mono text-base font-bold text-blue-600">{fmt(kpiData.pecas)}</p>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="p-4">
+              <p className="text-xs text-muted-foreground mb-1">Mão de obra</p>
+              <p className="font-mono text-base font-bold text-emerald-600">{fmt(kpiData.maoDeObra)}</p>
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* Linha 2: gasto médio + top motos */}
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <Card>
+            <CardContent className="p-4 flex items-start gap-3">
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-amber-500/10 text-amber-600">
+                <TrendingDown className="h-4 w-4" />
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground">Gasto médio / moto / mês</p>
+                <p className="font-mono text-base font-bold">{fmt(kpiData.gastoMedioPorMoto)}</p>
+                {kpiData.motosComOS > 0 && (
+                  <p className="text-[11px] text-muted-foreground mt-0.5">
+                    {kpiData.motosComOS} moto{kpiData.motosComOS !== 1 ? "s" : ""} • total {fmt(kpiData.totalGasto)}
+                  </p>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="p-4">
+              <div className="flex items-center gap-2 mb-2">
+                <Trophy className="h-3.5 w-3.5 text-amber-500" />
+                <p className="text-xs font-medium text-muted-foreground">Motos com mais manutenções</p>
+              </div>
+              {kpiData.topMotos.length === 0 ? (
+                <p className="text-xs text-muted-foreground py-1">Nenhuma OS concluída no período</p>
+              ) : (
+                <div className="space-y-1.5">
+                  {kpiData.topMotos.map((m, i) => (
+                    <div key={m.motoId} className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className="text-[10px] font-bold text-muted-foreground w-4 shrink-0">{i + 1}º</span>
+                        <span className="text-xs font-mono font-semibold truncate">{m.placa}</span>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <span className="text-[11px] text-muted-foreground">{m.count} OS</span>
+                        <span className="text-xs font-mono font-medium">{fmt(m.total)}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </div>
       </div>
 
       {/* Filtros */}
@@ -676,7 +1033,9 @@ export default function ManutencoesPage() {
 
             {/* Linha 4: Moto ↔ Locatário */}
             {(() => {
-              const rentalNaData = form.motoId ? findRentalAtDate(rentals, form.motoId, form.data) : undefined;
+              const rentalNaData = form.motoId && form.vincularLocatario !== false
+                ? findRentalAtDate(rentals, form.motoId, form.data)
+                : undefined;
               const locatarioId = rentalNaData?.clienteId || "";
               const handleLocatarioChange = (clienteId: string) => {
                 const rental = rentals.find((r) => r.clienteId === clienteId && r.status === "ativa");
@@ -695,14 +1054,33 @@ export default function ManutencoesPage() {
                     />
                   </div>
                   <div className="grid gap-1.5">
-                    <Label className="text-xs">Locatário</Label>
-                    <SearchableSelect
-                      options={clients.map((c) => ({ value: c.id, label: c.nome }))}
-                      value={locatarioId}
-                      onValueChange={handleLocatarioChange}
-                      placeholder="Buscar locatário..."
-                      searchPlaceholder="Buscar locatário..."
-                    />
+                    <div className="flex items-center justify-between">
+                      <Label className="text-xs">Locatário</Label>
+                      <button
+                        type="button"
+                        onClick={() => setForm((f) => ({ ...f, vincularLocatario: !f.vincularLocatario }))}
+                        className={`text-[10px] font-medium px-1.5 py-0.5 rounded transition-colors ${
+                          form.vincularLocatario === false
+                            ? "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400"
+                            : "text-muted-foreground hover:text-foreground"
+                        }`}
+                      >
+                        {form.vincularLocatario === false ? "Sem locatário ✕" : "Sem locatário"}
+                      </button>
+                    </div>
+                    {form.vincularLocatario === false ? (
+                      <div className="h-9 flex items-center px-3 rounded-md border border-dashed border-amber-300 dark:border-amber-700 bg-amber-50/50 dark:bg-amber-950/20 text-[12px] text-amber-600 dark:text-amber-400">
+                        OS sem vínculo de locatário
+                      </div>
+                    ) : (
+                      <SearchableSelect
+                        options={clients.map((c) => ({ value: c.id, label: c.nome }))}
+                        value={locatarioId}
+                        onValueChange={handleLocatarioChange}
+                        placeholder="Buscar locatário..."
+                        searchPlaceholder="Buscar locatário..."
+                      />
+                    )}
                   </div>
                 </div>
               );
@@ -721,7 +1099,7 @@ export default function ManutencoesPage() {
                 </button>
               </div>
               <SearchableSelect
-                options={maintConfig.oficinas.map((o) => ({ value: o.nome, label: o.nome }))}
+                options={allOficinaNames.map((n) => ({ value: n, label: n }))}
                 value={form.oficina}
                 onValueChange={(v) => setForm((f) => ({ ...f, oficina: v }))}
                 placeholder="Buscar oficina..."
@@ -907,83 +1285,118 @@ export default function ManutencoesPage() {
 
             <Separator />
 
-            {/* Cobrança */}
+            {/* Responsabilidade financeira */}
             {(() => {
               const custo = form.itens.length > 0 ? computeCusto(form.itens) : form.custo;
               const rentalNaData = form.motoId ? findRentalAtDate(rentals, form.motoId, form.data) : undefined;
               return (
                 <div className="space-y-3">
                   <div className="grid gap-1.5">
-                    <Label className="text-xs font-semibold">Quem paga</Label>
-                    <div className="grid grid-cols-2 gap-2 max-w-xs">
-                      {(["locadora", "locatario"] as const).map((p) => (
-                        <button key={p} type="button"
-                          onClick={() => setForm((f) => ({ ...f, quemPaga: p, cobrarParcelado: false, valorLocatario: null, entradaLocatario: null, numeroParcelas: null }))}
-                          className={`rounded-lg border-2 py-2 text-sm font-medium transition-colors ${form.quemPaga === p ? (p === "locadora" ? "border-blue-500 bg-blue-500/10 text-blue-600" : "border-orange-500 bg-orange-500/10 text-orange-600") : "border-border text-muted-foreground hover:border-muted-foreground/40"}`}>
-                          {p === "locadora" ? "Locadora" : "Locatário"}
+                    <Label className="text-xs font-semibold">Responsabilidade financeira</Label>
+                    <div className="grid grid-cols-3 gap-2">
+                      {([
+                        { value: "locadora", label: "Locadora paga" },
+                        { value: "locatario_direto", label: "Pago na oficina" },
+                        { value: "locatario", label: "Locadora cobra" },
+                      ] as const).map(({ value, label }) => (
+                        <button key={value} type="button"
+                          onClick={() => {
+                            setForm((f) => ({ ...f, quemPaga: value, cobrarParcelado: false, valorLocatario: null, entradaLocatario: null, numeroParcelas: null }));
+                            setMarkupTipo("reais");
+                            setMarkupValue("");
+                          }}
+                          className={`rounded-lg border-2 py-2 text-xs font-medium transition-colors text-center leading-tight ${
+                            form.quemPaga === value
+                              ? value === "locadora"
+                                ? "border-blue-500 bg-blue-500/10 text-blue-600"
+                                : value === "locatario_direto"
+                                ? "border-slate-400 bg-slate-100/60 text-slate-600 dark:border-slate-600 dark:bg-slate-800/40 dark:text-slate-400"
+                                : "border-orange-500 bg-orange-500/10 text-orange-600"
+                              : "border-border text-muted-foreground hover:border-muted-foreground/40"
+                          }`}>
+                          {label}
                         </button>
                       ))}
                     </div>
                   </div>
 
+                  {/* Locatário pagou direto — sem impacto financeiro */}
+                  {form.quemPaga === "locatario_direto" && (
+                    <div className="rounded-lg border border-slate-200 bg-slate-50/60 px-3 py-2.5 dark:border-slate-700 dark:bg-slate-800/30">
+                      <p className="text-xs text-muted-foreground leading-relaxed">
+                        Locatário pagou direto na oficina.{" "}
+                        <span className="font-medium text-foreground">Nenhum lançamento financeiro será gerado.</span>
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Locadora cobra — despesa + receita com markup opcional */}
                   {form.quemPaga === "locatario" && (
                     <div className="rounded-lg border border-orange-200 bg-orange-50/60 p-3 space-y-3 dark:border-orange-900/40 dark:bg-orange-950/20">
                       {form.motoId && !rentalNaData && (
                         <p className="text-[11px] text-amber-600 leading-tight">Nenhum locatário ativo nessa data.</p>
                       )}
 
-                      {/* Valor a cobrar com toggle R$/% */}
+                      {/* Custo base */}
+                      {custo > 0 && (
+                        <div className="flex items-center justify-between text-xs">
+                          <span className="text-muted-foreground">Custo da OS</span>
+                          <span className="font-mono font-semibold">{fmt(custo)}</span>
+                        </div>
+                      )}
+
+                      {/* Acréscimo */}
                       <div className="grid gap-1">
                         <div className="flex items-center justify-between">
-                          <Label className="text-xs">Valor a cobrar</Label>
+                          <Label className="text-xs">Acréscimo (opcional)</Label>
                           <div className="flex rounded-md border text-xs overflow-hidden">
                             <button type="button"
-                              onClick={() => setValorLocatarioTipo("reais")}
-                              className={`px-2.5 py-0.5 transition-colors ${valorLocatarioTipo === "reais" ? "bg-orange-500 text-white font-medium" : "text-muted-foreground hover:bg-muted"}`}>
+                              onClick={() => { setMarkupTipo("reais"); setMarkupValue(""); setForm((f) => ({ ...f, valorLocatario: null })); }}
+                              className={`px-2.5 py-0.5 transition-colors ${markupTipo === "reais" ? "bg-orange-500 text-white font-medium" : "text-muted-foreground hover:bg-muted"}`}>
                               R$
                             </button>
                             <button type="button"
-                              onClick={() => {
-                                setValorLocatarioTipo("percentual");
-                                if (custo > 0 && form.valorLocatario) {
-                                  setValorLocatarioPercent(((form.valorLocatario / custo) * 100).toFixed(1));
-                                }
-                              }}
-                              className={`px-2.5 py-0.5 transition-colors ${valorLocatarioTipo === "percentual" ? "bg-orange-500 text-white font-medium" : "text-muted-foreground hover:bg-muted"}`}>
+                              onClick={() => { setMarkupTipo("percentual"); setMarkupValue(""); setForm((f) => ({ ...f, valorLocatario: null })); }}
+                              className={`px-2.5 py-0.5 transition-colors ${markupTipo === "percentual" ? "bg-orange-500 text-white font-medium" : "text-muted-foreground hover:bg-muted"}`}>
                               %
                             </button>
                           </div>
                         </div>
-
-                        {valorLocatarioTipo === "reais" ? (
+                        <div className="relative">
                           <Input
-                            type="number" min={0} step={0.01}
-                            placeholder={custo > 0 ? `${custo.toFixed(2)} (custo OS)` : "0,00"}
-                            value={form.valorLocatario ?? ""}
-                            onChange={(e) => setForm((f) => ({ ...f, valorLocatario: e.target.value ? Number(e.target.value) : null }))}
+                            type="number" min={0} step={markupTipo === "reais" ? 0.01 : 0.1}
+                            placeholder={markupTipo === "reais" ? "0,00 (sem acréscimo)" : "0 (sem acréscimo)"}
+                            value={markupValue}
+                            onChange={(e) => {
+                              setMarkupValue(e.target.value);
+                              const v = parseFloat(e.target.value);
+                              if (!isNaN(v) && v > 0) {
+                                const total = markupTipo === "reais"
+                                  ? parseFloat((custo + v).toFixed(2))
+                                  : parseFloat((custo * (1 + v / 100)).toFixed(2));
+                                setForm((f) => ({ ...f, valorLocatario: total }));
+                              } else {
+                                setForm((f) => ({ ...f, valorLocatario: null }));
+                              }
+                            }}
                             className="h-8 text-sm"
                           />
-                        ) : (
-                          <div className="space-y-1">
-                            <div className="relative">
-                              <Input
-                                type="number" min={0} max={200} step={0.1}
-                                value={valorLocatarioPercent}
-                                onChange={(e) => {
-                                  setValorLocatarioPercent(e.target.value);
-                                  const pct = parseFloat(e.target.value);
-                                  setForm((f) => ({ ...f, valorLocatario: !isNaN(pct) && custo > 0 ? parseFloat((custo * pct / 100).toFixed(2)) : null }));
-                                }}
-                                className="h-8 text-sm pr-7"
-                                placeholder="ex: 50"
-                              />
-                              <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs text-muted-foreground pointer-events-none">%</span>
-                            </div>
-                            {form.valorLocatario != null && custo > 0 && (
-                              <p className="text-[11px] text-muted-foreground">= R$ {form.valorLocatario.toFixed(2)} sobre custo de R$ {custo.toFixed(2)}</p>
-                            )}
-                          </div>
-                        )}
+                        </div>
+                      </div>
+
+                      {/* Total a cobrar */}
+                      <div className="flex items-center justify-between rounded-md bg-orange-100/60 dark:bg-orange-950/40 px-2.5 py-2">
+                        <span className="text-xs font-medium">Locatário paga</span>
+                        <div className="flex items-center gap-1.5">
+                          {form.valorLocatario != null && custo > 0 && form.valorLocatario > custo && (
+                            <span className="text-[11px] text-muted-foreground">
+                              {fmt(custo)} + {fmt(form.valorLocatario - custo)}
+                            </span>
+                          )}
+                          <span className="font-mono text-sm font-bold text-orange-700 dark:text-orange-400">
+                            {fmt(form.valorLocatario != null ? form.valorLocatario : custo)}
+                          </span>
+                        </div>
                       </div>
 
                       {/* Parcelamento */}
@@ -1045,6 +1458,194 @@ export default function ManutencoesPage() {
             <Button variant="ghost" onClick={() => setFormOpen(false)}>Cancelar</Button>
             <Button onClick={handleSave} disabled={!form.motoId || !form.oficina.trim()}>
               Salvar OS
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Dialog: Lançar no financeiro */}
+      <Dialog open={batchLaunchOpen} onOpenChange={setBatchLaunchOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <ListChecks className="h-4 w-4" /> Lançar O'S no financeiro
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 py-2">
+            <div className="flex items-center justify-between">
+              <p className="text-sm text-muted-foreground">
+                Clique em <strong>Ignorar</strong> nas O'S que não quer lançar.
+              </p>
+              {batchIgnored.size > 0 && (
+                <button
+                  type="button"
+                  className="text-xs text-amber-600 hover:underline shrink-0"
+                  onClick={() => saveBatchIgnored(new Set())}
+                >
+                  Restaurar {batchIgnored.size} ignorada{batchIgnored.size !== 1 ? "s" : ""}
+                </button>
+              )}
+            </div>
+            <div className="max-h-56 overflow-y-auto space-y-1 rounded-lg border p-2">
+              {pendingBatchOS.map((os) => {
+                const custo = os.itens.length > 0 ? computeCusto(os.itens) : os.custo;
+                return (
+                  <div key={os.id} className="flex items-center gap-2 rounded-md px-2.5 py-2 hover:bg-muted/30">
+                    <span className="font-mono text-xs text-muted-foreground w-20 shrink-0">{os.numeroOS || "—"}</span>
+                    <span className="text-sm flex-1 truncate">{os.oficina || "Oficina"}</span>
+                    <span className="font-mono text-sm font-semibold shrink-0">{fmt(custo)}</span>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 px-2 text-xs text-muted-foreground hover:text-destructive hover:bg-destructive/10 shrink-0"
+                      onClick={() => ignoreBatchOS(os.id)}
+                    >
+                      Ignorar
+                    </Button>
+                  </div>
+                );
+              })}
+              {pendingBatchOS.length === 0 && (
+                <p className="py-4 text-center text-sm text-muted-foreground">Todas as O'S foram ignoradas.</p>
+              )}
+            </div>
+            <div className="rounded-lg border bg-muted/30 px-3 py-2 flex justify-between text-sm">
+              <span className="text-muted-foreground">{pendingBatchOS.length} para lançar</span>
+              <span className="font-mono font-bold">{fmt(pendingBatchTotal)}</span>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setBatchLaunchOpen(false)}>Cancelar</Button>
+            <Button onClick={handleBatchLaunch} disabled={batchLaunching || pendingBatchOS.length === 0}>
+              {batchLaunching ? "Lançando..." : `Lançar ${pendingBatchOS.length} O'S`}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Dialog: Gasto rápido com oficina */}
+      <Dialog open={quickExpenseOpen} onOpenChange={(o) => { if (!o) { setQuickNewOficinaOpen(false); setQuickNewOficina(""); setQuickOficinaSearch(""); } else { setMaintConfig(loadMaintenanceConfig()); } setQuickExpenseOpen(o); }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <DollarSign className="h-4 w-4" /> Gasto com oficina
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="grid gap-1.5">
+              <Label className="text-xs">Oficina / Fornecedor</Label>
+              <SearchableSelect
+                options={allOficinaNames.map((n) => ({ value: n, label: n }))}
+                value={quickExpense.oficina}
+                onValueChange={(v) => setQuickExpense((q) => ({ ...q, oficina: v }))}
+                placeholder="Selecionar oficina ou fornecedor..."
+                searchPlaceholder="Buscar oficina ou fornecedor..."
+                emptyText="Nenhuma encontrada."
+              />
+              {!quickNewOficinaOpen ? (
+                <button
+                  type="button"
+                  onClick={() => setQuickNewOficinaOpen(true)}
+                  className="flex items-center gap-1.5 text-xs text-primary hover:underline w-fit"
+                >
+                  <Plus className="h-3 w-3" /> Cadastrar nova oficina/fornecedor
+                </button>
+              ) : (
+                <div className="flex gap-2">
+                  <Input
+                    autoFocus
+                    placeholder="Nome da oficina ou fornecedor"
+                    value={quickNewOficina}
+                    onChange={(e) => setQuickNewOficina(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") saveNewOficina(); if (e.key === "Escape") { setQuickNewOficinaOpen(false); setQuickNewOficina(""); } }}
+                    className="h-8 text-sm"
+                  />
+                  <Button size="sm" className="h-8 px-3" onClick={saveNewOficina} disabled={!quickNewOficina.trim()}>OK</Button>
+                  <Button size="sm" variant="ghost" className="h-8 px-2" onClick={() => { setQuickNewOficinaOpen(false); setQuickNewOficina(""); }}>
+                    <X className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
+              )}
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="grid gap-1.5">
+                <Label className="text-xs">Valor (R$)</Label>
+                <Input
+                  placeholder="0,00"
+                  value={quickExpense.valor}
+                  onChange={(e) => setQuickExpense((q) => ({ ...q, valor: e.target.value }))}
+                />
+              </div>
+              <div className="grid gap-1.5">
+                <Label className="text-xs">Data</Label>
+                <Input
+                  type="date"
+                  value={quickExpense.data}
+                  onChange={(e) => setQuickExpense((q) => ({ ...q, data: e.target.value }))}
+                />
+              </div>
+            </div>
+            <div className="grid gap-1.5">
+              <Label className="text-xs">Natureza</Label>
+              <div className="grid grid-cols-2 gap-2">
+                {(["corretiva", "preventiva"] as const).map((n) => (
+                  <button
+                    key={n}
+                    type="button"
+                    onClick={() => setQuickExpense((q) => ({ ...q, natureza: n }))}
+                    className={`rounded-lg border-2 py-2 text-sm font-medium transition-colors ${
+                      quickExpense.natureza === n
+                        ? n === "corretiva"
+                          ? "border-red-500 bg-red-500/10 text-red-600"
+                          : "border-violet-500 bg-violet-500/10 text-violet-600"
+                        : "border-border text-muted-foreground hover:border-muted-foreground/40"
+                    }`}
+                  >
+                    {NATUREZA_CONFIG[n].label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="grid gap-1.5">
+              <Label className="text-xs">Conta de débito</Label>
+              <Select
+                value={quickExpense.conta}
+                onValueChange={(v) => setQuickExpense((q) => ({ ...q, conta: v }))}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Selecione a conta..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {(bankAccounts || []).map((a: any) => (
+                    <SelectItem key={a.id} value={a.nome}>{a.nome}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid gap-1.5">
+              <Label className="text-xs">Observação (opcional)</Label>
+              <Input
+                placeholder="Ex: troca de pneu, revisão geral..."
+                value={quickExpense.observacao}
+                onChange={(e) => setQuickExpense((q) => ({ ...q, observacao: e.target.value }))}
+              />
+            </div>
+            <div className="flex items-center gap-3">
+              <Switch
+                id="qe-pago"
+                checked={quickExpense.pago}
+                onCheckedChange={(v) => setQuickExpense((q) => ({ ...q, pago: v }))}
+              />
+              <Label htmlFor="qe-pago" className="text-sm cursor-pointer">Já pago</Label>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setQuickExpenseOpen(false)}>Cancelar</Button>
+            <Button
+              onClick={handleQuickExpenseSave}
+              disabled={!quickExpense.oficina.trim() || !quickExpense.valor || !quickExpense.conta}
+            >
+              Registrar gasto
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1160,7 +1761,7 @@ function OSCard({
           </div>
         </div>
 
-        {/* Badges */}
+        {/* Badges: status + natureza */}
         <div className="flex flex-wrap gap-1.5">
           <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium ${status.color}`}>
             {status.icon} {status.label}
@@ -1175,13 +1776,18 @@ function OSCard({
           ))}
         </div>
 
-        {/* Oficina */}
-        {os.oficina && (
-          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-            <Building2 className="h-3.5 w-3.5 shrink-0" />
-            <span className="truncate">{os.oficina}</span>
-          </div>
-        )}
+        {/* Tipo + oficina */}
+        <div className="space-y-1">
+          {os.tipo && (
+            <div className="text-xs font-medium text-foreground truncate">{getTipoLabel(os.tipo)}{os.descricao ? ` — ${os.descricao}` : ""}</div>
+          )}
+          {os.oficina && (
+            <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <Building2 className="h-3.5 w-3.5 shrink-0" />
+              <span className="truncate">{os.oficina}</span>
+            </div>
+          )}
+        </div>
 
         {/* Datas + KM */}
         <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
@@ -1203,26 +1809,28 @@ function OSCard({
 
         <Separator />
 
-        {/* Rodapé: itens + custo + status pagamento */}
-        <div className="flex items-center justify-between">
-          <span className="text-xs text-muted-foreground">
-            {os.itens.length > 0
-              ? `${os.itens.length} ${os.itens.length === 1 ? "item" : "itens"}`
-              : "Sem itens"}
-          </span>
-          <div className="flex items-center gap-2">
-            {os.dataPagamentoPrevisto && (
-              <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium ${
+        {/* Rodapé: responsabilidade + custo + status pagamento */}
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-1.5 min-w-0">
+            {os.quemPaga === "locatario_direto" ? (
+              <span className="text-[11px] text-slate-500 font-medium truncate">Pago na oficina</span>
+            ) : os.quemPaga === "locatario" ? (
+              <span className="text-[11px] text-orange-600 font-medium truncate">Locadora cobra</span>
+            ) : (
+              <span className="text-[11px] text-blue-600 font-medium truncate">Locadora paga</span>
+            )}
+            {os.status === "concluida" && os.quemPaga !== "locatario_direto" && (
+              <span className={`inline-flex items-center gap-0.5 rounded-full border px-1.5 py-0.5 text-[10px] font-medium ${
                 os.pagamentoRealizado
                   ? "bg-emerald-500/10 text-emerald-700 border-emerald-500/20"
-                  : "bg-amber-500/10 text-amber-700 border-amber-500/20"
+                  : "bg-amber-500/10 text-amber-600 border-amber-500/20"
               }`}>
                 <CheckCircle2 className="h-2.5 w-2.5" />
                 {os.pagamentoRealizado ? "Pago" : "A pagar"}
               </span>
             )}
-            <span className="font-mono text-sm font-bold">{fmt(custo)}</span>
           </div>
+          <span className="font-mono text-sm font-bold shrink-0">{fmt(custo)}</span>
         </div>
         <Button
           variant="outline"

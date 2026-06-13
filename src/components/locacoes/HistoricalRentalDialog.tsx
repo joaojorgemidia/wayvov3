@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { localToday } from "@/lib/utils";
 import { Rental, Motorcycle, Client, FinancialEntry } from "@/lib/types";
 import { loadFinancial, saveFinancial } from "@/lib/store";
 import { Button } from "@/components/ui/button";
@@ -81,7 +82,7 @@ export default function HistoricalRentalDialog({ open, onOpenChange, motos, clie
       status: "finalizada",
       checklistRetirada: [], checklistDevolucao: [],
       observacoes: obs,
-      createdAt: new Date().toISOString().split("T")[0],
+      createdAt: localToday(),
     };
 
     // Auto-associate financial entries by placa + period

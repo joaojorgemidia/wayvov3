@@ -163,9 +163,6 @@ export function FrotaTab({ motos, onEdit, onDelete, onSell }: FrotaTabProps) {
                 <th className="px-4 py-3.5 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                   Faturamento líquido <InfoTooltip text="Total faturado − total de despesas desta moto" />
                 </th>
-                <th className="px-4 py-3.5 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                  FIPE atualizada <InfoTooltip text="Valor FIPE mais recente consultado para esta moto" />
-                </th>
                 <th className="px-4 py-3.5 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">Ações</th>
               </tr>
             </thead>
@@ -181,7 +178,10 @@ export function FrotaTab({ motos, onEdit, onDelete, onSell }: FrotaTabProps) {
                         {statusLabels[m.status]}
                       </span>
                     </td>
-                    <td className="px-4 py-3.5 font-mono text-foreground/80">{m.anoFabricacao && m.anoModelo ? `${m.anoFabricacao}/${m.anoModelo}` : m.anoModelo ?? "—"}</td>
+                    <td className="px-4 py-3.5 font-mono text-foreground/80">
+                      {m.anoFabricacao && m.anoModelo ? `${m.anoFabricacao}/${m.anoModelo}` : m.anoModelo ?? "—"}
+                      {m.cor && <span className="ml-2 text-xs text-muted-foreground font-sans">{m.cor}</span>}
+                    </td>
                     <td className="px-4 py-3.5">
                       <span className="inline-flex rounded-md bg-muted/60 px-2 py-0.5 font-mono font-bold text-foreground">{m.placa}</span>
                     </td>
@@ -190,7 +190,6 @@ export function FrotaTab({ motos, onEdit, onDelete, onSell }: FrotaTabProps) {
                     <td className="px-4 py-3.5 text-right font-mono tabular-nums text-foreground/80">{fmtBRL(mt.faturado)}</td>
                     <td className="px-4 py-3.5 text-right font-mono tabular-nums text-foreground/80">{fmtBRL(mt.despesas)}</td>
                     <td className={`px-4 py-3.5 text-right font-mono tabular-nums font-semibold ${liquido >= 0 ? "text-emerald-600" : "text-destructive"}`}>{fmtBRL(liquido)}</td>
-                    <td className="px-4 py-3.5 text-right font-mono tabular-nums text-foreground/80">{m.valorFipe ? fmtBRL(m.valorFipe) : "—"}</td>
                     <td className="px-4 py-3.5">
                       <div className="flex justify-end gap-0.5">
                         {m.crlvStoragePath ? (

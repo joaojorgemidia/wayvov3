@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, type ChangeEvent, type DragEvent } from "react";
+import { localToday } from "@/lib/utils";
 import { Rental, Client, Motorcycle, CaucaoParcela } from "@/lib/types";
 import { loadClients, saveClients, loadMotos, loadRentals } from "@/lib/store";
 import { useDataCacheSnapshot } from "@/lib/data-cache";
@@ -39,7 +40,7 @@ const emptyClient = (): Client => ({
   cep: "", rua: "", numero: "", complemento: "", bairro: "", cidade: "", estado: "",
   comprovanteEnderecoName: null, comprovanteEnderecoData: null,
   emergenciaNome1: "", emergenciaTel1: "", emergenciaNome2: "", emergenciaTel2: "",
-  observacoes: "", createdAt: new Date().toISOString().split("T")[0],
+  observacoes: "", createdAt: localToday(),
 });
 
 const STEPS = [
@@ -133,7 +134,7 @@ export default function RentalWizard({ rental, onSave, onCancel, motos, activeRe
     const remaining = Math.max(0, form.valorCaucao - totalParcelas);
     setForm(prev => ({
       ...prev,
-      parcelasCaucao: [...prev.parcelasCaucao, { id: crypto.randomUUID(), valor: remaining, data: new Date().toISOString().split("T")[0], status: "pendente" }],
+      parcelasCaucao: [...prev.parcelasCaucao, { id: crypto.randomUUID(), valor: remaining, data: localToday(), status: "pendente" }],
     }));
   };
   const updateParcela = (idx: number, patch: Partial<CaucaoParcela>) => {
@@ -401,26 +402,12 @@ export default function RentalWizard({ rental, onSave, onCancel, motos, activeRe
             </div>
           </div>
 
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 gap-3">
             <div className="grid gap-2">
               <Label>Valor Aluguel *</Label>
               <div className="relative">
                 <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">R$</span>
                 <Input className="pl-9" value={form.valorDiario ? formatBRL(form.valorDiario) : ""} onChange={e => { const masked = maskCurrency(e.target.value); e.target.value = masked; setRentalField("valorDiario", parseBRL(masked)); }} placeholder="0,00" />
-              </div>
-            </div>
-            <div className="grid gap-2">
-              <Label>Multa de Atraso</Label>
-              <div className="relative">
-                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">R$</span>
-                <Input className="pl-9" value={form.multaAtraso ? formatBRL(form.multaAtraso) : ""} onChange={e => { const masked = maskCurrency(e.target.value); e.target.value = masked; setRentalField("multaAtraso", parseBRL(masked)); }} placeholder="0,00" />
-              </div>
-            </div>
-            <div className="grid gap-2">
-              <Label className="flex items-center gap-1">Juros Atraso <InfoTooltip text="Juros cobrado sobre atraso, ao mês" /></Label>
-              <div className="relative">
-                <Input className="pr-14" value={form.jurosAtrasoMes ? formatBRL(form.jurosAtrasoMes) : ""} onChange={e => { const masked = maskPercent(e.target.value); e.target.value = masked; setRentalField("jurosAtrasoMes", parseBRL(masked)); }} placeholder="0,00" />
-                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">%/mês</span>
               </div>
             </div>
           </div>

@@ -174,7 +174,8 @@ export interface Maintenance {
   conta: string; // conta bancária de débito da despesa
   dataPagamentoPrevisto?: string | null; // ISO date — previsão de pagamento à oficina
   pagamentoRealizado?: boolean; // se o pagamento à oficina já foi efetuado
-  quemPaga: "locadora" | "locatario";
+  quemPaga: "locadora" | "locatario" | "locatario_direto";
+  vincularLocatario: boolean; // false = OS não vinculada a nenhum locatário
   valorLocatario?: number | null;
   cobrarParcelado?: boolean;
   entradaLocatario?: number | null;
@@ -192,6 +193,7 @@ export interface FinancialEntry {
   valor: number;
   data: string; // ISO date — data do pagamento
   dataPrevista?: string; // ISO date — data prevista / vencimento
+  dataOriginal?: string; // ISO date — data original do vencimento (preservada em reagendamentos)
   motoId: string | null;
   rentalId: string | null;
   clienteId: string | null;

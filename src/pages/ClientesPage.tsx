@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type DragEvent } from "react";
+import { localToday } from "@/lib/utils";
 import { Client } from "@/lib/types";
 import { saveClients } from "@/lib/store";
 import { useDataCacheSnapshot } from "@/lib/data-cache";
@@ -27,7 +28,7 @@ const emptyClient = (): Client => ({
   cep: "", rua: "", numero: "", complemento: "", bairro: "", cidade: "", estado: "",
   comprovanteEnderecoName: null, comprovanteEnderecoData: null, comprovanteEnderecoStoragePath: null,
   emergenciaNome1: "", emergenciaTel1: "", emergenciaNome2: "", emergenciaTel2: "",
-  observacoes: "", createdAt: new Date().toISOString().split("T")[0],
+  observacoes: "", createdAt: localToday(),
 });
 
 const STEPS = [

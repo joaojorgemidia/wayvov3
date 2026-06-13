@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect, useCallback } from "react";
+import { localToday } from "@/lib/utils";
 import { Fine, Motorcycle, Client, Rental } from "@/lib/types";
 import { saveFines } from "@/lib/store";
 import { useDataCacheSnapshot } from "@/lib/data-cache";
@@ -24,7 +25,7 @@ const statusColor: Record<string, string> = { pendente: "bg-warning/10 text-warn
 
 const emptyFine = (): Fine => ({
   id: crypto.randomUUID(), motoId: "", clienteId: null, rentalId: null,
-  dataMulta: new Date().toISOString().split("T")[0], dataNotificacao: null,
+  dataMulta: localToday(), dataNotificacao: null,
   valor: 0, descricao: "", status: "pendente", responsavel: "cliente",
   origem: "manual", autoInfracao: null, codigoInfracao: null,
 });
@@ -260,7 +261,7 @@ export default function MultasPage() {
 
     setImporting(true);
     try {
-      const today = new Date().toISOString().split("T")[0];
+      const today = localToday();
     const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
     const newFines: Fine[] = toImport

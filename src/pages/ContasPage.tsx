@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { localToday } from "@/lib/utils";
 import { FinancialEntry } from "@/lib/types";
 import { maskCurrency, parseBRL, formatBRL } from "@/lib/masks";
 import { Card, CardContent } from "@/components/ui/card";
@@ -53,7 +54,7 @@ export default function ContasPage() {
   const [cardDetailYm, setCardDetailYm] = useState("");
 
   // New expense from card detail
-  const today = new Date().toISOString().split("T")[0];
+  const today = localToday();
   const [newExpenseOpen, setNewExpenseOpen] = useState(false);
   const [newExpenseForm, setNewExpenseForm] = useState({ descricao: "", valor: "", faturaYm: "", categoria: "outro_despesa", parcelas: 1, observacao: "" });
   const [savingExpense, setSavingExpense] = useState(false);
@@ -218,7 +219,7 @@ export default function ContasPage() {
       tipo: account.tipo || "banco",
       diaFechamento: account.diaFechamento ? String(account.diaFechamento) : "",
       diaVencimento: account.diaVencimento ? String(account.diaVencimento) : "",
-      limite: account.limite ? String(account.limite) : "",
+      limite: account.limite ? formatBRL(account.limite) : "",
       contaPagamento: account.contaPagamento || "",
       bandeira: account.bandeira || "",
       descricao: account.descricao || "",
@@ -267,9 +268,8 @@ export default function ContasPage() {
         return;
       }
     }
-    const saldoInicial =
-      parseFloat(form.saldoInicial.replace(/[^\d.,-]/g, "").replace(",", ".")) || 0;
-    const limite = parseFloat((form.limite || "").replace(/[^\d.,-]/g, "").replace(",", ".")) || 0;
+    const saldoInicial = parseBRL(form.saldoInicial);
+    const limite = parseBRL(form.limite || "");
     const extra = {
       tipo: form.tipo,
       diaFechamento: form.tipo === "cartao" ? parseInt(form.diaFechamento, 10) : null,
@@ -332,8 +332,8 @@ export default function ContasPage() {
         tipo: diff > 0 ? "receita" : "despesa",
         valor: Math.abs(diff),
         descricao: "Ajuste de saldo",
-        data: new Date().toISOString().split("T")[0],
-        dataPrevista: new Date().toISOString().split("T")[0],
+        data: localToday(),
+        dataPrevista: localToday(),
         categoria: "ajuste_saldo",
         subcategoria: null,
         tags: [],
@@ -630,26 +630,32 @@ export default function ContasPage() {
 
       {/* Dialog Nova/Editar conta */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>{editAccount ? "Editar conta" : "Nova conta"}</DialogTitle>
+        <DialogContent className="sm:max-w-md flex flex-col max-h-[90vh]">
+          <DialogHeader className="shrink-0">
+            <DialogTitle>
+              {editAccount
+                ? (form.tipo === "cartao" ? "Editar cartão" : "Editar conta")
+                : (form.tipo === "cartao" ? "Novo cartão de crédito" : "Nova conta")}
+            </DialogTitle>
           </DialogHeader>
-          <div className="space-y-4">
-            <div>
-              <Label>Tipo</Label>
-              <div className="mt-1.5 grid grid-cols-2 gap-2">
-                <button type="button"
-                  onClick={() => setForm((c) => ({ ...c, tipo: "banco" }))}
-                  className={`rounded-lg border-2 p-3 text-left text-sm transition-colors ${form.tipo === "banco" ? "border-primary bg-primary/5 font-medium" : "border-border hover:border-muted-foreground/30"}`}>
-                  Conta bancária
-                </button>
-                <button type="button"
-                  onClick={() => setForm((c) => ({ ...c, tipo: "cartao" }))}
-                  className={`rounded-lg border-2 p-3 text-left text-sm transition-colors ${form.tipo === "cartao" ? "border-primary bg-primary/5 font-medium" : "border-border hover:border-muted-foreground/30"}`}>
-                  Cartão de crédito
-                </button>
+          <div className="space-y-4 overflow-y-auto flex-1 pr-1">
+            {form.tipo === "banco" && (
+              <div>
+                <Label>Tipo</Label>
+                <div className="mt-1.5 grid grid-cols-2 gap-2">
+                  <button type="button"
+                    onClick={() => setForm((c) => ({ ...c, tipo: "banco" }))}
+                    className={`rounded-lg border-2 p-3 text-left text-sm transition-colors ${form.tipo === "banco" ? "border-primary bg-primary/5 font-medium" : "border-border hover:border-muted-foreground/30"}`}>
+                    Conta bancária
+                  </button>
+                  <button type="button"
+                    onClick={() => setForm((c) => ({ ...c, tipo: "cartao" }))}
+                    className={`rounded-lg border-2 p-3 text-left text-sm transition-colors ${form.tipo === "cartao" ? "border-primary bg-primary/5 font-medium" : "border-border hover:border-muted-foreground/30"}`}>
+                    Cartão de crédito
+                  </button>
+                </div>
               </div>
-            </div>
+            )}
             <div>
               <Label>Nome {form.tipo === "cartao" ? "do cartão" : "da conta"}</Label>
               <Input
@@ -717,59 +723,53 @@ export default function ContasPage() {
                   <Label>Descrição <span className="text-muted-foreground font-normal text-xs">(opcional)</span></Label>
                   <Input value={form.descricao} onChange={(e) => setForm((c) => ({ ...c, descricao: e.target.value }))} placeholder="Ex: cartão pessoal" />
                 </div>
-                {/* Bloco 1 — Ciclo da fatura */}
-                <div className="rounded-lg border bg-muted/30 p-3 space-y-3">
-                  <div className="flex items-center gap-2">
-                    <span className="flex h-5 w-5 items-center justify-center rounded-full bg-primary/10 text-[11px] font-bold text-primary">1</span>
-                    <p className="text-sm font-semibold">Ciclo da fatura</p>
+                {/* Ciclo da fatura */}
+                <div className="flex gap-6">
+                  <div className="flex flex-col gap-1">
+                    <Label className="text-xs">Fechamento (dia) <span className="text-destructive">*</span></Label>
+                    <Input type="number" min={1} max={31} value={form.diaFechamento}
+                      onChange={(e) => setForm((c) => ({ ...c, diaFechamento: e.target.value }))}
+                      placeholder="26" className="w-24 font-mono text-center" />
+                    <p className="text-[11px] text-muted-foreground">Fatura fecha.</p>
                   </div>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <Label className="text-xs">Fechamento (dia)</Label>
-                      <Input type="number" min={1} max={31} value={form.diaFechamento}
-                        onChange={(e) => setForm((c) => ({ ...c, diaFechamento: e.target.value }))} placeholder="25" />
-                      <p className="mt-1 text-[11px] text-muted-foreground">Dia em que a fatura fecha.</p>
-                    </div>
-                    <div>
-                      <Label className="text-xs">Vencimento (dia)</Label>
-                      <Input type="number" min={1} max={31} value={form.diaVencimento}
-                        onChange={(e) => setForm((c) => ({ ...c, diaVencimento: e.target.value }))} placeholder="5" />
-                      <p className="mt-1 text-[11px] text-muted-foreground">Dia em que você paga.</p>
-                    </div>
+                  <div className="flex flex-col gap-1">
+                    <Label className="text-xs">Vencimento (dia) <span className="text-destructive">*</span></Label>
+                    <Input type="number" min={1} max={31} value={form.diaVencimento}
+                      onChange={(e) => setForm((c) => ({ ...c, diaVencimento: e.target.value }))}
+                      placeholder="5" className="w-24 font-mono text-center" />
+                    <p className="text-[11px] text-muted-foreground">Você paga.</p>
                   </div>
-                  <p className="rounded-md bg-background/60 px-2 py-1.5 text-[11px] text-muted-foreground">
-                    💡 Compras <strong>antes</strong> do fechamento entram na fatura deste mês. <strong>Depois</strong> do fechamento, vão para a próxima.
-                  </p>
                 </div>
 
-                {/* Bloco 2 — Limite */}
+                {/* Limite */}
                 <div>
                   <Label>Limite do cartão <span className="text-muted-foreground font-normal text-xs">(opcional)</span></Label>
                   <div className="relative">
                     <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">R$</span>
-                    <Input value={form.limite} onChange={(e) => setForm((c) => ({ ...c, limite: e.target.value }))} placeholder="0,00" className="pl-10" />
+                    <Input
+                      value={form.limite}
+                      onChange={(e) => setForm((c) => ({ ...c, limite: maskCurrency(e.target.value) }))}
+                      placeholder="0,00"
+                      className="pl-10 font-mono"
+                    />
                   </div>
                 </div>
 
-                {/* Bloco 3 — Pagamento */}
-                <div className="rounded-lg border bg-muted/30 p-3 space-y-2">
-                  <div className="flex items-center gap-2">
-                    <span className="flex h-5 w-5 items-center justify-center rounded-full bg-primary/10 text-[11px] font-bold text-primary">2</span>
-                    <p className="text-sm font-semibold">Pagamento da fatura</p>
-                  </div>
-                  <Label className="text-xs">Debitar de qual conta?</Label>
+                {/* Conta de pagamento */}
+                <div>
+                  <Label>Debitar fatura de qual conta? <span className="text-muted-foreground font-normal text-xs">(opcional)</span></Label>
                   <select
                     value={form.contaPagamento}
                     onChange={(e) => setForm((c) => ({ ...c, contaPagamento: e.target.value }))}
-                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                    className="mt-1.5 flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
                   >
                     <option value="">Selecione a conta...</option>
                     {accounts.filter(a => a.tipo !== "cartao").map(a => (
                       <option key={a.id} value={a.nome}>{a.nome}</option>
                     ))}
                   </select>
-                  <p className="text-[11px] text-muted-foreground">
-                    Todo mês o sistema cria automaticamente uma despesa <strong>pendente</strong> no vencimento, debitando dessa conta. Você só precisa marcar como paga quando quitar.
+                  <p className="mt-1 text-[11px] text-muted-foreground">
+                    Quando configurada, o sistema cria uma despesa pendente automaticamente no vencimento para você marcar como paga.
                   </p>
                 </div>
               </>
@@ -781,7 +781,7 @@ export default function ContasPage() {
               </div>
             )}
           </div>
-          <DialogFooter>
+          <DialogFooter className="shrink-0">
             <Button variant="ghost" onClick={() => setDialogOpen(false)}>Cancelar</Button>
             <Button onClick={handleSave} disabled={!form.nome.trim() || !form.banco}>Salvar</Button>
           </DialogFooter>

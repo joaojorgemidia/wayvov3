@@ -1,4 +1,17 @@
 {
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "git fetch origin main --quiet 2>$null; $behind = try { [int]((git rev-list HEAD..origin/main --count 2>$null).Trim()) } catch { 0 }; if ($behind -gt 0) { Write-Output ('{\"systemMessage\":\"[AVISO] Ha ' + $behind + ' commit(s) novo(s) no GitHub que voce nao baixou ainda. Execute: git pull origin main\"}') }",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  },
   "permissions": {
     "allow": [
       "Bash(git add:*)",
@@ -24,7 +37,36 @@
       "mcp__plugin_supabase_supabase__deploy_edge_function",
       "Bash(npx netlify *)",
       "Bash(npx netlify-cli *)",
-      "Bash(git rebase *)"
+      "Bash(git rebase *)",
+      "Bash(git checkout *)",
+      "Bash(GIT_EDITOR=true git rebase --continue)",
+      "Bash(git stash *)",
+      "Bash(git fetch *)",
+      "Bash(git merge *)",
+      "PowerShell(gh run *)",
+      "Bash(curl -s \"https://api.github.com/repos/joaojorgemidia/whayvo-lovable/actions/runs?per_page=3\")",
+      "Bash(python -c \"import sys,json; runs=json.load\\(sys.stdin\\)['workflow_runs']; [print\\(r['status'], r['conclusion'], r['head_commit']['message'][:60]\\) for r in runs]\")",
+      "Bash(git -C \"C:\\\\Projetos\\\\wayvo-pro\" status)",
+      "Bash(git -C \"C:\\\\Projetos\\\\wayvo-pro\" diff src/pages/LocacoesPage.tsx)",
+      "Bash(git -C \"C:\\\\Projetos\\\\wayvo-pro\" add src/pages/LocacoesPage.tsx)",
+      "Bash(git -C 'C:\\\\Projetos\\\\wayvo-pro' commit -m ' *)",
+      "Bash(git *)",
+      "mcp__ide__getDiagnostics",
+      "Bash(bun run *)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:5173/)",
+      "Bash(Start-Process powershell *)",
+      "PowerShell(Start-Process powershell -ArgumentList '-NoExit','-Command','cd C:\\\\Projetos\\\\wayvo-pro; bun run dev')",
+      "PowerShell(Start-Process powershell -ArgumentList '-NoExit', '-Command', 'cd C:\\\\Projetos\\\\wayvo-pro; bun run dev')",
+      "PowerShell(Get-Command *)",
+      "PowerShell(Start-Process cmd -ArgumentList '/k', 'cd /d C:\\\\Projetos\\\\wayvo-pro && npm run dev')",
+      "Bash(New-Item -ItemType Directory -Path \"C:\\\\Projetos\\\\wayvo-pro\\\\supabase\\\\functions\\\\asaas-update-payment\" -Force)",
+      "Bash(Out-Null)",
+      "Bash(Write-Output \"ok\")",
+      "Bash(python -c \"import pdfplumber; pdf = pdfplumber.open\\(r'c:\\\\Users\\\\joaoh\\\\Downloads\\\\wayvo_brandbook_2025 \\(3\\).pdf'\\); [print\\(p.extract_text\\(\\)\\) for p in pdf.pages]\")",
+      "Bash(python -c \"import PyPDF2; r=PyPDF2.PdfReader\\(r'c:\\\\Users\\\\joaoh\\\\Downloads\\\\wayvo_brandbook_2025 \\(3\\).pdf'\\); [print\\(r.pages[i].extract_text\\(\\)\\) for i in range\\(len\\(r.pages\\)\\)]\")",
+      "Bash(pip install *)",
+      "Bash(python -c ' *)",
+      "PowerShell(& python -m pip install pdfplumber --quiet 2>&1)"
     ]
   }
 }

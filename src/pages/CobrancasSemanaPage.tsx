@@ -783,6 +783,7 @@ export default function CobrancasSemanaPage() {
     toast.success(`${adiarAtrasadas.length} cobrança${adiarAtrasadas.length !== 1 ? "s" : ""} adiada${adiarAtrasadas.length !== 1 ? "s" : ""} para ${d}`);
     setAdiarEntry(null);
     setAdiarAtrasadas([]);
+    setDebtDetailClientId(null);
   };
 
   const applyRescheduleClient = async () => {

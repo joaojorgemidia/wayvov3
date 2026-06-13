@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect } from "react";
+import { localToday } from "@/lib/utils";
 import { supabase } from "@/integrations/supabase/client";
 import { Rental, Motorcycle, Client, FinancialEntry, OilChangeRecord } from "@/lib/types";
 import { saveRentals, saveMotos, loadFinancial, saveFinancial, loadMotos, loadClients, loadRentals, saveClients } from "@/lib/store";
@@ -88,7 +89,7 @@ const MOTIVOS_ENCERRAMENTO = [
 function makeEmptyRental(defaults?: { multaAtraso?: number; jurosAtrasoMes?: number }): Rental {
   return {
     id: crypto.randomUUID(), motoId: "", clienteId: "", vendedor: "",
-    dataInicio: new Date().toISOString().split("T")[0], horaInicio: "08:00",
+    dataInicio: localToday(), horaInicio: "08:00",
     dataFim: null, dataFimContrato: null, proximoPagamento: null,
     tempoMinimoContrato: null, frequenciaPagamento: "", cobrancaPrePaga: false,
     valorDiario: 0, valorCaucao: 0, caucaoPendente: false, caucaoParcelado: false, parcelasCaucao: [],
@@ -99,7 +100,7 @@ function makeEmptyRental(defaults?: { multaAtraso?: number; jurosAtrasoMes?: num
     raioCirculacao: "", seguroTerceiros: false,
     gerarCobrancaCaucao: true, gerarCobrancaPagamento: true,
     status: "ativa", checklistRetirada: [], checklistDevolucao: [],
-    observacoes: "", createdAt: new Date().toISOString().split("T")[0],
+    observacoes: "", createdAt: localToday(),
   };
 }
 
@@ -124,7 +125,7 @@ export default function LocacoesPage() {
 
   // Encerramento form
   const [encerrarMotivo, setEncerrarMotivo] = useState("");
-  const [encerrarData, setEncerrarData] = useState(new Date().toISOString().split("T")[0]);
+  const [encerrarData, setEncerrarData] = useState(localToday());
   const [encerrarKmFim, setEncerrarKmFim] = useState("");
   const [encerrarObs, setEncerrarObs] = useState("");
   const [encerrarPendencias, setEncerrarPendencias] = useState<FinancialEntry[]>([]);
@@ -147,7 +148,7 @@ export default function LocacoesPage() {
 
   // Ações em massa
   const [bulkFinalizarOpen, setBulkFinalizarOpen] = useState(false);
-  const [bulkFinalizarData, setBulkFinalizarData] = useState(new Date().toISOString().split("T")[0]);
+  const [bulkFinalizarData, setBulkFinalizarData] = useState(localToday());
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
 
   const getMotoPlaca = (id: string) => motos.find(m => m.id === id)?.placa || "—";
@@ -199,7 +200,7 @@ export default function LocacoesPage() {
     // are removed and regenerated so gaps are filled without touching history.
     // Future pending entries are merged by date so their IDs are preserved
     // (no duplicate or broken series when re-saving with updated values).
-    const today = new Date().toISOString().split("T")[0];
+    const today = localToday();
 
     // Dates the user explicitly deleted (soft-deleted in DB) — reconciler must not regenerate them.
     const deletedAluguelDates = new Set<string>();
@@ -254,7 +255,9 @@ export default function LocacoesPage() {
     const numContrato = !rental.numero ? `#${rental.id.slice(0, 6).toUpperCase()}` : rental.createdAt >= "2026-06-01" ? `L${String(rental.numero).padStart(5, "0")}MV` : `#${String(rental.numero).padStart(5, "0")}`;
     const obsExtra = rental.observacoes ? ` - ${rental.observacoes}` : "";
 
-    if (rental.gerarCobrancaCaucao && rental.valorCaucao > 0 && !rental.caucaoParcelado) {
+    const caucaoJaExiste = isEditing && baseEntries.some(e => e.rentalId === rental.id && e.categoria === "caucao");
+
+    if (!caucaoJaExiste && rental.gerarCobrancaCaucao && rental.valorCaucao > 0 && !rental.caucaoParcelado) {
       newFinancialEntries.push(resolveAssociations({
         id: crypto.randomUUID(), tipo: "receita", categoria: "caucao",
         descricao: `Caução - ${numContrato} - ${motoPlaca}${obsExtra}`,
@@ -264,7 +267,7 @@ export default function LocacoesPage() {
       }, ctx));
     }
 
-    if (rental.gerarCobrancaCaucao && rental.caucaoParcelado) {
+    if (!caucaoJaExiste && rental.gerarCobrancaCaucao && rental.caucaoParcelado) {
       const caucaoSerieId = `caucao-${rental.id}`;
       const totalParcelas = rental.parcelasCaucao.length;
       rental.parcelasCaucao.forEach((p, pIdx) => {
@@ -420,7 +423,7 @@ export default function LocacoesPage() {
   const openEncerrar = (r: Rental) => {
     setEncerrarRental(r);
     setEncerrarMotivo("");
-    setEncerrarData(new Date().toISOString().split("T")[0]);
+    setEncerrarData(localToday());
     setEncerrarKmFim(r.kmFim ? String(r.kmFim) : "");
     setEncerrarObs("");
     const pendentes = loadFinancial().filter(e => e.rentalId === r.id && !e.pago);
@@ -784,7 +787,7 @@ export default function LocacoesPage() {
                 <DropdownMenuSeparator />
                 <DropdownMenuLabel>Status</DropdownMenuLabel>
                 <DropdownMenuItem
-                  onClick={() => { setBulkFinalizarData(new Date().toISOString().split("T")[0]); setBulkFinalizarOpen(true); }}
+                  onClick={() => { setBulkFinalizarData(localToday()); setBulkFinalizarOpen(true); }}
                   className="gap-2"
                 >
                   <CheckCircle2 className="h-4 w-4" /> Finalizar selecionadas
@@ -1188,7 +1191,7 @@ export default function LocacoesPage() {
         const DIAS_FULL  = ["Domingo", "Segunda-feira", "Terça-feira", "Quarta-feira", "Quinta-feira", "Sexta-feira", "Sábado"];
 
         const r = trocaVencimentoRental;
-        const todayIso = new Date().toISOString().split("T")[0];
+        const todayIso = localToday();
         const today = new Date(); today.setHours(0, 0, 0, 0);
 
         // Usa o primeiro pagamento pendente ou em atraso como referência
@@ -1241,7 +1244,7 @@ export default function LocacoesPage() {
           if (!r || !calc || novoDiaVencimento === null) return;
 
           const allFinancial = loadFinancial();
-          const todayStr = new Date().toISOString().split("T")[0];
+          const todayStr = localToday();
 
           const pendingEntries = allFinancial
             .filter(e => e.rentalId === r.id && !e.pago && e.categoria === "aluguel")
