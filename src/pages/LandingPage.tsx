@@ -203,7 +203,7 @@ export default function LandingPage() {
                 style={{ ...fontBody, color: COLORS.muted, fontSize: "clamp(1.05rem, 1.6vw, 1.2rem)" }}
                 className="max-w-xl leading-relaxed mb-8"
               >
-                A WAYVO transforma sua operação de locação de motos em informação estruturada — para você decidir
+                A WAYVO transforma sua operação de locação de motos em informação estruturada, para você decidir
                 com dado, no momento certo, e chegar onde grandes frotas chegam.
               </p>
               <div className="flex flex-col sm:flex-row gap-3">
@@ -331,23 +331,50 @@ export default function LandingPage() {
           <div className="max-w-2xl mb-14">
             <p style={{ ...fontMono, color: COLORS.primary, fontSize: 13 }} className="mb-3">// FUNCIONALIDADES</p>
             <h2 style={{ ...fontHead, color: COLORS.ink, fontSize: "clamp(2rem, 3.5vw, 2.8rem)", lineHeight: 1.05 }}>
-              Dado, decisão, destino — em um só lugar.
+              Tudo que sua locadora precisa. Zero planilha.
             </h2>
+            <p style={{ ...fontBody, color: COLORS.muted, fontSize: 16 }} className="mt-4 leading-relaxed">
+              Módulos completos, integrados e prontos para usar. Do primeiro cadastro ao relatório mensal.
+            </p>
           </div>
 
           <div className="grid md:grid-cols-3 gap-px" style={{ backgroundColor: COLORS.border }}>
             {[
-              [Wallet, "Régua de cobrança automática", "Avisos de atraso e segunda via via WhatsApp sem você levantar o dedo."],
-              [Activity, "Rastreamento GPS", "Localização em tempo real, cerca virtual e histórico de rotas por veículo."],
-              [Wrench, "Manutenção preventiva", "Alertas de troca de óleo 10w30, pneus 90/90-18, pastilhas e correntes."],
-              [FileSignature, "Contratos digitais", "Geração automática com assinatura eletrônica e validade jurídica."],
-              [TrendingUp, "Unit economics", "Receita por ativo, margem líquida por veículo e ponto de equilíbrio."],
-              [Bell, "Multas e antecedentes", "Consulta automática, notificação ao locatário e indicação de condutor."],
+              [Wallet, "Financeiro completo", "Receitas, despesas, categorias, conciliação e DRE mensal da locadora. Tudo em um painel."],
+              [BarChart3, "Visão geral (Dashboard)", "KPIs em tempo real: faturamento, inadimplência, margem por moto e ocupação da frota."],
+              [TrendingUp, "Pagamentos integrados", "Geração de boleto e PIX via Asaas. Baixa automática e notificação por WhatsApp."],
+              [FileSignature, "Locações e contratos", "Contratos digitais com assinatura eletrônica, vencimento automático e renovação em 1 clique."],
+              [Users, "Cadastro de clientes", "OCR da CNH com preenchimento automático, histórico de locações e score de inadimplência."],
+              [Activity, "Gestão de motos", "Frota completa com patrimônio, status, margem por veículo e controle de veículos vendidos."],
+              [Wrench, "Manutenções", "Ordens de serviço abertas, histórico de revisões e alertas de vencimento por km ou data."],
+              [MapPin, "Rastreamento GPS", "Localização em tempo real, cerca virtual e histórico de rotas de toda a frota."],
+              [Bell, "Multas e DETRAN", "Consulta automática de infrações, importação direta para o sistema e indicação de condutor."],
             ].map(([Ico, title, desc]: any) => (
               <div key={title} className="p-8" style={{ backgroundColor: COLORS.surface }}>
                 <Ico size={22} style={{ color: COLORS.primary }} className="mb-4" />
                 <h3 style={{ ...fontHead, color: COLORS.ink, fontSize: 17 }} className="mb-2">{title}</h3>
                 <p style={{ ...fontBody, color: COLORS.muted, fontSize: 14 }} className="leading-relaxed">{desc}</p>
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-5 grid sm:grid-cols-2 md:grid-cols-4 gap-4">
+            {[
+              ["Troca de óleo", "Alertas de 10w30 por km e por data. Nunca perca uma revisão."],
+              ["Vistorias", "Checklist fotográfico de entrada e saída com registro em nuvem."],
+              ["Cobranças automáticas", "Régua D-1, D+0, D+3 e D+7 via WhatsApp sem intervenção manual."],
+              ["Relatórios", "Relatórios consolidados de frota, financeiro e inadimplência exportáveis."],
+            ].map(([title, desc]) => (
+              <div
+                key={title}
+                className="p-5 rounded-lg"
+                style={{ backgroundColor: "rgba(0,200,106,0.04)", border: `1px solid rgba(0,200,106,0.15)` }}
+              >
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: COLORS.primary }} />
+                  <h4 style={{ ...fontHead, color: COLORS.ink, fontSize: 14 }}>{title}</h4>
+                </div>
+                <p style={{ ...fontBody, color: COLORS.muted, fontSize: 13 }} className="leading-relaxed">{desc}</p>
               </div>
             ))}
           </div>
@@ -360,47 +387,154 @@ export default function LandingPage() {
           <div className="text-center max-w-2xl mx-auto mb-14">
             <p style={{ ...fontMono, color: COLORS.primary, fontSize: 13 }} className="mb-3">// PLANOS</p>
             <h2 style={{ ...fontHead, color: COLORS.ink, fontSize: "clamp(2rem, 3.5vw, 2.8rem)", lineHeight: 1.05 }} className="mb-4">
-              Preço por unidade ativa. Você cresce, a gente acompanha.
+              Escolha o plano certo para a sua frota.
             </h2>
             <p style={{ ...fontBody, color: COLORS.muted, fontSize: 16 }}>
-              Sem fidelidade. Sem setup fee. Sem surpresa na fatura.
+              Sem fidelidade. Sem taxa de setup. Sem surpresa na fatura.
             </p>
           </div>
 
-          <div
-            className="max-w-xl mx-auto rounded-xl p-10 text-center space-y-6"
-            style={{ backgroundColor: COLORS.surface, border: `1px solid ${COLORS.border}` }}
-          >
+          <div className="grid lg:grid-cols-3 gap-6 items-stretch">
+
+            {/* Plano Starter */}
             <div
-              className="w-14 h-14 rounded-full flex items-center justify-center mx-auto"
-              style={{ backgroundColor: "rgba(0,200,106,0.1)" }}
+              className="rounded-xl p-8 flex flex-col"
+              style={{ backgroundColor: COLORS.surface, border: `1px solid ${COLORS.border}` }}
             >
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke={COLORS.primary} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>
-              </svg>
+              <div className="mb-6">
+                <p style={{ ...fontMono, color: COLORS.muted, fontSize: 12 }} className="mb-2 uppercase tracking-widest">Starter</p>
+                <div className="flex items-end gap-1 mb-1">
+                  <span style={{ ...fontHead, color: COLORS.ink, fontSize: 40, lineHeight: 1 }}>R$ 197</span>
+                  <span style={{ ...fontBody, color: COLORS.muted, fontSize: 14 }} className="mb-1">/mês</span>
+                </div>
+                <p style={{ ...fontBody, color: COLORS.muted, fontSize: 13.5 }}>Para frotas de até 20 motos</p>
+              </div>
+              <ul className="space-y-3 flex-1 mb-8">
+                {[
+                  "Gestão de frota (até 20 motos)",
+                  "Locações e contratos digitais",
+                  "Cadastro de clientes com OCR",
+                  "Financeiro completo",
+                  "Dashboard e visão geral",
+                  "Suporte via e-mail",
+                ].map((item) => (
+                  <li key={item} className="flex items-start gap-2.5">
+                    <span style={{ color: COLORS.primary, marginTop: 2 }}>
+                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+                    </span>
+                    <span style={{ ...fontBody, color: COLORS.muted, fontSize: 14 }}>{item}</span>
+                  </li>
+                ))}
+              </ul>
+              <a
+                href={INSTAGRAM_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="block text-center px-5 py-3 rounded-md font-semibold text-sm transition hover:opacity-80"
+                style={{ border: `1px solid ${COLORS.borderStrong}`, color: COLORS.ink, ...fontBody }}
+              >
+                Começar agora
+              </a>
             </div>
-            <div>
-              <p style={{ ...fontHead, color: COLORS.ink, fontSize: 22 }}>Acesso somente por convite</p>
-              <p style={{ ...fontBody, color: COLORS.muted, fontSize: 15 }} className="mt-2 leading-relaxed">
-                Os planos e preços são definidos individualmente. Entre em contato pelo Instagram para saber mais e solicitar acesso.
-              </p>
-            </div>
-            <a
-              href={INSTAGRAM_URL}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center justify-center gap-2 px-6 py-3.5 rounded-md font-semibold transition hover:opacity-90"
-              style={{ ...fontBody, backgroundColor: COLORS.ink, color: "#fff", fontSize: 15 }}
+
+            {/* Plano Profissional — DESTAQUE */}
+            <div
+              className="rounded-xl p-8 flex flex-col relative"
+              style={{ backgroundColor: COLORS.ink, border: `2px solid ${COLORS.primary}` }}
             >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <rect x="2" y="2" width="20" height="20" rx="5" ry="5"/><path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"/><line x1="17.5" y1="6.5" x2="17.51" y2="6.5"/>
-              </svg>
-              @joaojorge.midia
-            </a>
-            <p style={{ ...fontBody, color: COLORS.muted, fontSize: 12.5 }}>
-              Preços sob consulta · Acesso mediante aprovação
-            </p>
+              <div
+                className="absolute -top-3.5 left-1/2 -translate-x-1/2 px-4 py-1 rounded-full text-xs font-semibold"
+                style={{ backgroundColor: COLORS.primary, color: "#04200F", ...fontBody }}
+              >
+                Mais popular
+              </div>
+              <div className="mb-6">
+                <p style={{ ...fontMono, color: COLORS.primary, fontSize: 12 }} className="mb-2 uppercase tracking-widest">Profissional</p>
+                <div className="flex items-end gap-1 mb-1">
+                  <span style={{ ...fontHead, color: "#fff", fontSize: 40, lineHeight: 1 }}>R$ 397</span>
+                  <span style={{ ...fontBody, color: "rgba(255,255,255,0.6)", fontSize: 14 }} className="mb-1">/mês</span>
+                </div>
+                <p style={{ ...fontBody, color: "rgba(255,255,255,0.55)", fontSize: 13.5 }}>Para frotas de até 60 motos</p>
+              </div>
+              <ul className="space-y-3 flex-1 mb-8">
+                {[
+                  "Tudo do plano Starter",
+                  "Motos ilimitadas (até 60)",
+                  "Cobranças automáticas via WhatsApp",
+                  "Manutenções e troca de óleo",
+                  "Rastreamento GPS em tempo real",
+                  "Relatórios avançados exportáveis",
+                  "Multas e consulta DETRAN",
+                  "Vistorias fotográficas",
+                  "Suporte via WhatsApp",
+                ].map((item) => (
+                  <li key={item} className="flex items-start gap-2.5">
+                    <span style={{ color: COLORS.primary, marginTop: 2 }}>
+                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+                    </span>
+                    <span style={{ ...fontBody, color: "rgba(255,255,255,0.8)", fontSize: 14 }}>{item}</span>
+                  </li>
+                ))}
+              </ul>
+              <a
+                href={INSTAGRAM_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="block text-center px-5 py-3 rounded-md font-semibold text-sm transition hover:opacity-90"
+                style={{ backgroundColor: COLORS.primary, color: "#04200F", ...fontBody }}
+              >
+                Solicitar acesso
+              </a>
+            </div>
+
+            {/* Plano Enterprise */}
+            <div
+              className="rounded-xl p-8 flex flex-col"
+              style={{ backgroundColor: COLORS.surface, border: `1px solid ${COLORS.border}` }}
+            >
+              <div className="mb-6">
+                <p style={{ ...fontMono, color: COLORS.muted, fontSize: 12 }} className="mb-2 uppercase tracking-widest">Enterprise</p>
+                <div className="flex items-end gap-1 mb-1">
+                  <span style={{ ...fontHead, color: COLORS.ink, fontSize: 40, lineHeight: 1 }}>R$ 797</span>
+                  <span style={{ ...fontBody, color: COLORS.muted, fontSize: 14 }} className="mb-1">/mês</span>
+                </div>
+                <p style={{ ...fontBody, color: COLORS.muted, fontSize: 13.5 }}>Frotas ilimitadas e multi-empresa</p>
+              </div>
+              <ul className="space-y-3 flex-1 mb-8">
+                {[
+                  "Tudo do plano Profissional",
+                  "Frota ilimitada",
+                  "Multi-empresa e franquias",
+                  "API REST para integração",
+                  "SLA com 99,9% de disponibilidade",
+                  "Onboarding personalizado",
+                  "Gerente de sucesso dedicado",
+                  "Suporte prioritário 24h",
+                ].map((item) => (
+                  <li key={item} className="flex items-start gap-2.5">
+                    <span style={{ color: COLORS.primary, marginTop: 2 }}>
+                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+                    </span>
+                    <span style={{ ...fontBody, color: COLORS.muted, fontSize: 14 }}>{item}</span>
+                  </li>
+                ))}
+              </ul>
+              <a
+                href={INSTAGRAM_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="block text-center px-5 py-3 rounded-md font-semibold text-sm transition hover:opacity-80"
+                style={{ border: `1px solid ${COLORS.borderStrong}`, color: COLORS.ink, ...fontBody }}
+              >
+                Falar com especialista
+              </a>
+            </div>
+
           </div>
+
+          <p style={{ ...fontBody, color: COLORS.muted, fontSize: 13 }} className="text-center mt-8">
+            Todos os planos incluem 14 dias de teste grátis. Sem necessidade de cartão de crédito.
+          </p>
         </div>
       </section>
 

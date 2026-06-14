@@ -21,26 +21,14 @@ interface MenuItem {
   children?: { title: string; url: string; icon?: React.ComponentType<{ className?: string }> }[];
 }
 
-// Ordem por prioridade de uso no dia a dia
 const items: MenuItem[] = [
+  // — Dia a dia —
   { title: "Visão Geral", url: "/dashboard", icon: LayoutDashboard },
   { title: "Pagamentos", url: "/cobrancas/semana", icon: BellRing },
-  { title: "Troca de Óleo", url: "/troca-oleo", icon: Droplets },
-  { title: "Vistoria", url: "/vistoria", icon: Search },
   { title: "Locações", url: "/locacoes", icon: FileText },
   { title: "Contratos", url: "/contratos", icon: FileSignature },
-  { title: "Finanças", url: "/financeiro", icon: DollarSign },
-  { title: "Rastreamento", url: "/rastreamento", icon: MapPin },
-  {
-    title: "Manutenções", url: "/manutencoes", icon: Wrench,
-    children: [
-      { title: "Ordens de Serviço", url: "/manutencoes" },
-      { title: "Gerenciar", url: "/manutencoes/config" },
-    ],
-  },
   { title: "Clientes", url: "/clientes", icon: Users },
-  { title: "Multas de trânsito", url: "/multas", icon: AlertTriangle },
-  { title: "Relatórios", url: "/relatorios", icon: BarChart3 },
+  // — Frota —
   {
     title: "Motos", url: "/motos", icon: Bike,
     children: [
@@ -48,6 +36,20 @@ const items: MenuItem[] = [
       { title: "Controle Patrimonial", url: "/motos?tab=patrimonio" },
     ],
   },
+  {
+    title: "Manutenções", url: "/manutencoes", icon: Wrench,
+    children: [
+      { title: "Ordens de Serviço", url: "/manutencoes" },
+      { title: "Gerenciar", url: "/manutencoes/config" },
+    ],
+  },
+  { title: "Troca de Óleo", url: "/troca-oleo", icon: Droplets },
+  { title: "Vistoria", url: "/vistoria", icon: Search },
+  { title: "Rastreamento", url: "/rastreamento", icon: MapPin },
+  // — Financeiro & Análise —
+  { title: "Finanças", url: "/financeiro", icon: DollarSign },
+  { title: "Multas de trânsito", url: "/multas", icon: AlertTriangle },
+  { title: "Relatórios", url: "/relatorios", icon: BarChart3 },
 ];
 
 // Apenas os mais relevantes em breve — demais ficam em "Mais"
