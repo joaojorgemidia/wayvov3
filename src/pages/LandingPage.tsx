@@ -404,7 +404,7 @@ export default function LandingPage() {
               <div className="mb-6">
                 <p style={{ ...fontMono, color: COLORS.muted, fontSize: 12 }} className="mb-2 uppercase tracking-widest">Starter</p>
                 <div className="flex items-end gap-1 mb-1">
-                  <span style={{ ...fontHead, color: COLORS.ink, fontSize: 40, lineHeight: 1 }}>R$ 197</span>
+                  <span style={{ ...fontHead, color: COLORS.ink, fontSize: 40, lineHeight: 1 }}>R$ 47,90</span>
                   <span style={{ ...fontBody, color: COLORS.muted, fontSize: 14 }} className="mb-1">/mês</span>
                 </div>
                 <p style={{ ...fontBody, color: COLORS.muted, fontSize: 13.5 }}>Para frotas de até 20 motos</p>
@@ -433,7 +433,7 @@ export default function LandingPage() {
                 className="block text-center px-5 py-3 rounded-md font-semibold text-sm transition hover:opacity-80"
                 style={{ border: `1px solid ${COLORS.borderStrong}`, color: COLORS.ink, ...fontBody }}
               >
-                Começar agora
+                Testar grátis por 30 dias
               </a>
             </div>
 
@@ -483,7 +483,7 @@ export default function LandingPage() {
                 className="block text-center px-5 py-3 rounded-md font-semibold text-sm transition hover:opacity-90"
                 style={{ backgroundColor: COLORS.primary, color: "#04200F", ...fontBody }}
               >
-                Solicitar acesso
+                Testar grátis por 30 dias
               </a>
             </div>
 
@@ -532,9 +532,14 @@ export default function LandingPage() {
 
           </div>
 
-          <p style={{ ...fontBody, color: COLORS.muted, fontSize: 13 }} className="text-center mt-8">
-            Todos os planos incluem 14 dias de teste grátis. Sem necessidade de cartão de crédito.
-          </p>
+          <div className="text-center mt-8 space-y-2">
+            <p style={{ ...fontBody, color: COLORS.ink, fontSize: 14, fontWeight: 600 }}>
+              30 dias grátis em todos os planos
+            </p>
+            <p style={{ ...fontBody, color: COLORS.muted, fontSize: 13 }}>
+              Cadastro de cartão de crédito obrigatório. A cobrança começa apenas após o período de teste. Processamento seguro via Asaas.
+            </p>
+          </div>
         </div>
       </section>
 
@@ -599,7 +604,8 @@ export default function LandingPage() {
               ["Em quanto tempo consigo colocar minha frota no ar?", "O setup leva em média 10 minutos. Você cadastra a empresa, importa suas motos (manual, planilha ou OCR do CRLV) e já começa a operar."],
               ["Como funciona a cobrança automática?", "A régua de cobrança envia avisos via WhatsApp em D-1, D+0, D+3 e D+7. Tudo configurável. Sem ação manual."],
               ["Vocês emitem contrato com validade jurídica?", "Sim. Contratos digitais com assinatura eletrônica conforme MP 2.200-2 e LGPD. Aceitos por cartórios e tribunais."],
-              ["Como faço para ter acesso?", "A Wayvo está em acesso antecipado por convite. Entre em contato via Instagram (@joaojorge.midia) para solicitar acesso e receber uma proposta personalizada."],
+              ["Como funciona o período de teste?", "Todos os planos incluem 30 dias grátis. É necessário cadastrar um cartão de crédito para ativar o teste. A cobrança só começa no 31º dia. Você pode cancelar antes disso sem pagar nada."],
+              ["Como funciona o pagamento?", "As cobranças são processadas via Asaas, plataforma de pagamentos líder no Brasil. Você recebe uma notificação antes de cada cobrança e pode gerenciar sua assinatura a qualquer momento."],
               ["E se eu tiver mais de uma empresa/franquia?", "O plano Enterprise oferece arquitetura multi-tenant com isolamento total de dados por sub-empresa."],
               ["Vocês integram com meu sistema atual?", "Sim, via API REST no plano Enterprise. Também aceitamos importação por planilha em todos os planos."],
             ].map(([q, a], i) => (
