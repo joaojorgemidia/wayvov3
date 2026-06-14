@@ -17,8 +17,15 @@ interface Props {
   companyName?: string;
 }
 
+const UF_OPTIONS = [
+  "AC","AL","AM","AP","BA","CE","DF","ES","GO","MA","MG","MS","MT",
+  "PA","PB","PE","PI","PR","RJ","RN","RO","RR","RS","SC","SE","SP","TO",
+];
+
 export default function DetranConfigDialog({ open, onClose, onSave, current, companyName }: Props) {
   const [login, setLogin] = useState(current?.login ?? "");
+  const [loginField, setLoginField] = useState<"cpf" | "cnpj">(current?.loginField ?? "cpf");
+  const [uf, setUf] = useState(current?.uf ?? "GO");
   const [senha, setSenha] = useState("");
   const [showSenha, setShowSenha] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -34,6 +41,8 @@ export default function DetranConfigDialog({ open, onClose, onSave, current, com
       await onSave({
         login: login.trim(),
         senhaHash: senha || current?.senhaHash || "",
+        loginField,
+        uf: uf.toUpperCase(),
       });
       onClose();
     } finally {
@@ -57,7 +66,7 @@ export default function DetranConfigDialog({ open, onClose, onSave, current, com
     <Dialog open={open} onOpenChange={(v) => { if (!v) { onClose(); setConfirmRemove(false); } }}>
       <DialogContent className="sm:max-w-md p-0 overflow-hidden">
 
-        {/* Header com gradiente */}
+        {/* Header */}
         <div className="bg-gradient-to-br from-blue-600 to-blue-700 px-6 py-5 text-white">
           <div className="flex items-center gap-3">
             <div className="rounded-full bg-white/20 p-2">
@@ -65,7 +74,7 @@ export default function DetranConfigDialog({ open, onClose, onSave, current, com
             </div>
             <div>
               <DialogTitle className="text-white text-base font-semibold">
-                Integração com DETRAN-GO
+                Integração com DETRAN
               </DialogTitle>
               {companyName && (
                 <p className="text-blue-100 text-xs mt-0.5">{companyName}</p>
@@ -76,24 +85,24 @@ export default function DetranConfigDialog({ open, onClose, onSave, current, com
 
         <div className="px-6 py-5 space-y-5">
 
-          {/* Explicação clara */}
+          {/* Explicação */}
           <div className="rounded-lg border bg-muted/40 p-4 space-y-2">
             <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
               <Info className="h-4 w-4 text-blue-500 shrink-0" />
               Para que serve?
             </div>
             <p className="text-sm text-muted-foreground leading-relaxed">
-              A Wayvo usa seu login do portal{" "}
+              A Wayvo usa a API{" "}
               <a
-                href="https://www.detran.go.gov.br"
+                href="https://www.infosimples.com"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="text-blue-600 underline underline-offset-2 inline-flex items-center gap-0.5"
               >
-                detran.go.gov.br <ExternalLink className="h-3 w-3" />
+                Infosimples <ExternalLink className="h-3 w-3" />
               </a>{" "}
-              para consultar automaticamente multas e débitos dos veículos da sua frota.
-              Sem esse acesso, o governo não libera essas informações.
+              para consultar multas e restrições dos veículos da frota diretamente no DETRAN.
+              Informe o login e senha do portal do DETRAN do seu estado.
             </p>
           </div>
 
@@ -120,24 +129,72 @@ export default function DetranConfigDialog({ open, onClose, onSave, current, com
 
           {/* Formulário */}
           <div className="space-y-4">
+
+            {/* UF */}
+            <div className="space-y-1.5">
+              <Label className="text-sm font-medium">
+                UF da frota
+                <span className="ml-1 text-xs font-normal text-muted-foreground">(estado onde os veículos estão registrados)</span>
+              </Label>
+              <select
+                value={uf}
+                onChange={(e) => setUf(e.target.value)}
+                className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+              >
+                {UF_OPTIONS.map((u) => (
+                  <option key={u} value={u}>{u}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* Tipo de login */}
+            <div className="space-y-1.5">
+              <Label className="text-sm font-medium">Tipo de login no portal DETRAN</Label>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setLoginField("cpf")}
+                  className={`flex-1 px-3 py-2 text-sm rounded-md border transition-colors ${
+                    loginField === "cpf"
+                      ? "border-primary bg-primary/5 text-primary font-medium"
+                      : "border-input text-muted-foreground hover:bg-muted/50"
+                  }`}
+                >
+                  CPF
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setLoginField("cnpj")}
+                  className={`flex-1 px-3 py-2 text-sm rounded-md border transition-colors ${
+                    loginField === "cnpj"
+                      ? "border-primary bg-primary/5 text-primary font-medium"
+                      : "border-input text-muted-foreground hover:bg-muted/50"
+                  }`}
+                >
+                  CNPJ / e-mail
+                </button>
+              </div>
+            </div>
+
+            {/* Login */}
             <div className="space-y-1.5">
               <Label htmlFor="detran-login" className="text-sm font-medium">
-                Login do DETRAN-GO
-                <span className="ml-1 text-xs font-normal text-muted-foreground">(CPF ou e-mail cadastrado no portal)</span>
+                {loginField === "cnpj" ? "CNPJ ou e-mail" : "CPF"} do portal DETRAN
               </Label>
               <Input
                 id="detran-login"
                 type="text"
                 value={login}
                 onChange={(e) => setLogin(e.target.value)}
-                placeholder="Ex: 12345678900 ou joao@email.com"
+                placeholder={loginField === "cnpj" ? "Ex: empresa@email.com ou 00.000.000/0001-00" : "Ex: 000.000.000-00"}
                 autoComplete="username"
               />
             </div>
 
+            {/* Senha */}
             <div className="space-y-1.5">
               <Label htmlFor="detran-senha" className="text-sm font-medium">
-                Senha do DETRAN-GO
+                Senha do portal DETRAN
                 {isEditing && (
                   <span className="ml-1 text-xs font-normal text-muted-foreground">
                     (deixe em branco para manter a atual)
@@ -150,7 +207,7 @@ export default function DetranConfigDialog({ open, onClose, onSave, current, com
                   type={showSenha ? "text" : "password"}
                   value={senha}
                   onChange={(e) => setSenha(e.target.value)}
-                  placeholder={isEditing ? "••••••••" : "Senha do portal DETRAN-GO"}
+                  placeholder={isEditing ? "••••••••" : "Senha do portal DETRAN"}
                   className="pr-10"
                   autoComplete="current-password"
                 />
@@ -166,18 +223,9 @@ export default function DetranConfigDialog({ open, onClose, onSave, current, com
             </div>
           </div>
 
-          {/* Aviso se não tiver conta */}
           <div className="flex items-start gap-2 text-xs text-muted-foreground">
             <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0 text-yellow-500" />
-            Não tem conta no DETRAN-GO?{" "}
-            <a
-              href="https://www.detran.go.gov.br"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-blue-600 underline underline-offset-2"
-            >
-              Cadastre-se gratuitamente no portal
-            </a>
+            Use o mesmo login e senha que você usa no portal do DETRAN do seu estado.
           </div>
         </div>
 
@@ -200,7 +248,7 @@ export default function DetranConfigDialog({ open, onClose, onSave, current, com
               Cancelar
             </Button>
             <Button onClick={handleSave} disabled={!canSave || saving}>
-              {saving ? "Salvando..." : isEditing ? "Salvar alterações" : "Conectar ao DETRAN-GO"}
+              {saving ? "Salvando..." : isEditing ? "Salvar alterações" : "Conectar ao DETRAN"}
             </Button>
           </div>
         </div>

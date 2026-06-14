@@ -32,8 +32,10 @@ export interface AutentiqueConfig {
 }
 
 export interface DetranConfig {
-  login: string;
-  senhaHash: string; // armazenado como recebido do usuário, protegido por RLS
+  login: string;       // CPF, CNPJ ou e-mail usado no portal DETRAN
+  senhaHash: string;   // armazenado como recebido do usuário, protegido por RLS
+  loginField?: "cpf" | "cnpj"; // parâmetro a passar: login_cpf ou login_cnpj (default: cpf)
+  uf?: string;         // UF padrão da frota (default: "GO")
 }
 
 export interface CobrancaConfig {
