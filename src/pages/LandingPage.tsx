@@ -394,50 +394,9 @@ export default function LandingPage() {
             </p>
           </div>
 
-          <div className="grid lg:grid-cols-3 gap-6 items-stretch">
+          <div className="max-w-md mx-auto">
 
             {/* Plano Starter */}
-            <div
-              className="rounded-xl p-8 flex flex-col"
-              style={{ backgroundColor: COLORS.surface, border: `1px solid ${COLORS.border}` }}
-            >
-              <div className="mb-6">
-                <p style={{ ...fontMono, color: COLORS.muted, fontSize: 12 }} className="mb-2 uppercase tracking-widest">Starter</p>
-                <div className="flex items-end gap-1 mb-1">
-                  <span style={{ ...fontHead, color: COLORS.ink, fontSize: 40, lineHeight: 1 }}>R$ 47,90</span>
-                  <span style={{ ...fontBody, color: COLORS.muted, fontSize: 14 }} className="mb-1">/mês</span>
-                </div>
-                <p style={{ ...fontBody, color: COLORS.muted, fontSize: 13.5 }}>Para frotas de até 20 motos</p>
-              </div>
-              <ul className="space-y-3 flex-1 mb-8">
-                {[
-                  "Gestão de frota (até 20 motos)",
-                  "Locações e contratos digitais",
-                  "Cadastro de clientes com OCR",
-                  "Financeiro completo",
-                  "Dashboard e visão geral",
-                  "Suporte via e-mail",
-                ].map((item) => (
-                  <li key={item} className="flex items-start gap-2.5">
-                    <span style={{ color: COLORS.primary, marginTop: 2 }}>
-                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="20 6 9 17 4 12"/></svg>
-                    </span>
-                    <span style={{ ...fontBody, color: COLORS.muted, fontSize: 14 }}>{item}</span>
-                  </li>
-                ))}
-              </ul>
-              <a
-                href={INSTAGRAM_URL}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="block text-center px-5 py-3 rounded-md font-semibold text-sm transition hover:opacity-80"
-                style={{ border: `1px solid ${COLORS.borderStrong}`, color: COLORS.ink, ...fontBody }}
-              >
-                Testar grátis por 30 dias
-              </a>
-            </div>
-
-            {/* Plano Profissional — DESTAQUE */}
             <div
               className="rounded-xl p-8 flex flex-col relative"
               style={{ backgroundColor: COLORS.ink, border: `2px solid ${COLORS.primary}` }}
@@ -446,27 +405,27 @@ export default function LandingPage() {
                 className="absolute -top-3.5 left-1/2 -translate-x-1/2 px-4 py-1 rounded-full text-xs font-semibold"
                 style={{ backgroundColor: COLORS.primary, color: "#04200F", ...fontBody }}
               >
-                Mais popular
+                Disponível agora
               </div>
               <div className="mb-6">
-                <p style={{ ...fontMono, color: COLORS.primary, fontSize: 12 }} className="mb-2 uppercase tracking-widest">Profissional</p>
+                <p style={{ ...fontMono, color: COLORS.primary, fontSize: 12 }} className="mb-2 uppercase tracking-widest">Starter</p>
                 <div className="flex items-end gap-1 mb-1">
-                  <span style={{ ...fontHead, color: "#fff", fontSize: 40, lineHeight: 1 }}>R$ 397</span>
+                  <span style={{ ...fontHead, color: "#fff", fontSize: 48, lineHeight: 1 }}>R$ 47,90</span>
                   <span style={{ ...fontBody, color: "rgba(255,255,255,0.6)", fontSize: 14 }} className="mb-1">/mês</span>
                 </div>
-                <p style={{ ...fontBody, color: "rgba(255,255,255,0.55)", fontSize: 13.5 }}>Para frotas de até 60 motos</p>
+                <p style={{ ...fontBody, color: "rgba(255,255,255,0.55)", fontSize: 13.5 }}>Para frotas de até 20 motos</p>
               </div>
               <ul className="space-y-3 flex-1 mb-8">
                 {[
-                  "Tudo do plano Starter",
-                  "Motos ilimitadas (até 60)",
-                  "Cobranças automáticas via WhatsApp",
+                  "Gestão de frota (até 20 motos)",
+                  "Locações e contratos digitais",
+                  "Cadastro de clientes com OCR",
+                  "Financeiro completo",
+                  "Dashboard e visão geral",
                   "Manutenções e troca de óleo",
-                  "Rastreamento GPS em tempo real",
-                  "Relatórios avançados exportáveis",
-                  "Multas e consulta DETRAN",
-                  "Vistorias fotográficas",
-                  "Suporte via WhatsApp",
+                  "Cobranças automáticas via WhatsApp",
+                  "Relatórios consolidados",
+                  "Suporte via e-mail",
                 ].map((item) => (
                   <li key={item} className="flex items-start gap-2.5">
                     <span style={{ color: COLORS.primary, marginTop: 2 }}>
@@ -480,53 +439,10 @@ export default function LandingPage() {
                 href={INSTAGRAM_URL}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="block text-center px-5 py-3 rounded-md font-semibold text-sm transition hover:opacity-90"
-                style={{ backgroundColor: COLORS.primary, color: "#04200F", ...fontBody }}
+                className="block text-center px-5 py-3.5 rounded-md font-semibold text-sm transition hover:opacity-90"
+                style={{ backgroundColor: COLORS.primary, color: "#04200F", ...fontBody, fontSize: 15 }}
               >
                 Testar grátis por 30 dias
-              </a>
-            </div>
-
-            {/* Plano Enterprise */}
-            <div
-              className="rounded-xl p-8 flex flex-col"
-              style={{ backgroundColor: COLORS.surface, border: `1px solid ${COLORS.border}` }}
-            >
-              <div className="mb-6">
-                <p style={{ ...fontMono, color: COLORS.muted, fontSize: 12 }} className="mb-2 uppercase tracking-widest">Enterprise</p>
-                <div className="flex items-end gap-1 mb-1">
-                  <span style={{ ...fontHead, color: COLORS.ink, fontSize: 40, lineHeight: 1 }}>R$ 797</span>
-                  <span style={{ ...fontBody, color: COLORS.muted, fontSize: 14 }} className="mb-1">/mês</span>
-                </div>
-                <p style={{ ...fontBody, color: COLORS.muted, fontSize: 13.5 }}>Frotas ilimitadas e multi-empresa</p>
-              </div>
-              <ul className="space-y-3 flex-1 mb-8">
-                {[
-                  "Tudo do plano Profissional",
-                  "Frota ilimitada",
-                  "Multi-empresa e franquias",
-                  "API REST para integração",
-                  "SLA com 99,9% de disponibilidade",
-                  "Onboarding personalizado",
-                  "Gerente de sucesso dedicado",
-                  "Suporte prioritário 24h",
-                ].map((item) => (
-                  <li key={item} className="flex items-start gap-2.5">
-                    <span style={{ color: COLORS.primary, marginTop: 2 }}>
-                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="20 6 9 17 4 12"/></svg>
-                    </span>
-                    <span style={{ ...fontBody, color: COLORS.muted, fontSize: 14 }}>{item}</span>
-                  </li>
-                ))}
-              </ul>
-              <a
-                href={INSTAGRAM_URL}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="block text-center px-5 py-3 rounded-md font-semibold text-sm transition hover:opacity-80"
-                style={{ border: `1px solid ${COLORS.borderStrong}`, color: COLORS.ink, ...fontBody }}
-              >
-                Falar com especialista
               </a>
             </div>
 
@@ -534,10 +450,10 @@ export default function LandingPage() {
 
           <div className="text-center mt-8 space-y-2">
             <p style={{ ...fontBody, color: COLORS.ink, fontSize: 14, fontWeight: 600 }}>
-              30 dias grátis em todos os planos
+              30 dias grátis com cadastro de cartão
             </p>
             <p style={{ ...fontBody, color: COLORS.muted, fontSize: 13 }}>
-              Cadastro de cartão de crédito obrigatório. A cobrança começa apenas após o período de teste. Processamento seguro via Asaas.
+              A cobrança começa apenas após o período de teste. Processamento seguro via Asaas. Cancele quando quiser.
             </p>
           </div>
         </div>
