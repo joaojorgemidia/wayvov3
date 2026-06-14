@@ -189,22 +189,22 @@ export default function LandingPage() {
                 }}
               >
                 <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: COLORS.primary }} />
-                Plataforma de gestão de frota de motos
+                Gestão completa de locadora de motos
               </div>
               <h1
                 style={{ ...fontHead, color: COLORS.ink, fontSize: "clamp(2.4rem, 5.5vw, 4.2rem)", lineHeight: 1.02 }}
                 className="mb-6"
               >
-                Crescimento sem dado{" "}
-                <span style={{ color: COLORS.primary }}>não é estratégia.</span>{" "}
-                <span style={{ color: COLORS.muted, fontWeight: 600 }}>É sorte com prazo de validade.</span>
+                Você sabe quem te deve,{" "}
+                <span style={{ color: COLORS.primary }}>quanto está entrando</span>{" "}
+                <span style={{ color: COLORS.muted, fontWeight: 600 }}>e se sua locadora dá lucro?</span>
               </h1>
               <p
                 style={{ ...fontBody, color: COLORS.muted, fontSize: "clamp(1.05rem, 1.6vw, 1.2rem)" }}
                 className="max-w-xl leading-relaxed mb-8"
               >
-                A WAYVO transforma sua operação de locação de motos em informação estruturada, para você decidir
-                com dado, no momento certo, e chegar onde grandes frotas chegam.
+                A Wayvo reúne cobranças em atraso, financeiro, contratos e frota em um só lugar.
+                Sem planilha, sem achismo, sem ligação para saber quem pagou.
               </p>
               <div className="flex flex-col sm:flex-row gap-3">
                 <a
@@ -214,21 +214,21 @@ export default function LandingPage() {
                   className="inline-flex items-center justify-center gap-2 px-6 py-3.5 rounded-md font-semibold transition hover:opacity-90"
                   style={{ ...fontBody, backgroundColor: COLORS.primary, color: "#04200F", fontSize: 15 }}
                 >
-                  Solicitar acesso <ArrowRight size={16} />
+                  Testar grátis por 30 dias <ArrowRight size={16} />
                 </a>
                 <a
                   href="#produto"
                   className="inline-flex items-center justify-center gap-2 px-6 py-3.5 rounded-md font-semibold transition hover:bg-black/5"
                   style={{ ...fontBody, color: COLORS.ink, border: `1px solid ${COLORS.borderStrong}`, fontSize: 15 }}
                 >
-                  Ver produto
+                  Ver como funciona
                 </a>
               </div>
               <div className="mt-10 flex flex-wrap gap-x-8 gap-y-3" style={fontBody}>
                 {[
-                  ["Setup em 10 min", Activity],
-                  ["LGPD compliant", Shield],
-                  ["Suporte humano", Users],
+                  ["Começa em 10 min", Activity],
+                  ["30 dias grátis", Shield],
+                  ["Cancele quando quiser", Users],
                 ].map(([txt, Ico]: any) => (
                   <div key={txt} className="flex items-center gap-2 text-sm" style={{ color: COLORS.muted }}>
                     <Ico size={15} style={{ color: COLORS.primary }} />
@@ -248,10 +248,10 @@ export default function LandingPage() {
       <section style={{ backgroundColor: COLORS.surface, borderTop: `1px solid ${COLORS.border}`, borderBottom: `1px solid ${COLORS.border}` }}>
         <div className="mx-auto max-w-7xl px-5 sm:px-8 py-10 grid grid-cols-2 md:grid-cols-4 gap-6">
           {[
-            ["-42%", "inadimplência média"],
-            ["+57%", "margem por ativo"],
-            ["10min", "setup inicial"],
-            ["24/7", "monitoramento de frota"],
+            ["1 lugar", "para toda a operação"],
+            ["30 dias", "grátis para testar"],
+            ["10 min", "para começar"],
+            ["R$ 0", "taxa de setup"],
           ].map(([n, l]) => (
             <div key={l} className="text-center md:text-left">
               <div style={{ ...fontMono, color: COLORS.ink, fontSize: 30 }}>{n}</div>
@@ -267,39 +267,39 @@ export default function LandingPage() {
           <div className="max-w-2xl mb-14">
             <p style={{ ...fontMono, color: COLORS.primary, fontSize: 13 }} className="mb-3">// O QUE A WAYVO RESOLVE</p>
             <h2 style={{ ...fontHead, color: COLORS.ink, fontSize: "clamp(2rem, 3.5vw, 2.8rem)", lineHeight: 1.05 }}>
-              Quatro dores reais. Uma plataforma que entende a sua operação.
+              Quatro perguntas que todo dono de locadora precisa conseguir responder.
             </h2>
           </div>
 
           <div className="grid md:grid-cols-2 gap-5">
             {[
               {
-                icon: BarChart3,
-                title: "Visão Geral / Faturamento",
-                desc: "Monitoramento em tempo real do faturamento bruto, inadimplência e unit economics por veículo.",
-                metric: "R$ 84.320,00",
-                metricLabel: "faturamento do mês",
+                icon: Bell,
+                title: "Quem me deve e quanto?",
+                desc: "Painel semanal com todos os clientes em atraso, valor pendente e dias de atraso. Você vê de um olhar, sem ligar para ninguém.",
+                metric: "R$ 3.488,12",
+                metricLabel: "exemplo de atraso mapeado em uma semana",
               },
               {
-                icon: MapPin,
-                title: "Localizações e Cobranças",
-                desc: "Redução drástica da inadimplência com régua de cobrança automatizada e controle de atrasos.",
-                metric: "12 cobranças",
-                metricLabel: "enviadas automaticamente hoje",
+                icon: Wallet,
+                title: "Minha locadora está dando lucro?",
+                desc: "Financeiro completo com receitas, despesas, saldo real em caixa e projeção do mês. Integrado com múltiplas contas bancárias.",
+                metric: "R$ 8.073,58",
+                metricLabel: "receitas organizadas e categorizadas",
               },
               {
-                icon: Wrench,
-                title: "Operações de Frota",
-                desc: "Controle rigoroso de vistorias, manutenções preventivas e rastreamento GPS em tempo real.",
-                metric: "3 alertas",
-                metricLabel: "troca de óleo 10w30 pendente",
+                icon: Activity,
+                title: "Minha frota está em dia?",
+                desc: "Locações ativas, contratos com vencimento próximo, manutenções pendentes e alertas de troca de óleo, tudo centralizado.",
+                metric: "25 contratos",
+                metricLabel: "ativos e finalizados com histórico completo",
               },
               {
                 icon: FileSignature,
-                title: "Clientes e Contratos",
-                desc: "Cadastro blindado com OCR de CNH/CRLV e contratos digitais com validade jurídica.",
-                metric: "127 contratos",
-                metricLabel: "ativos com assinatura digital",
+                title: "Meus clientes estão organizados?",
+                desc: "Cadastro completo com OCR de CNH, histórico de locações e vistorias de entrada e saída registradas por foto.",
+                metric: "176 lançamentos",
+                metricLabel: "financeiros organizados automaticamente",
               },
             ].map(({ icon: Icon, title, desc, metric, metricLabel }) => (
               <div
@@ -329,12 +329,12 @@ export default function LandingPage() {
       <section id="features" style={{ backgroundColor: COLORS.surface }} className="py-20 sm:py-28">
         <div className="mx-auto max-w-7xl px-5 sm:px-8">
           <div className="max-w-2xl mb-14">
-            <p style={{ ...fontMono, color: COLORS.primary, fontSize: 13 }} className="mb-3">// FUNCIONALIDADES</p>
+            <p style={{ ...fontMono, color: COLORS.primary, fontSize: 13 }} className="mb-3">// O QUE ESTÁ INCLUSO</p>
             <h2 style={{ ...fontHead, color: COLORS.ink, fontSize: "clamp(2rem, 3.5vw, 2.8rem)", lineHeight: 1.05 }}>
-              Tudo que sua locadora precisa. Zero planilha.
+              Tudo em um lugar. Sem módulo extra, sem custo escondido.
             </h2>
             <p style={{ ...fontBody, color: COLORS.muted, fontSize: 16 }} className="mt-4 leading-relaxed">
-              Módulos completos, integrados e prontos para usar. Do primeiro cadastro ao relatório mensal.
+              Um sistema feito para quem opera de verdade. Do primeiro cadastro ao fechamento do mês.
             </p>
           </div>
 
@@ -387,10 +387,10 @@ export default function LandingPage() {
           <div className="text-center max-w-2xl mx-auto mb-14">
             <p style={{ ...fontMono, color: COLORS.primary, fontSize: 13 }} className="mb-3">// PLANOS</p>
             <h2 style={{ ...fontHead, color: COLORS.ink, fontSize: "clamp(2rem, 3.5vw, 2.8rem)", lineHeight: 1.05 }} className="mb-4">
-              Escolha o plano certo para a sua frota.
+              Simples assim.
             </h2>
             <p style={{ ...fontBody, color: COLORS.muted, fontSize: 16 }}>
-              Sem fidelidade. Sem taxa de setup. Sem surpresa na fatura.
+              Um plano. Sem fidelidade, sem taxa de setup, sem surpresa na fatura.
             </p>
           </div>
 
@@ -553,13 +553,13 @@ export default function LandingPage() {
             }}
           >
             <p style={{ ...fontMono, color: COLORS.primary, fontSize: 12 }} className="mb-4 tracking-widest">
-              DADO · DECISÃO · DESTINO
+              CONTROLE · CLAREZA · RESULTADO
             </p>
             <h2 style={{ ...fontHead, color: "#fff", fontSize: "clamp(1.8rem, 3.5vw, 2.8rem)", lineHeight: 1.05 }} className="mb-4 max-w-2xl mx-auto">
-              Sua frota tem 13 motos. Quantas são lucrativas?
+              Pare de operar no escuro.
             </h2>
             <p style={{ ...fontBody, color: "rgba(255,255,255,0.7)", fontSize: 16 }} className="mb-8 max-w-xl mx-auto">
-              Acesso somente por convite. Entre em contato para saber mais.
+              Experimente 30 dias grátis e veja exatamente quanto entra, quanto sai e quem te deve.
             </p>
             <div className="flex flex-col sm:flex-row gap-3 justify-center">
               <a
@@ -569,7 +569,7 @@ export default function LandingPage() {
                 className="inline-flex items-center justify-center gap-2 px-6 py-3.5 rounded-md font-semibold hover:opacity-90 transition"
                 style={{ ...fontBody, backgroundColor: COLORS.primary, color: "#04200F", fontSize: 15 }}
               >
-                Falar no Instagram <ArrowRight size={16} />
+                Testar grátis por 30 dias <ArrowRight size={16} />
               </a>
               <Link
                 to="/login"
@@ -674,9 +674,9 @@ function ProductMock() {
         {/* Summary */}
         <div className="grid grid-cols-3 gap-px" style={{ backgroundColor: COLORS.border }}>
           {[
-            ["Frota total", "127", "motos"],
-            ["Faturamento mês", "R$ 84.320", "+12,4%"],
-            ["Inadimplência", "3,2%", "-1,8 pp"],
+            ["Frota ativa", "25", "contratos"],
+            ["Recebido em junho", "R$ 8.073", "9 em atraso"],
+            ["Em atraso", "R$ 3.488", "6 clientes"],
           ].map(([l, v, s]) => (
             <div key={l} className="p-4" style={{ backgroundColor: COLORS.surface }}>
               <div style={{ ...fontBody, color: COLORS.muted, fontSize: 11 }} className="uppercase tracking-wider">{l}</div>
