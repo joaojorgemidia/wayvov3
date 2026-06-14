@@ -283,7 +283,7 @@ export default function LandingPage() {
               {
                 icon: MapPin,
                 title: "Localizações e Cobranças",
-                desc: "Redução drástica da inadimplência com régua de cobrança automatizada via WhatsApp.",
+                desc: "Redução drástica da inadimplência com régua de cobrança automatizada e controle de atrasos.",
                 metric: "12 cobranças",
                 metricLabel: "enviadas automaticamente hoje",
               },
@@ -342,7 +342,7 @@ export default function LandingPage() {
             {[
               [Wallet, "Financeiro completo", "Receitas, despesas, categorias, conciliação e DRE mensal da locadora. Tudo em um painel."],
               [BarChart3, "Visão geral (Dashboard)", "KPIs em tempo real: faturamento, inadimplência, margem por moto e ocupação da frota."],
-              [TrendingUp, "Pagamentos integrados", "Geração de boleto e PIX via Asaas. Baixa automática e notificação por WhatsApp."],
+              [TrendingUp, "Pagamentos integrados", "Geração de boleto e PIX via Asaas com baixa automática e confirmação de pagamento."],
               [FileSignature, "Locações e contratos", "Contratos digitais com assinatura eletrônica, vencimento automático e renovação em 1 clique."],
               [Users, "Cadastro de clientes", "OCR da CNH com preenchimento automático, histórico de locações e score de inadimplência."],
               [Activity, "Gestão de motos", "Frota completa com patrimônio, status, margem por veículo e controle de veículos vendidos."],
@@ -362,7 +362,7 @@ export default function LandingPage() {
             {[
               ["Troca de óleo", "Alertas de 10w30 por km e por data. Nunca perca uma revisão."],
               ["Vistorias", "Checklist fotográfico de entrada e saída com registro em nuvem."],
-              ["Cobranças automáticas", "Régua D-1, D+0, D+3 e D+7 via WhatsApp sem intervenção manual."],
+              ["Cobranças automáticas", "Régua de cobrança por atraso com controle de inadimplência e histórico de pendências."],
               ["Relatórios", "Relatórios consolidados de frota, financeiro e inadimplência exportáveis."],
             ].map(([title, desc]) => (
               <div
@@ -423,7 +423,7 @@ export default function LandingPage() {
                   "Financeiro completo",
                   "Dashboard e visão geral",
                   "Manutenções e troca de óleo",
-                  "Cobranças automáticas via WhatsApp",
+                  "Controle de cobranças e inadimplência",
                   "Relatórios consolidados",
                   "Suporte via e-mail",
                 ].map((item) => (
@@ -518,7 +518,7 @@ export default function LandingPage() {
           <Accordion type="single" collapsible className="w-full">
             {[
               ["Em quanto tempo consigo colocar minha frota no ar?", "O setup leva em média 10 minutos. Você cadastra a empresa, importa suas motos (manual, planilha ou OCR do CRLV) e já começa a operar."],
-              ["Como funciona a cobrança automática?", "A régua de cobrança envia avisos via WhatsApp em D-1, D+0, D+3 e D+7. Tudo configurável. Sem ação manual."],
+              ["Como funciona o controle de cobranças?", "O sistema registra e organiza todas as cobranças em atraso, com histórico completo e painel de inadimplência por locatário."],
               ["Vocês emitem contrato com validade jurídica?", "Sim. Contratos digitais com assinatura eletrônica conforme MP 2.200-2 e LGPD. Aceitos por cartórios e tribunais."],
               ["Como funciona o período de teste?", "Todos os planos incluem 30 dias grátis. É necessário cadastrar um cartão de crédito para ativar o teste. A cobrança só começa no 31º dia. Você pode cancelar antes disso sem pagar nada."],
               ["Como funciona o pagamento?", "As cobranças são processadas via Asaas, plataforma de pagamentos líder no Brasil. Você recebe uma notificação antes de cada cobrança e pode gerenciar sua assinatura a qualquer momento."],
