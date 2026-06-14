@@ -1,40 +1,33 @@
 import { useState, useMemo, useCallback, memo } from "react";
+import { useNavigate } from "react-router-dom";
 import { useDataCacheSnapshot } from "@/lib/data-cache";
-import { Card, CardContent } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Calendar } from "@/components/ui/calendar";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
-  TrendingUp, TrendingDown, DollarSign, Bike, Percent,
-  AlertTriangle, CalendarIcon, ChevronUp, ChevronDown,
+  AlertTriangle, ChevronRight, Clock, Droplets, FileText, Wrench, ClipboardList,
+  TrendingUp, TrendingDown,
 } from "lucide-react";
-import { format, isWithinInterval, parseISO, startOfMonth, endOfMonth, subMonths, subDays } from "date-fns";
+import { format, isWithinInterval, parseISO, startOfMonth, subDays } from "date-fns";
 import { ptBR } from "date-fns/locale";
-import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ComposedChart, Bar, Line } from "recharts";
-import { InfoTooltip } from "@/components/InfoTooltip";
+import { getOilStatus, loadBrandConfig, loadGlobalConfig } from "@/lib/oil-kpis";
 
-const fmt = (v: number) => `R$ ${v.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-const fmtShort = (v: number) => {
-  if (v >= 1000) return `R$ ${(v / 1000).toFixed(1)}k`;
-  return fmt(v);
-};
+const fmt = (v: number) =>
+  `R$ ${v.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
-type MotoPerf = {
-  id: string; modelo: string; placa: string; status: string;
-  receita: number; custos: number; ebitda: number; margem: number;
-  diasLocada: number; diasOciosa: number; diasManutencao: number; diasPeriodoMoto: number;
-};
+const PERIODS = [
+  { label: "Este mês", getFrom: () => startOfMonth(new Date()) },
+  { label: "30d", getFrom: () => subDays(new Date(), 30) },
+  { label: "60d", getFrom: () => subDays(new Date(), 60) },
+  { label: "90d", getFrom: () => subDays(new Date(), 90) },
+  { label: "1 ano", getFrom: () => subDays(new Date(), 365) },
+];
 
 export const Dashboard = memo(function Dashboard() {
   const { motos, rentals, financial, maintenance, fines } = useDataCacheSnapshot();
+  const navigate = useNavigate();
 
   const [dateRange, setDateRange] = useState<{ from: Date; to: Date }>({
-    from: startOfMonth(new Date()),
+    from: subDays(new Date(), 90),
     to: new Date(),
   });
-  const [calOpen, setCalOpen] = useState(false);
-  const [motoSort, setMotoSort] = useState<{ col: keyof MotoPerf; dir: "asc" | "desc" }>({ col: "receita", dir: "desc" });
 
   const inRange = useCallback((dateStr: string) => {
     try {
@@ -55,89 +48,51 @@ export const Dashboard = memo(function Dashboard() {
     const saidas = despesasPeriodo.reduce((s, e) => s + e.valor, 0);
     const lucro = entradas - saidas;
 
-    const previsaoReceita = financial
-      .filter(e => !e.ignorada && e.tipo === "receita")
-      .filter(e => {
-        const efetiva = e.pago ? e.data : (e.dataPrevista || e.data);
-        return inRange(efetiva);
-      })
-      .reduce((s, e) => s + e.valor, 0);
-
-    const receitasAluguelPeriodo = receitasPeriodo.filter(e =>
-      (e.categoria || "").toLowerCase().includes("aluguel")
-    );
-    const contratosUnicosPeriodo = new Set(
-      receitasAluguelPeriodo
-        .map(e => e.rentalId || e.clienteId || e.placa || e.clienteNome)
-        .filter(Boolean)
-    );
-    const totalAluguelPeriodo = receitasAluguelPeriodo.reduce((s, e) => s + e.valor, 0);
-    const ticketMedio = contratosUnicosPeriodo.size > 0
-      ? totalAluguelPeriodo / contratosUnicosPeriodo.size
-      : 0;
-
-    const custoTotal = maintenance.reduce((s, m) => s + m.custo, 0);
-    const investimento = custoTotal > 0 ? custoTotal : 1;
-    const roi = entradas > 0 ? ((lucro / investimento) * 100) : 0;
-
-    const multasPendentes = fines.filter(f => f.status === "pendente" && inRange(f.dataMulta)).reduce((s, f) => s + f.valor, 0);
-    const inadimplencia = entradas > 0 ? (multasPendentes / entradas) * 100 : 0;
-
-    const motosAtivas = motos.filter(m => m.status !== "inativa" && m.status !== "vendida").length;
-
+    const frotaTotal = motos.filter(m => m.status !== "vendida").length;
     const alugadas = motos.filter(m => m.status === "alugada").length;
     const disponiveis = motos.filter(m => m.status === "disponivel").length;
-    const emManutencao = motos.filter(m => m.status === "manutencao").length;
-    const inativas = motos.filter(m => m.status === "inativa").length;
-    const vendidas = motos.filter(m => m.status === "vendida").length;
-    const frotaAtual = motos.filter(m => m.status !== "vendida").length;
-    const taxaUtilizacao = frotaAtual > 0 ? (alugadas / frotaAtual) * 100 : 0;
+    const revpavd = frotaTotal > 0 ? entradas / (frotaTotal * diasPeriodo) : 0;
+    const taxaUtilizacao = frotaTotal > 0 ? (alugadas / frotaTotal) * 100 : 0;
 
-    const mesesPeriodo = Math.max(1, Math.round((dateRange.to.getTime() - dateRange.from.getTime()) / (1000 * 60 * 60 * 24 * 30)));
-    const receitaPorMotoPorMes = motosAtivas > 0 ? entradas / motosAtivas / mesesPeriodo : 0;
-    const custoMedioPorMotoPorMes = motosAtivas > 0 ? saidas / motosAtivas / mesesPeriodo : 0;
+    const contratosAtivos = rentals.filter(r => r.status === "ativa");
+    // Ticket médio: só receitas vinculadas a contratos (exclui empréstimos, aportes, etc.)
+    const receitasLocacao = receitasPeriodo.filter(e => e.rentalId);
+    const entradasLocacao = receitasLocacao.reduce((s, e) => s + e.valor, 0);
+    const contratosComReceita = new Set(receitasLocacao.map(e => e.rentalId)).size;
+    const ticketMedio = contratosComReceita > 0 ? entradasLocacao / contratosComReceita : 0;
 
-    // RevPAVD — receita por ativo disponível por dia
-    const revpavd = motosAtivas > 0 ? entradas / (motosAtivas * diasPeriodo) : 0;
+    const despesaOperacional = despesasPeriodo.filter(e => e.natureza === "operacional").reduce((s, e) => s + e.valor, 0);
+    const despesaAdministrativa = despesasPeriodo.filter(e => e.natureza === "administrativa").reduce((s, e) => s + e.valor, 0);
+    const despesaInvestimento = despesasPeriodo.filter(e => e.natureza === "investimento").reduce((s, e) => s + e.valor, 0);
 
-    // Tempo Médio de Locação
-    const locacoesFinalizadas = rentals.filter(r =>
-      r.status === "finalizada" && r.dataInicio && r.dataFim && inRange(r.dataFim)
-    );
-    const tempoMedioLocacao: number | null = locacoesFinalizadas.length > 0
-      ? locacoesFinalizadas.reduce((s, r) => {
-          const dias = Math.max(0, Math.floor(
-            (new Date(r.dataFim! + "T00:00:00").getTime() - new Date(r.dataInicio + "T00:00:00").getTime()) / 86400000
-          ));
-          return s + dias;
-        }, 0) / locacoesFinalizadas.length
-      : null;
+    const marketingSpend = despesasPeriodo
+      .filter(e => (e.categoria || "").startsWith("marketing"))
+      .reduce((s, e) => s + e.valor, 0);
+    const novosContratos = rentals.filter(r => inRange(r.dataInicio)).length;
+    const cac = novosContratos > 0 ? marketingSpend / novosContratos : (contratosAtivos.length > 0 ? marketingSpend / contratosAtivos.length : 0);
 
-    // Concentração Top 3 Clientes
-    const receitaPorCliente: Record<string, number> = {};
-    receitasPeriodo.forEach(e => {
-      const key = e.clienteId || e.clienteNome || "desconhecido";
-      receitaPorCliente[key] = (receitaPorCliente[key] || 0) + e.valor;
-    });
-    const top3soma = Object.values(receitaPorCliente).sort((a, b) => b - a).slice(0, 3).reduce((s, v) => s + v, 0);
-    const concentracaoTop3 = entradas > 0 ? (top3soma / entradas) * 100 : 0;
-
-    // Inadimplência por Faixa
-    const hoje = new Date(); hoje.setHours(0, 0, 0, 0);
-    const pendentes = financial.filter(e => !e.ignorada && e.tipo === "receita" && !e.pago && e.dataPrevista);
-    const diffDias = (iso: string) => Math.floor((hoje.getTime() - new Date(iso + "T00:00:00").getTime()) / 86400000);
-    const inadFaixa1 = pendentes.filter(e => { const d = diffDias(e.dataPrevista!); return d >= 0 && d <= 15; }).reduce((s, e) => s + e.valor, 0);
-    const inadFaixa2 = pendentes.filter(e => { const d = diffDias(e.dataPrevista!); return d > 15 && d <= 30; }).reduce((s, e) => s + e.valor, 0);
-    const inadFaixa3 = pendentes.filter(e => diffDias(e.dataPrevista!) > 30).reduce((s, e) => s + e.valor, 0);
+    // Duração média das locações que iniciaram no período
+    const locacoesPeriodo = rentals.filter(r => inRange(r.dataInicio));
+    const duracaoMedia = locacoesPeriodo.length > 0
+      ? locacoesPeriodo.reduce((sum, r) => {
+          const fim = r.dataFim ? new Date(r.dataFim + "T00:00:00") : new Date();
+          const inicio = new Date(r.dataInicio + "T00:00:00");
+          return sum + Math.max(0, Math.round((fim.getTime() - inicio.getTime()) / 86400000));
+        }, 0) / locacoesPeriodo.length
+      : 0;
 
     return {
-      entradas, saidas, lucro, previsaoReceita, ticketMedio, roi, inadimplencia,
-      alugadas, disponiveis, emManutencao, inativas, vendidas, frotaAtual, taxaUtilizacao,
-      receitaPorMotoPorMes, custoMedioPorMotoPorMes,
-      revpavd, tempoMedioLocacao, concentracaoTop3,
-      inadFaixa1, inadFaixa2, inadFaixa3, diasPeriodo,
+      entradas, saidas, lucro,
+      revpavd, ticketMedio, taxaUtilizacao,
+      frotaTotal, alugadas, disponiveis,
+      contratosAtivosCount: contratosAtivos.length,
+      contratosComReceita,
+      entradasLocacao,
+      despesaOperacional, despesaAdministrativa, despesaInvestimento,
+      marketingSpend, cac, novosContratos,
+      duracaoMedia, locacoesPeriodoCount: locacoesPeriodo.length,
     };
-  }, [financial, maintenance, fines, motos, rentals, dateRange, inRange, diasPeriodo]);
+  }, [financial, motos, rentals, inRange, diasPeriodo]);
 
   const growth = useMemo(() => {
     const ms = dateRange.to.getTime() - dateRange.from.getTime();
@@ -146,652 +101,702 @@ export const Dashboard = memo(function Dashboard() {
     const inPrev = (s: string) => {
       try { const d = parseISO(s); return d >= prevFrom && d <= prevTo; } catch { return false; }
     };
-
     const receitaPrev = financial.filter(e => !e.ignorada && e.tipo === "receita" && e.pago && inPrev(e.data)).reduce((s, e) => s + e.valor, 0);
     const despesaPrev = financial.filter(e => !e.ignorada && e.tipo === "despesa" && e.pago && inPrev(e.data)).reduce((s, e) => s + e.valor, 0);
     const lucroPrev = receitaPrev - despesaPrev;
+    const pct = (cur: number, prev: number) => prev === 0 ? (cur === 0 ? 0 : 100) : ((cur - prev) / Math.abs(prev)) * 100;
+    return { lucroDelta: pct(stats.lucro, lucroPrev) };
+  }, [financial, dateRange, stats.lucro]);
 
-    const frotaAtual = motos.filter(m => m.status !== "vendida" && m.status !== "inativa").length;
-    const frotaPrev = motos.filter(m => {
-      const created = (m as any).createdAt || (m as any).created_at;
-      if (!created) return true;
-      try { return parseISO(created) <= prevTo; } catch { return true; }
-    }).filter(() => true).length;
-
-    const margemAtual = stats.entradas > 0 ? (stats.lucro / stats.entradas) * 100 : 0;
-    const margemPrev = receitaPrev > 0 ? (lucroPrev / receitaPrev) * 100 : 0;
-
-    const pct = (cur: number, prev: number) => {
-      if (prev === 0) return cur === 0 ? 0 : 100;
-      return ((cur - prev) / Math.abs(prev)) * 100;
-    };
-
-    return {
-      receitaPrev, lucroPrev, frotaAtual, frotaPrev, margemAtual, margemPrev,
-      receitaDelta: pct(stats.entradas, receitaPrev),
-      lucroDelta: pct(stats.lucro, lucroPrev),
-      frotaDelta: pct(frotaAtual, frotaPrev),
-      margemDelta: margemAtual - margemPrev,
-    };
-  }, [financial, motos, dateRange, stats.entradas, stats.lucro]);
-
-  const motoPerformance = useMemo((): MotoPerf[] => {
+  const motoPerf = useMemo(() => {
     return motos
       .filter(m => m.status !== "vendida")
       .map(moto => {
-        // Período efetivo da moto começa na data de compra (se posterior ao início do filtro)
-        const motoStart = moto.dataCompra
-          ? new Date(Math.max(new Date(moto.dataCompra + "T00:00:00").getTime(), dateRange.from.getTime()))
-          : dateRange.from;
-        const diasPeriodoMoto = Math.max(0, Math.floor((dateRange.to.getTime() - motoStart.getTime()) / 86400000));
-
-        const receita = financial
+        const rec = financial
           .filter(e => !e.ignorada && e.tipo === "receita" && e.pago && e.motoId === moto.id && inRange(e.data))
           .reduce((s, e) => s + e.valor, 0);
-
-        const custos = financial
+        const desp = financial
           .filter(e => !e.ignorada && e.tipo === "despesa" && e.pago && e.motoId === moto.id && inRange(e.data))
           .reduce((s, e) => s + e.valor, 0);
-
-        // Dias em manutenção: apenas registros com dataFim preenchido
-        const diasManutencao = maintenance
-          .filter(mt => mt.motoId === moto.id && mt.dataFim)
-          .reduce((total, mt) => {
-            const start = new Date(Math.max(new Date(mt.data + "T00:00:00").getTime(), motoStart.getTime()));
-            const end = new Date(Math.min(new Date(mt.dataFim! + "T00:00:00").getTime(), dateRange.to.getTime()));
-            return total + Math.max(0, Math.floor((end.getTime() - start.getTime()) / 86400000));
-          }, 0);
-
-        const diasLocada = rentals
-          .filter(r => r.motoId === moto.id && r.status !== "cancelada")
-          .reduce((total, r) => {
-            const ini = new Date(Math.max(new Date(r.dataInicio + "T00:00:00").getTime(), motoStart.getTime()));
-            const fim = new Date(Math.min(
-              r.dataFim ? new Date(r.dataFim + "T00:00:00").getTime() : dateRange.to.getTime(),
-              dateRange.to.getTime()
-            ));
-            return total + Math.max(0, Math.floor((fim.getTime() - ini.getTime()) / 86400000));
-          }, 0);
-
-        const diasOciosa = Math.max(0, diasPeriodoMoto - diasLocada - diasManutencao);
-        const ebitda = receita - custos;
-        const margem = receita > 0 ? (ebitda / receita) * 100 : 0;
-
-        return { id: moto.id, modelo: moto.modelo, placa: moto.placa, status: moto.status, receita, custos, ebitda, margem, diasLocada, diasOciosa, diasManutencao, diasPeriodoMoto };
+        const resultado = rec - desp;
+        const margem = rec > 0 ? (resultado / rec) * 100 : 0;
+        return { moto, receita: rec, despesa: desp, resultado, margem };
       })
+      .filter(p => p.receita > 0 || p.despesa > 0)
       .sort((a, b) => b.receita - a.receita);
-  }, [motos, financial, maintenance, rentals, dateRange, inRange]);
+  }, [financial, motos, inRange]);
 
-  const motosSorted = useMemo(() =>
-    [...motoPerformance].sort((a, b) => {
-      const getVal = (m: MotoPerf) => {
-        const v = m[motoSort.col];
-        return typeof v === "number" ? v : 0;
-      };
-      return motoSort.dir === "desc" ? getVal(b) - getVal(a) : getVal(a) - getVal(b);
-    }), [motoPerformance, motoSort]);
+  const weekBounds = useMemo(() => {
+    const t = new Date(); t.setHours(0, 0, 0, 0);
+    const start = new Date(t); start.setDate(t.getDate() - t.getDay());
+    const end = new Date(start); end.setDate(start.getDate() + 6); end.setHours(23, 59, 59, 999);
+    return { start, end };
+  }, []);
 
-  const toggleSort = (col: keyof MotoPerf) =>
-    setMotoSort(p => ({ col, dir: p.col === col && p.dir === "desc" ? "asc" : "desc" }));
+  const cobrancasSemana = useMemo(() => {
+    const inWeek = (d: string) => {
+      try { const dt = new Date(d + "T00:00:00"); return dt >= weekBounds.start && dt <= weekBounds.end; }
+      catch { return false; }
+    };
+    const contratosAtivos = rentals.filter(r => r.status === "ativa").length;
+    const weekEntries = financial.filter(e => e.tipo === "receita" && !e.ignorada && e.dataPrevista && inWeek(e.dataPrevista));
+    const aluguelsGerados = weekEntries.filter(e => e.categoria === "aluguel").length;
+    const naoGeradas = Math.max(0, contratosAtivos - aluguelsGerados);
+    const emAberto = weekEntries.filter(e => !e.pago).length;
+    const geradas = weekEntries.length;
+    const esperadas = geradas + naoGeradas;
+    const parcelamentos = weekEntries.filter(e => e.serieId && e.categoria !== "aluguel").length;
+    const multas = weekEntries.filter(e => e.categoria === "multa_transito_receita").length;
+    const manutencoes = weekEntries.filter(e => e.categoria === "manutencao_receita").length;
+    return { esperadas, geradas, emAberto, naoGeradas, contratosAtivos, aluguelsGerados, parcelamentos, multas, manutencoes };
+  }, [financial, rentals, weekBounds]);
 
-  const idMaiorReceita = motoPerformance[0]?.id;
-  const motosComReceita = motoPerformance.filter(m => m.receita > 0);
-  const idMenorMargem = motosComReceita.length > 0
-    ? [...motosComReceita].sort((a, b) => a.margem - b.margem)[0].id
-    : null;
-  const motoMaxOciosa = motoPerformance.reduce<MotoPerf | null>((acc, m) =>
-    m.diasOciosa > (acc?.diasOciosa ?? 0) ? m : acc, null
-  );
-  const idMaxOciosa = (motoMaxOciosa && motoMaxOciosa.diasOciosa > 10) ? motoMaxOciosa.id : null;
+  const operacional = useMemo(() => {
+    const hoje = new Date(); hoje.setHours(0, 0, 0, 0);
+    const hoje_ts = hoje.getTime();
+    const em7d = new Date(hoje); em7d.setDate(hoje.getDate() + 7);
+    const em48h = new Date(hoje); em48h.setDate(hoje.getDate() + 2);
+    const diffDias = (iso: string) => Math.floor((hoje_ts - new Date(iso + "T00:00:00").getTime()) / 86400000);
 
-  const totalReceita = motoPerformance.reduce((s, m) => s + m.receita, 0);
-  const totalCusto = motoPerformance.reduce((s, m) => s + m.custos, 0);
-  const totalEbitda = totalReceita - totalCusto;
-  const margemMedia = totalReceita > 0 ? (totalEbitda / totalReceita) * 100 : 0;
+    const pendentes = financial.filter(e => !e.ignorada && e.tipo === "receita" && !e.pago && e.dataPrevista);
+    const faixa2 = pendentes.filter(e => { const d = diffDias(e.dataPrevista!); return d > 15 && d <= 30; });
+    const faixa3 = pendentes.filter(e => diffDias(e.dataPrevista!) > 30);
+    const inadTotal =
+      pendentes.filter(e => { const d = diffDias(e.dataPrevista!); return d >= 0 && d <= 15; }).reduce((s, e) => s + e.valor, 0) +
+      faixa2.reduce((s, e) => s + e.valor, 0) +
+      faixa3.reduce((s, e) => s + e.valor, 0);
+    const clientesInad = new Set(
+      pendentes.filter(e => diffDias(e.dataPrevista!) > 0).map(e => e.clienteId || e.clienteNome).filter(Boolean)
+    ).size;
 
-  const chartData = useMemo(() => {
-    const motosAtivas = motos.filter(m => m.status !== "inativa" && m.status !== "vendida").length || 1;
-    const alugadasCount = motos.filter(m => m.status === "alugada").length;
-    const utilizacaoBase = motos.length > 0 ? (alugadasCount / motos.length) * 100 : 0;
-    const months: Record<string, { entradas: number; saidas: number; lucro: number; month: string; utilizacao: number; receitaPorMoto: number }> = {};
-    for (let i = 11; i >= 0; i--) {
-      const d = subMonths(new Date(), i);
-      const key = format(d, "yyyy-MM");
-      months[key] = { entradas: 0, saidas: 0, lucro: 0, month: format(d, "MMM", { locale: ptBR }), utilizacao: utilizacaoBase, receitaPorMoto: 0 };
+    const multasPend = fines.filter(f => f.status === "pendente");
+    const multasHoje = multasPend.filter(f => new Date(f.dataMulta + "T00:00:00") <= hoje);
+    const multas48hList = multasPend.filter(f => { const d = new Date(f.dataMulta + "T00:00:00"); return d > hoje && d <= em48h; });
+    const multasValor = multasPend.reduce((s, f) => s + f.valor, 0);
+    const multas48hValor = [...multasHoje, ...multas48hList].reduce((s, f) => s + f.valor, 0);
+
+    const manPend = maintenance.filter(m => m.status === "agendada" || m.status === "em_andamento");
+    const manParadas = manPend.filter(m =>
+      Math.floor((hoje_ts - new Date(m.data + "T00:00:00").getTime()) / 86400000) > 5
+    );
+
+    const brandCfg = loadBrandConfig();
+    const globalCfg = loadGlobalConfig();
+    const motosOp = motos.filter(m => m.status === "alugada" || m.status === "disponivel");
+    let oilVencidas = 0;
+    let oilAtencao = 0;
+    for (const m of motosOp) {
+      const sit = getOilStatus(m, brandCfg, globalCfg, rentals).situation;
+      if (sit === "vencida") oilVencidas++;
+      else if (sit === "atencao") oilAtencao++;
     }
-    financial.filter(e => !e.ignorada && e.pago).forEach(e => {
-      const key = e.data.substring(0, 7);
-      if (months[key]) {
-        if (e.tipo === "receita") months[key].entradas += e.valor;
-        else months[key].saidas += e.valor;
-      }
-    });
-    Object.values(months).forEach(m => {
-      m.lucro = m.entradas - m.saidas;
-      m.receitaPorMoto = m.entradas / motosAtivas;
-    });
-    return Object.values(months);
-  }, [financial, motos]);
 
-  const statusMap: Record<string, { label: string; cls: string }> = {
-    alugada: { label: "alugada", cls: "bg-primary/10 text-primary" },
-    disponivel: { label: "disponível", cls: "bg-success/10 text-success" },
-    manutencao: { label: "manutenção", cls: "bg-warning/10 text-warning" },
-    inativa: { label: "inativa", cls: "bg-muted text-muted-foreground" },
-  };
+    const motosDisp = motos.filter(m => m.status === "disponivel");
+    const ociosaDias = motosDisp.map(moto => {
+      const fins = rentals.filter(r => r.motoId === moto.id && r.status === "finalizada" && r.dataFim);
+      if (fins.length === 0) return 999;
+      const ultiTs = fins.reduce((max, r) => Math.max(max, new Date(r.dataFim! + "T00:00:00").getTime()), 0);
+      return Math.floor((hoje_ts - ultiTs) / 86400000);
+    });
+    const ociosas7 = ociosaDias.filter(d => d >= 7).length;
+    const ociosas15 = ociosaDias.filter(d => d >= 15).length;
 
-  const SortTh = ({ col, label }: { col: keyof MotoPerf; label: string }) => (
-    <th
-      className="px-4 py-3 text-left text-[10px] font-medium uppercase tracking-wide cursor-pointer select-none whitespace-nowrap"
-      onClick={() => toggleSort(col)}
-    >
-      <span className={`flex items-center gap-0.5 ${motoSort.col === col ? "text-foreground" : "text-muted-foreground"}`}>
-        {label}
-        {motoSort.col === col
-          ? (motoSort.dir === "asc" ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />)
-          : <ChevronDown className="h-3 w-3 opacity-30" />}
-      </span>
-    </th>
-  );
+    const contratosAtivos = rentals.filter(r => r.status === "ativa");
+    const vencidos = contratosAtivos.filter(r =>
+      r.dataFimContrato && new Date(r.dataFimContrato + "T00:00:00") < hoje
+    ).length;
+    const renovar = contratosAtivos.filter(r => {
+      if (!r.dataFimContrato) return false;
+      const d = new Date(r.dataFimContrato + "T00:00:00");
+      return d >= hoje && d <= em7d;
+    }).length;
+
+    return {
+      inad: {
+        total: inadTotal, clientes: clientesInad,
+        acima30: faixa3.length, entre16e30: faixa2.length,
+        faixa3val: faixa3.reduce((s, e) => s + e.valor, 0),
+        faixa2val: faixa2.reduce((s, e) => s + e.valor, 0),
+      },
+      multas: { valor: multasValor, count: multasPend.length, hojeCount: multasHoje.length, valor48h: multas48hValor },
+      oil: { vencidas: oilVencidas, atencao: oilAtencao, total: motosOp.length },
+      man: { pendentes: manPend.length, paradas: manParadas.length },
+      ociosas: { ociosas7, ociosas15, total: motosDisp.length },
+      contratos: { ativos: contratosAtivos.length, vencidos, renovar },
+    };
+  }, [financial, fines, maintenance, motos, rentals]);
+
+  const margemAtual = stats.entradas > 0 ? (stats.lucro / stats.entradas) * 100 : 0;
+  const totalNatureza = stats.despesaOperacional + stats.despesaAdministrativa + stats.despesaInvestimento;
+
+  const inadGravity: "danger" | "warn" | "ok" = operacional.inad.faixa3val > 0 ? "danger" : operacional.inad.faixa2val > 0 ? "warn" : "ok";
+  const multasGravity: "danger" | "warn" | "ok" = operacional.multas.hojeCount > 0 ? "danger" : operacional.multas.valor48h > 0 ? "warn" : "ok";
+  const oilGravity: "danger" | "warn" | "ok" = operacional.oil.vencidas > 0 ? "danger" : operacional.oil.atencao > 0 ? "warn" : "ok";
+  const manGravity: "danger" | "warn" | "ok" = operacional.man.paradas > 0 ? "danger" : operacional.man.pendentes > 0 ? "warn" : "ok";
+  const ociosaGravity: "danger" | "warn" | "ok" = operacional.ociosas.ociosas15 > 0 ? "danger" : operacional.ociosas.ociosas7 > 0 ? "warn" : "ok";
+  const contratoGravity: "danger" | "warn" | "ok" = operacional.contratos.vencidos > 0 ? "danger" : operacional.contratos.renovar > 0 ? "warn" : "ok";
+
+  const isPositive = stats.lucro >= 0;
+  const deltaPositive = growth.lucroDelta >= 0;
 
   return (
-    <div className="p-4 md:p-6 space-y-5 max-w-[1400px] mx-auto">
-      {/* Header */}
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <h2 className="text-xl font-bold text-foreground">Dashboard</h2>
-        <div className="flex items-center gap-1.5 flex-wrap">
-          {[
-            { label: "Este Mês", days: -1 },
-            { label: "30 dias", days: 30 },
-            { label: "60 dias", days: 60 },
-            { label: "90 dias", days: 90 },
-            { label: "Último ano", days: -9 },
-            { label: "Máximo", days: -10 },
-          ].map(p => {
-            const today = new Date();
-            let pFrom: Date;
-            if (p.days === -1) pFrom = startOfMonth(today);
-            else if (p.days === -9) pFrom = new Date(today.getFullYear() - 1, 0, 1);
-            else if (p.days === -10) pFrom = new Date(2020, 0, 1);
-            else pFrom = subDays(today, p.days);
+    <div className="p-6 space-y-4 bg-slate-50 min-h-screen">
+
+      {/* TOPBAR */}
+      <div className="flex items-center justify-between">
+        <span className="text-xs uppercase tracking-[0.15em] text-muted-foreground font-semibold">Visão Geral</span>
+        <div className="flex items-center gap-0.5 bg-white border border-border rounded-xl p-1 shadow-sm">
+          {PERIODS.map(p => {
+            const pFrom = p.getFrom();
             const isActive = dateRange.from.toDateString() === pFrom.toDateString();
             return (
-              <Button key={p.label} variant="ghost" size="sm"
-                className={`h-8 px-3 text-xs font-medium rounded-full ${isActive ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}
-                onClick={() => setDateRange({
-                  from: pFrom,
-                  to: p.days === -9 ? new Date(new Date().getFullYear() - 1, 11, 31) : new Date(),
-                })}>
+              <button
+                key={p.label}
+                onClick={() => setDateRange({ from: pFrom, to: new Date() })}
+                className={`px-3.5 py-1.5 text-xs rounded-lg transition-all font-semibold ${
+                  isActive
+                    ? "bg-primary text-primary-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground hover:bg-slate-100"
+                }`}
+              >
                 {p.label}
-              </Button>
+              </button>
             );
           })}
-          <Popover open={calOpen} onOpenChange={setCalOpen}>
-            <PopoverTrigger asChild>
-              <Button variant="outline" size="sm" className="h-8 gap-1.5 text-xs rounded-full">
-                <CalendarIcon className="h-3.5 w-3.5" />
-                {format(dateRange.from, "dd/MM/yy")} — {format(dateRange.to, "dd/MM/yy")}
-              </Button>
-            </PopoverTrigger>
-            <PopoverContent className="w-auto p-0 shadow-lg" align="end">
-              <div className="flex divide-x divide-border">
-                <div className="py-3 px-2 w-[150px] space-y-0.5">
-                  {[
-                    { label: "Hoje", days: 0 },
-                    { label: "Ontem", days: 1 },
-                    { label: "Últimos 7 dias", days: 7 },
-                    { label: "Últimos 14 dias", days: 14 },
-                    { label: "Esta semana", days: -3 },
-                    { label: "Semana passada", days: -4 },
-                    { label: "Este mês", days: -1 },
-                    { label: "Mês passado", days: -2 },
-                    { label: "Este trimestre", days: -5 },
-                    { label: "Trimestre passado", days: -6 },
-                    { label: "Este semestre", days: -7 },
-                    { label: "Este ano", days: -8 },
-                    { label: "Ano passado", days: -9 },
-                    { label: "Máximo", days: -10 },
-                  ].map(p => (
-                    <button
-                      key={p.label}
-                      className="w-full text-left text-[13px] px-3 py-1.5 rounded-md transition-colors text-foreground hover:bg-accent"
-                      onClick={() => {
-                        const today = new Date();
-                        let from: Date, to: Date;
-                        if (p.days === 0) { from = today; to = today; }
-                        else if (p.days === 1) { from = subDays(today, 1); to = subDays(today, 1); }
-                        else if (p.days === -1) { from = startOfMonth(today); to = endOfMonth(today); }
-                        else if (p.days === -2) { from = startOfMonth(subMonths(today, 1)); to = endOfMonth(subMonths(today, 1)); }
-                        else if (p.days === -3) { const d = today.getDay(); from = subDays(today, d); to = today; }
-                        else if (p.days === -4) { const d = today.getDay(); from = subDays(today, d + 7); to = subDays(today, d + 1); }
-                        else if (p.days === -5) { const q = Math.floor(today.getMonth() / 3) * 3; from = new Date(today.getFullYear(), q, 1); to = today; }
-                        else if (p.days === -6) { const q = Math.floor(today.getMonth() / 3) * 3; from = new Date(today.getFullYear(), q - 3, 1); to = new Date(today.getFullYear(), q, 0); }
-                        else if (p.days === -7) { const s = today.getMonth() < 6 ? 0 : 6; from = new Date(today.getFullYear(), s, 1); to = today; }
-                        else if (p.days === -8) { from = new Date(today.getFullYear(), 0, 1); to = today; }
-                        else if (p.days === -9) { from = new Date(today.getFullYear() - 1, 0, 1); to = new Date(today.getFullYear() - 1, 11, 31); }
-                        else if (p.days === -10) { from = new Date(2020, 0, 1); to = today; }
-                        else { from = subDays(today, p.days); to = today; }
-                        setDateRange({ from, to });
-                      }}
-                    >
-                      {p.label}
-                    </button>
-                  ))}
-                </div>
-                <div className="p-3 space-y-2">
-                  <div className="flex gap-6 text-xs text-muted-foreground px-1">
-                    <span>De: <span className="font-medium text-foreground">{format(dateRange.from, "dd/MM/yyyy")}</span></span>
-                    <span>Até: <span className="font-medium text-foreground">{format(dateRange.to, "dd/MM/yyyy")}</span></span>
-                  </div>
-                  <Calendar
-                    mode="range"
-                    selected={{ from: dateRange.from, to: dateRange.to }}
-                    onSelect={(range: any) => {
-                      if (range?.from) setDateRange(prev => ({ ...prev, from: range.from }));
-                      if (range?.to) setDateRange(prev => ({ ...prev, to: range.to }));
-                    }}
-                    numberOfMonths={2}
-                    locale={ptBR}
-                    className="p-0 pointer-events-auto"
-                  />
-                  <div className="flex gap-2 justify-end pt-1 border-t border-border">
-                    <Button variant="ghost" size="sm" className="text-xs h-8" onClick={() => { setDateRange({ from: subMonths(new Date(), 12), to: new Date() }); setCalOpen(false); }}>
-                      Limpar
-                    </Button>
-                    <Button size="sm" className="text-xs h-8" onClick={() => setCalOpen(false)}>
-                      Aplicar
-                    </Button>
-                  </div>
-                </div>
-              </div>
-            </PopoverContent>
-          </Popover>
         </div>
       </div>
 
-      {/* SEÇÃO 1 — Highlight Cards */}
-      <div className="grid gap-4 grid-cols-1 md:grid-cols-3">
-        <HighlightCard
-          label="Crescimento da Frota"
-          value={String(growth.frotaAtual)}
-          unit="motos ativas"
-          delta={growth.frotaDelta}
-          deltaSuffix="vs período anterior"
-          icon={<Bike className="h-5 w-5" />}
-          accent="primary"
-          info="Número atual de motos ativas (não vendidas/inativas) e variação percentual em relação ao período anterior equivalente."
+      {/* HERO FINANCEIRO */}
+      <div
+        className="rounded-2xl border border-border shadow-sm overflow-hidden relative"
+        style={{
+          background: isPositive
+            ? "linear-gradient(135deg, #f0fdf4 0%, #ffffff 55%)"
+            : "linear-gradient(135deg, #fef2f2 0%, #ffffff 55%)",
+        }}
+      >
+        {/* Barra vertical de acento */}
+        <div
+          className="absolute left-0 top-0 bottom-0 w-1 rounded-l-2xl"
+          style={{ background: isPositive ? "#00C86A" : "#ef4444" }}
         />
-        <HighlightCard
-          label="Faturamento"
-          value={fmt(stats.entradas)}
-          unit={`anterior: ${fmtShort(growth.receitaPrev)}`}
-          delta={growth.receitaDelta}
-          deltaSuffix="vs período anterior"
-          icon={<TrendingUp className="h-5 w-5" />}
-          accent="success"
-          info="Receitas pagas no período selecionado e comparação com o mesmo intervalo imediatamente anterior."
-        />
-        <HighlightCard
-          label="Rentabilidade Líquida"
-          value={fmt(stats.lucro)}
-          unit={`margem ${growth.margemAtual.toFixed(1)}%`}
-          delta={growth.lucroDelta}
-          deltaSuffix="vs período anterior"
-          icon={<DollarSign className="h-5 w-5" />}
-          accent={stats.lucro >= 0 ? "success" : "destructive"}
-          info="Lucro líquido (Entradas − Saídas) e margem líquida (Lucro ÷ Entradas). Comparação com o período anterior equivalente."
-        />
+        <div className="p-6 pl-8">
+          <div className="flex items-start justify-between gap-6">
+
+            {/* Esquerda: número principal */}
+            <div className="space-y-2 min-w-0 flex-1">
+              <p className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground font-semibold">Resultado Líquido</p>
+              <p
+                className="text-6xl font-bold tracking-tight leading-none font-mono"
+                style={{ color: isPositive ? "#00C86A" : "#ef4444" }}
+              >
+                {fmt(stats.lucro)}
+              </p>
+              <div className="flex items-center gap-2.5 pt-2">
+                <span className={`inline-flex items-center px-3 py-1.5 rounded-lg text-sm font-black font-mono ${
+                  margemAtual < 0
+                    ? "bg-red-100 text-red-700"
+                    : margemAtual < 15
+                    ? "bg-yellow-100 text-yellow-700"
+                    : "bg-green-100 text-green-700"
+                }`}>
+                  {margemAtual.toFixed(1)}%
+                </span>
+                <span className="text-xs text-slate-400">margem líquida</span>
+              </div>
+            </div>
+
+            {/* Direita: delta + breakdown */}
+            <div className="shrink-0 flex flex-col items-end gap-3">
+              <div className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold border ${
+                deltaPositive
+                  ? "bg-green-500/10 text-green-700 border-green-200"
+                  : "bg-red-500/10 text-red-700 border-red-200"
+              }`}>
+                {deltaPositive ? <TrendingUp className="h-4 w-4" /> : <TrendingDown className="h-4 w-4" />}
+                {deltaPositive ? "+" : ""}{growth.lucroDelta.toFixed(1)}% vs anterior
+              </div>
+
+              <div className="bg-white border border-border rounded-xl p-4 space-y-2.5 w-64 shadow-sm">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-green-500" />
+                    <span className="text-xs text-muted-foreground">Receitas</span>
+                  </div>
+                  <span className="text-xs font-mono font-bold text-green-600 tabular-nums">+ {fmt(stats.entradas)}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-red-400" />
+                    <span className="text-xs text-muted-foreground">Despesas</span>
+                  </div>
+                  <span className="text-xs font-mono font-bold text-slate-500 tabular-nums">− {fmt(stats.saidas)}</span>
+                </div>
+                <div className="border-t border-slate-100 pt-2.5 flex items-center justify-between">
+                  <span className="text-xs font-semibold text-slate-700">Resultado</span>
+                  <span className={`text-sm font-mono font-black tabular-nums ${isPositive ? "text-green-600" : "text-destructive"}`}>
+                    {fmt(stats.lucro)}
+                  </span>
+                </div>
+                <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-red-400 rounded-full transition-all"
+                    style={{ width: `${stats.entradas > 0 ? Math.min(100, (stats.saidas / stats.entradas) * 100) : 100}%` }}
+                  />
+                </div>
+                <p className="text-[10px] text-slate-400">
+                  Todas as entradas e saídas pagas no período
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
 
-      {/* SEÇÃO 2 — 4 KPI Cards estratégicos */}
-      <div className="grid gap-3 grid-cols-2 md:grid-cols-4">
+      {/* MÉTRICAS SECUNDÁRIAS */}
+      <div className="grid grid-cols-3 gap-4">
+
         {/* RevPAVD */}
-        <Card>
-          <CardContent className="p-4">
-            <p className="text-[11px] uppercase tracking-wide text-muted-foreground flex items-center font-medium">
-              REVPAVD
-              <InfoTooltip text="Receita total ÷ (motos ativas × dias do período). KPI padrão da indústria de rental — equivalente ao RevPAR hoteleiro." />
-            </p>
-            <p className="text-xl font-bold text-foreground mt-1">
-              {fmt(stats.revpavd)}/moto·dia
-            </p>
-            <p className="text-xs text-muted-foreground mt-0.5">receita por moto disponível por dia</p>
-          </CardContent>
-        </Card>
-
-        {/* Tempo Médio de Locação */}
-        <Card>
-          <CardContent className="p-4">
-            <p className="text-[11px] uppercase tracking-wide text-muted-foreground flex items-center font-medium">
-              TEMPO MÉDIO DE LOCAÇÃO
-              <InfoTooltip text="Média de dias de duração dos contratos encerrados (data de devolução) no período selecionado." />
-            </p>
-            {stats.tempoMedioLocacao === null ? (
-              <p className="text-xl font-bold text-muted-foreground mt-1">— sem dados</p>
-            ) : (
-              <p className="text-xl font-bold text-foreground mt-1">
-                {Math.round(stats.tempoMedioLocacao)} dias
-              </p>
-            )}
-            <p className="text-xs text-muted-foreground mt-0.5">duração média dos contratos</p>
-          </CardContent>
-        </Card>
-
-        {/* Concentração Top 3 */}
-        <Card className={stats.concentracaoTop3 > 40 ? "bg-destructive/5" : ""}>
-          <CardContent className="p-4">
-            <p className="text-[11px] uppercase tracking-wide text-muted-foreground flex items-center font-medium">
-              CONCENTRAÇÃO TOP 3
-              <InfoTooltip text="Quando 3 clientes concentram >40% da receita, a saída de um pode impactar significativamente o faturamento." />
-            </p>
-            <div className="flex items-center gap-2 mt-1">
-              <p className={`text-xl font-bold ${stats.concentracaoTop3 > 40 ? "text-destructive" : "text-foreground"}`}>
-                {stats.concentracaoTop3.toFixed(1)}%
-              </p>
-              {stats.concentracaoTop3 > 40 && (
-                <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-destructive/10 text-destructive">Risco</span>
-              )}
+        <div className="bg-white rounded-2xl border border-border shadow-sm overflow-hidden">
+          <div className="h-[3px]" style={{ background: "#00C86A" }} />
+          <div className="p-5 space-y-4">
+            <p className="text-[11px] uppercase tracking-[0.15em] text-muted-foreground font-semibold">RevPAVD</p>
+            <div>
+              <p className="text-3xl font-bold tracking-tight tabular-nums font-mono text-slate-900">{fmt(stats.revpavd)}</p>
+              <p className="text-xs text-muted-foreground mt-1">receita por moto por dia</p>
             </div>
-            <p className="text-xs text-muted-foreground mt-0.5">% da receita nos 3 maiores clientes</p>
-          </CardContent>
-        </Card>
-
-        {/* Inadimplência por Faixa */}
-        <Card>
-          <CardContent className="p-4">
-            <p className="text-[11px] uppercase tracking-wide text-muted-foreground flex items-center font-medium">
-              INADIMPLÊNCIA
-              <InfoTooltip text="Receitas pendentes agrupadas por dias em atraso. Valores acima de 30 dias exigem ação imediata." />
-            </p>
-            <div className="mt-2 space-y-1.5">
-              <div className="flex justify-between text-xs">
-                <span className="text-muted-foreground">0–15 dias</span>
-                <span className={stats.inadFaixa1 > 0 ? "text-warning font-medium" : "text-muted-foreground"}>{fmt(stats.inadFaixa1)}</span>
+            <div className="border-t border-slate-100 pt-3 space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] text-muted-foreground">Receita total</span>
+                <span className="text-[11px] font-mono font-semibold text-slate-700">{fmt(stats.entradas)}</span>
               </div>
-              <div className="flex justify-between text-xs">
-                <span className="text-muted-foreground">16–30 dias</span>
-                <span className={stats.inadFaixa2 > 0 ? "text-warning font-medium" : "text-muted-foreground"}>{fmt(stats.inadFaixa2)}</span>
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] text-muted-foreground">÷ frota × dias</span>
+                <span className="text-[11px] font-mono font-semibold text-slate-700">{stats.frotaTotal} motos × {diasPeriodo}d</span>
               </div>
-              <div className="flex justify-between text-xs">
-                <span className="text-muted-foreground">+30 dias</span>
-                <span className={stats.inadFaixa3 > 0 ? "text-destructive font-medium" : "text-muted-foreground"}>{fmt(stats.inadFaixa3)}</span>
+              <div className="pt-1 space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] text-slate-400">Ocupação da frota</span>
+                  <span className={`text-[11px] font-bold ${
+                    stats.taxaUtilizacao >= 80 ? "text-green-600" :
+                    stats.taxaUtilizacao >= 60 ? "text-yellow-600" : "text-red-500"
+                  }`}>{stats.taxaUtilizacao.toFixed(0)}%</span>
+                </div>
+                <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
+                  <div
+                    className={`h-full rounded-full transition-all duration-700 ${
+                      stats.taxaUtilizacao >= 80 ? "bg-green-500" :
+                      stats.taxaUtilizacao >= 60 ? "bg-yellow-400" : "bg-red-400"
+                    }`}
+                    style={{ width: `${stats.taxaUtilizacao}%` }}
+                  />
+                </div>
+                <p className="text-[10px] text-slate-400">Motos ociosas penalizam o indicador</p>
               </div>
             </div>
-          </CardContent>
-        </Card>
+          </div>
+        </div>
+
+        {/* Ticket Médio */}
+        <div className="bg-white rounded-2xl border border-border shadow-sm overflow-hidden">
+          <div className="h-[3px] bg-indigo-500" />
+          <div className="p-5 space-y-4">
+            <p className="text-[11px] uppercase tracking-[0.15em] text-muted-foreground font-semibold">Ticket Médio</p>
+            <div>
+              <p className="text-3xl font-bold tracking-tight tabular-nums font-mono text-slate-900">{fmt(stats.ticketMedio)}</p>
+              <p className="text-xs text-muted-foreground mt-1">receita média por contrato</p>
+            </div>
+            <div className="border-t border-slate-100 pt-3 space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] text-muted-foreground">Receita de locações</span>
+                <span className="text-[11px] font-mono font-semibold text-slate-700">{fmt(stats.entradasLocacao)}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] text-muted-foreground">÷ contratos únicos</span>
+                <span className="text-[11px] font-mono font-semibold text-slate-700">{stats.contratosComReceita}</span>
+              </div>
+              <p className="text-[10px] text-slate-400 pt-1">
+                Exclui receitas sem contrato (empréstimos, aportes)
+              </p>
+            </div>
+          </div>
+        </div>
+
+        {/* Frota & Locações */}
+        <div className="bg-white rounded-2xl border border-border shadow-sm overflow-hidden">
+          <div className="h-[3px] bg-violet-500" />
+          <div className="p-5 space-y-4">
+            <p className="text-[11px] uppercase tracking-[0.15em] text-muted-foreground font-semibold">Frota & Locações</p>
+            {/* Dois números principais lado a lado */}
+            <div className="grid grid-cols-2 gap-0 divide-x divide-slate-100">
+              <div className="pr-4">
+                <p className="text-3xl font-bold tracking-tight tabular-nums font-mono text-slate-900">{stats.frotaTotal}</p>
+                <p className="text-xs text-muted-foreground mt-1">motos em operação</p>
+              </div>
+              <div className="pl-4">
+                <p className="text-3xl font-bold tracking-tight tabular-nums font-mono text-violet-600">
+                  {Math.round(stats.duracaoMedia)}<span className="text-xl">d</span>
+                </p>
+                <p className="text-xs text-muted-foreground mt-1">duração média</p>
+              </div>
+            </div>
+            <div className="border-t border-slate-100 pt-3 space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] text-muted-foreground">Alugadas agora</span>
+                <span className="text-[11px] font-mono font-semibold text-slate-700">{stats.alugadas} de {stats.frotaTotal}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] text-muted-foreground">Locações no período</span>
+                <span className="text-[11px] font-mono font-semibold text-slate-700">{stats.locacoesPeriodoCount}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
       </div>
 
-      {/* SEÇÃO 3 — Linha resumo */}
-      <p className="text-sm text-muted-foreground">
-        Frota: {stats.frotaAtual} motos · {stats.alugadas} alugadas · {stats.disponiveis} disponíveis · Utilização: {stats.taxaUtilizacao.toFixed(0)}% · Ticket médio: {fmtShort(stats.ticketMedio)} · ROI: {stats.roi.toFixed(1)}%
-      </p>
+      {/* MARKETING + DESPESAS */}
+      <div className="grid grid-cols-5 gap-4">
 
-      {/* SEÇÃO 4 — Tabela Performance por Ativo */}
-      <div>
-        <p className="text-xs uppercase tracking-wide text-muted-foreground mb-3">PERFORMANCE POR ATIVO</p>
-        <Card>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-border">
-                  <th className="px-4 py-3 text-left text-[10px] font-medium uppercase tracking-wide text-muted-foreground whitespace-nowrap">MOTO</th>
-                  <SortTh col="diasLocada" label="DIAS LOCADA" />
-                  <SortTh col="diasOciosa" label="DIAS OCIOSO" />
-                  <SortTh col="receita" label="RECEITA" />
-                  <SortTh col="custos" label="CUSTOS" />
-                  <SortTh col="ebitda" label="EBITDA" />
-                  <SortTh col="margem" label="MARGEM" />
-                </tr>
-              </thead>
-              <tbody>
-                {motosSorted.map(m => {
-                  const isMenorMargem = m.id === idMenorMargem;
-                  const isMaiorReceita = m.id === idMaiorReceita && !isMenorMargem;
-                  const isMaxOciosa = m.id === idMaxOciosa && !isMenorMargem;
-                  const rowCls = [
-                    "border-b border-border transition-colors",
-                    isMenorMargem ? "border-l-2 border-destructive bg-destructive/5" : "",
-                    isMaiorReceita ? "border-l-2 border-success bg-success/5" : "",
-                    isMaxOciosa ? "bg-warning/5" : "",
-                  ].filter(Boolean).join(" ");
+        {/* Marketing */}
+        <div className="col-span-2 bg-white rounded-2xl border border-border shadow-sm overflow-hidden">
+          <div className="h-[3px] bg-rose-500" />
+          <div className="p-5 space-y-4">
+            <p className="text-[11px] uppercase tracking-[0.15em] text-muted-foreground font-semibold">Marketing</p>
+            {/* CAC como métrica principal */}
+            <div>
+              <p className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-1">CAC — Custo por contrato</p>
+              <p className="text-3xl font-bold tabular-nums font-mono text-slate-900">{fmt(stats.cac)}</p>
+              <p className="text-xs text-slate-400 mt-1">
+                {stats.novosContratos > 0
+                  ? `${stats.novosContratos} novos contratos no período`
+                  : "calculado sobre contratos ativos"}
+              </p>
+            </div>
+            {/* Gasto como secundário */}
+            <div className="border-t border-slate-100 pt-3 flex items-center justify-between">
+              <span className="text-[11px] text-slate-400">Gasto com marketing</span>
+              <span className="text-[11px] font-mono font-bold text-slate-600 tabular-nums">{fmt(stats.marketingSpend)}</span>
+            </div>
+          </div>
+        </div>
 
-                  const badge = statusMap[m.status] || { label: m.status, cls: "bg-muted text-muted-foreground" };
-                  const progressPct = m.diasPeriodoMoto > 0 ? Math.min(100, (m.diasLocada / m.diasPeriodoMoto) * 100) : 0;
-
+        {/* Composição das Despesas */}
+        <div className="col-span-3 bg-white rounded-2xl border border-border shadow-sm overflow-hidden">
+          <div className="h-[3px] bg-slate-400" />
+          <div className="p-5">
+            <div className="flex items-center justify-between mb-5">
+              <p className="text-[11px] uppercase tracking-[0.15em] text-muted-foreground font-semibold">Composição das Despesas</p>
+              <p className="text-sm font-bold text-slate-800 tabular-nums font-mono">{fmt(stats.saidas)}</p>
+            </div>
+            {totalNatureza === 0 ? (
+              <div className="flex items-center justify-center h-20 text-sm text-muted-foreground">
+                Nenhuma despesa classificada por natureza.
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {[
+                  { label: "Operacional", value: stats.despesaOperacional, bar: "bg-blue-500", badge: "bg-blue-50 text-blue-700 border-blue-100" },
+                  { label: "Administrativo", value: stats.despesaAdministrativa, bar: "bg-violet-500", badge: "bg-violet-50 text-violet-700 border-violet-100" },
+                  { label: "Investimento", value: stats.despesaInvestimento, bar: "bg-amber-500", badge: "bg-amber-50 text-amber-700 border-amber-100" },
+                ].map(({ label, value, bar, badge }) => {
+                  const pct = totalNatureza > 0 ? (value / totalNatureza) * 100 : 0;
                   return (
-                    <tr key={m.id} className={rowCls}>
-                      <td className="px-4 py-3">
-                        <div className="font-medium text-foreground">{m.modelo}</div>
-                        <div className="text-xs text-muted-foreground">{m.placa}</div>
-                        <span className={`inline-block mt-1 text-[10px] font-medium px-1.5 py-0.5 rounded-full ${badge.cls}`}>{badge.label}</span>
-                      </td>
-                      <td className="px-4 py-3">
-                        <div className="text-foreground">{m.diasLocada}</div>
-                        <div className="mt-1 h-1 w-16 rounded-full bg-muted overflow-hidden">
-                          <div className="h-full rounded-full bg-primary" style={{ width: `${progressPct}%` }} />
+                    <div key={label} className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <span className={`w-2 h-2 rounded-full ${bar}`} />
+                          <span className="text-sm text-slate-700 font-medium">{label}</span>
                         </div>
-                      </td>
-                      <td className={`px-4 py-3 ${m.diasOciosa > 15 ? "text-destructive font-medium" : "text-foreground"}`}>{m.diasOciosa}</td>
-                      <td className="px-4 py-3 font-medium text-foreground">{fmt(m.receita)}</td>
-                      <td className="px-4 py-3 text-foreground">{fmt(m.custos)}</td>
-                      <td className={`px-4 py-3 font-medium ${m.ebitda >= 0 ? "text-success" : "text-destructive"}`}>{fmt(m.ebitda)}</td>
-                      <td className={`px-4 py-3 font-medium ${m.margem >= 25 ? "text-success" : m.margem >= 10 ? "text-warning" : "text-destructive"}`}>
-                        {m.margem.toFixed(1)}%
-                      </td>
-                    </tr>
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-slate-500 tabular-nums font-mono">{fmt(value)}</span>
+                          <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full border ${badge}`}>
+                            {pct.toFixed(0)}%
+                          </span>
+                        </div>
+                      </div>
+                      <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
+                        <div className={`h-full ${bar} rounded-full transition-all duration-700`} style={{ width: `${pct}%` }} />
+                      </div>
+                    </div>
                   );
                 })}
-              </tbody>
-              <tfoot>
-                <tr className="bg-muted/30 border-t border-border font-semibold">
-                  <td className="px-4 py-3 text-xs text-muted-foreground" colSpan={3}>TOTAIS</td>
-                  <td className="px-4 py-3 text-foreground">{fmt(totalReceita)}</td>
-                  <td className="px-4 py-3 text-foreground">{fmt(totalCusto)}</td>
-                  <td className={`px-4 py-3 ${totalEbitda >= 0 ? "text-success" : "text-destructive"}`}>{fmt(totalEbitda)}</td>
-                  <td className={`px-4 py-3 ${margemMedia >= 25 ? "text-success" : margemMedia >= 10 ? "text-warning" : "text-destructive"}`}>
-                    {margemMedia.toFixed(1)}%
-                  </td>
-                </tr>
-              </tfoot>
-            </table>
+              </div>
+            )}
           </div>
-        </Card>
+        </div>
       </div>
 
-      {/* SEÇÃO 5 — Charts com tabs */}
-      <Tabs defaultValue="financeiro" className="space-y-4">
-        <TabsList className="h-9">
-          <TabsTrigger value="financeiro" className="text-xs">Financeiro</TabsTrigger>
-          <TabsTrigger value="frota" className="text-xs">Frota</TabsTrigger>
-        </TabsList>
-
-        <TabsContent value="financeiro">
-          <div className="grid gap-4 lg:grid-cols-2">
-            <Card>
-              <CardContent className="p-4">
-                <p className="text-sm font-medium text-foreground mb-1">Entradas vs Saídas</p>
-                <p className="text-xs text-muted-foreground mb-4">Últimos 12 meses</p>
-                <ResponsiveContainer width="100%" height={200}>
-                  <AreaChart data={chartData}>
-                    <defs>
-                      <linearGradient id="gEnt" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="hsl(var(--primary))" stopOpacity={0.2} />
-                        <stop offset="95%" stopColor="hsl(var(--primary))" stopOpacity={0} />
-                      </linearGradient>
-                      <linearGradient id="gSai" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="hsl(var(--destructive))" stopOpacity={0.2} />
-                        <stop offset="95%" stopColor="hsl(var(--destructive))" stopOpacity={0} />
-                      </linearGradient>
-                    </defs>
-                    <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
-                    <XAxis dataKey="month" tick={{ fontSize: 10 }} className="fill-muted-foreground" />
-                    <YAxis tick={{ fontSize: 10 }} className="fill-muted-foreground" />
-                    <Tooltip formatter={(v: number) => fmt(v)} />
-                    <Area type="monotone" dataKey="entradas" stroke="hsl(var(--primary))" fill="url(#gEnt)" strokeWidth={2} name="Entradas" />
-                    <Area type="monotone" dataKey="saidas" stroke="hsl(var(--destructive))" fill="url(#gSai)" strokeWidth={2} name="Saídas" />
-                  </AreaChart>
-                </ResponsiveContainer>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardContent className="p-4">
-                <p className="text-sm font-medium text-foreground mb-1">Lucro Líquido</p>
-                <p className="text-xs text-muted-foreground mb-4">Evolução mensal</p>
-                <ResponsiveContainer width="100%" height={200}>
-                  <AreaChart data={chartData}>
-                    <defs>
-                      <linearGradient id="gLucro" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="hsl(var(--primary))" stopOpacity={0.15} />
-                        <stop offset="95%" stopColor="hsl(var(--primary))" stopOpacity={0} />
-                      </linearGradient>
-                    </defs>
-                    <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
-                    <XAxis dataKey="month" tick={{ fontSize: 10 }} className="fill-muted-foreground" />
-                    <YAxis tick={{ fontSize: 10 }} className="fill-muted-foreground" />
-                    <Tooltip formatter={(v: number) => fmt(v)} />
-                    <Area type="monotone" dataKey="lucro" stroke="hsl(var(--primary))" fill="url(#gLucro)" strokeWidth={2} name="Lucro" />
-                  </AreaChart>
-                </ResponsiveContainer>
-              </CardContent>
-            </Card>
+      {/* COBRANÇAS DA SEMANA */}
+      <div className="bg-white rounded-2xl border border-border shadow-sm overflow-hidden">
+        <div className="h-[3px] bg-cyan-500" />
+        <div className="p-5">
+          <div className="flex items-center justify-between mb-5">
+            <div>
+              <p className="text-[11px] uppercase tracking-[0.15em] text-muted-foreground font-semibold">Cobranças da Semana</p>
+              <p className="text-xs text-slate-400 mt-0.5">
+                {format(weekBounds.start, "dd/MM", { locale: ptBR })} a {format(weekBounds.end, "dd/MM", { locale: ptBR })}
+              </p>
+            </div>
+            <button
+              onClick={() => navigate("/cobrancas/semana")}
+              className="text-xs text-primary hover:underline font-semibold"
+            >
+              Ver todas →
+            </button>
           </div>
-        </TabsContent>
 
-        <TabsContent value="frota">
-          <div className="grid gap-4 lg:grid-cols-2">
-            <Card>
-              <CardContent className="p-4">
-                <p className="text-sm font-medium text-foreground mb-1">Utilização & Receita/Moto</p>
-                <p className="text-xs text-muted-foreground mb-4">Últimos 12 meses</p>
-                <ResponsiveContainer width="100%" height={200}>
-                  <ComposedChart data={chartData}>
-                    <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
-                    <XAxis dataKey="month" tick={{ fontSize: 10 }} className="fill-muted-foreground" />
-                    <YAxis yAxisId="left" tick={{ fontSize: 10 }} className="fill-muted-foreground" />
-                    <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 10 }} className="fill-muted-foreground" unit="%" />
-                    <Tooltip formatter={(v: number, name: string) => name === "Utilização" ? `${v.toFixed(1)}%` : fmt(v)} />
-                    <Bar yAxisId="left" dataKey="receitaPorMoto" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} name="Receita/Moto" opacity={0.8} />
-                    <Line yAxisId="right" type="monotone" dataKey="utilizacao" stroke="hsl(var(--chart-4))" strokeWidth={2} dot={false} name="Utilização" />
-                  </ComposedChart>
-                </ResponsiveContainer>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardContent className="p-4">
-                <p className="text-sm font-medium text-foreground mb-1">Distribuição da Frota</p>
-                <p className="text-xs text-muted-foreground mb-4">Status atual</p>
-                <div className="space-y-3 pt-2">
-                  <FleetBar label="Alugadas" count={stats.alugadas} total={motos.length} color="bg-primary" />
-                  <FleetBar label="Disponíveis" count={stats.disponiveis} total={motos.length} color="bg-success" />
-                  <FleetBar label="Manutenção" count={stats.emManutencao} total={motos.length} color="bg-warning" />
-                  <FleetBar label="Inativas" count={stats.inativas} total={motos.length} color="bg-muted-foreground" />
-                  <FleetBar label="Vendidas" count={stats.vendidas} total={motos.length} color="bg-violet-500" />
-                </div>
-              </CardContent>
-            </Card>
+          <div className="grid grid-cols-3 gap-3 mb-4">
+            <div className="bg-green-50 border border-green-100 rounded-xl p-4 text-center">
+              <p className="text-3xl font-black tabular-nums font-mono text-green-600">{cobrancasSemana.geradas}</p>
+              <p className="text-[11px] text-green-600/70 mt-1 font-semibold uppercase tracking-wider">geradas</p>
+            </div>
+            <div className={`rounded-xl p-4 text-center border ${
+              cobrancasSemana.emAberto > 0 ? "bg-yellow-50 border-yellow-100" : "bg-slate-50 border-slate-100"
+            }`}>
+              <p className={`text-3xl font-black tabular-nums font-mono ${cobrancasSemana.emAberto > 0 ? "text-yellow-600" : "text-slate-300"}`}>
+                {cobrancasSemana.emAberto}
+              </p>
+              <p className={`text-[11px] mt-1 font-semibold uppercase tracking-wider ${cobrancasSemana.emAberto > 0 ? "text-yellow-600/70" : "text-slate-400"}`}>
+                em aberto
+              </p>
+            </div>
+            <div className={`rounded-xl p-4 text-center border ${
+              cobrancasSemana.naoGeradas > 0 ? "bg-red-50 border-red-100" : "bg-green-50 border-green-100"
+            }`}>
+              <p className={`text-3xl font-black tabular-nums font-mono ${cobrancasSemana.naoGeradas > 0 ? "text-red-600" : "text-green-600"}`}>
+                {cobrancasSemana.naoGeradas > 0 ? cobrancasSemana.naoGeradas : "✓"}
+              </p>
+              <p className={`text-[11px] mt-1 font-semibold uppercase tracking-wider ${cobrancasSemana.naoGeradas > 0 ? "text-red-600/70" : "text-green-600/70"}`}>
+                {cobrancasSemana.naoGeradas > 0 ? "não geradas" : "tudo gerado"}
+              </p>
+            </div>
           </div>
-        </TabsContent>
-      </Tabs>
+
+          {cobrancasSemana.esperadas > 0 && (
+            <div className="h-2 bg-slate-100 rounded-full overflow-hidden flex gap-px">
+              <div className="h-full bg-green-500 rounded-l-full transition-all duration-700"
+                style={{ width: `${((cobrancasSemana.geradas - cobrancasSemana.emAberto) / cobrancasSemana.esperadas) * 100}%` }} />
+              <div className="h-full bg-yellow-400 transition-all duration-700"
+                style={{ width: `${(cobrancasSemana.emAberto / cobrancasSemana.esperadas) * 100}%` }} />
+              <div className="h-full bg-red-500 rounded-r-full transition-all duration-700"
+                style={{ width: `${(cobrancasSemana.naoGeradas / cobrancasSemana.esperadas) * 100}%` }} />
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* PERFORMANCE POR MOTO */}
+      {motoPerf.length > 0 && (
+        <div className="bg-white rounded-2xl border border-border shadow-sm overflow-hidden">
+          <div className="h-[3px] bg-orange-500" />
+          <div className="p-5">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <p className="text-[11px] uppercase tracking-[0.15em] text-muted-foreground font-semibold">Performance por Moto</p>
+                <p className="text-xs text-slate-400 mt-0.5">Receita, despesa e margem por ativo no período</p>
+              </div>
+              <button onClick={() => navigate("/motos")} className="text-xs text-primary hover:underline font-semibold">
+                Ver frota →
+              </button>
+            </div>
+
+            <div className="grid grid-cols-[1fr_96px_64px] gap-3 px-2 pb-2 border-b border-slate-100">
+              <span className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold">Moto</span>
+              <span className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold text-right">Receita</span>
+              <span className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold text-center">Margem</span>
+            </div>
+
+            <div className="divide-y divide-slate-50">
+              {motoPerf.map(({ moto, receita, resultado, margem }, i) => {
+                const maxReceita = motoPerf[0].receita;
+                const pct = maxReceita > 0 ? (receita / maxReceita) * 100 : 0;
+                const margemBadge = margem >= 30
+                  ? "bg-green-50 text-green-700 border border-green-100"
+                  : margem >= 10
+                  ? "bg-yellow-50 text-yellow-700 border border-yellow-100"
+                  : "bg-red-50 text-red-700 border border-red-100";
+                return (
+                  <div
+                    key={moto.id}
+                    className={`grid grid-cols-[1fr_96px_64px] gap-3 items-center px-2 py-3 hover:bg-slate-50 transition-colors rounded-lg ${i % 2 === 1 ? "bg-slate-50/40" : ""}`}
+                  >
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2 mb-1.5">
+                        <span className="text-sm font-bold text-slate-800">{moto.placa}</span>
+                        <span className="text-xs text-slate-400 truncate">{moto.modelo}</span>
+                        {resultado < 0 && (
+                          <span className="text-[10px] font-bold text-red-500 shrink-0">{fmt(resultado)}</span>
+                        )}
+                      </div>
+                      <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                        <div
+                          className={`h-full rounded-full transition-all duration-700 ${resultado >= 0 ? "bg-orange-400" : "bg-red-400"}`}
+                          style={{ width: `${pct}%` }}
+                        />
+                      </div>
+                    </div>
+                    <span className="text-sm font-mono font-bold text-slate-800 text-right tabular-nums">{fmt(receita)}</span>
+                    <div className="flex justify-center">
+                      <span className={`text-[11px] font-bold px-2.5 py-1 rounded-full border ${margemBadge}`}>
+                        {margem.toFixed(0)}%
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* OPERACIONAL */}
+      <div className="bg-white rounded-2xl border border-border shadow-sm overflow-hidden">
+        <div className="h-[3px] bg-slate-300" />
+        <div className="p-5 pb-3">
+        <p className="text-[11px] uppercase tracking-[0.15em] text-muted-foreground font-semibold mb-4">Operacional</p>
+        <div className="space-y-1.5">
+
+          <OperacionalRow
+            gravity={inadGravity}
+            icon={<AlertTriangle className="h-4 w-4" />}
+            title="Inadimplência"
+            detail={`${operacional.inad.clientes} cliente${operacional.inad.clientes !== 1 ? "s" : ""} com saldo vencido`}
+            tags={[
+              operacional.inad.acima30 > 0 ? { label: `${operacional.inad.acima30} +30d`, color: "text-destructive bg-red-50" } : null,
+              operacional.inad.entre16e30 > 0 ? { label: `${operacional.inad.entre16e30} 16–30d`, color: "text-yellow-700 bg-yellow-50" } : null,
+            ].filter(Boolean) as Tag[]}
+            value={fmt(operacional.inad.total)}
+            valueColor={inadGravity === "ok" ? "text-green-600" : inadGravity === "warn" ? "text-yellow-600" : "text-destructive"}
+            onClick={() => navigate("/financeiro")}
+          />
+
+          <OperacionalRow
+            gravity={multasGravity}
+            icon={<FileText className="h-4 w-4" />}
+            title="Multas de Trânsito"
+            detail={`${operacional.multas.count} pendente${operacional.multas.count !== 1 ? "s" : ""}${operacional.multas.hojeCount > 0 ? ` · ${operacional.multas.hojeCount} vencem hoje` : ""}`}
+            tags={operacional.multas.valor48h > 0 ? [{ label: `${fmt(operacional.multas.valor48h)} em 48h`, color: "text-yellow-700 bg-yellow-50" }] : []}
+            value={fmt(operacional.multas.valor)}
+            valueColor={multasGravity === "ok" ? "text-green-600" : multasGravity === "warn" ? "text-yellow-600" : "text-destructive"}
+            onClick={() => navigate("/multas")}
+          />
+
+          <OperacionalRow
+            gravity={oilGravity}
+            icon={<Droplets className="h-4 w-4" />}
+            title="Troca de Óleo"
+            detail={`${operacional.oil.total} moto${operacional.oil.total !== 1 ? "s" : ""} operacionais`}
+            tags={[
+              operacional.oil.vencidas > 0 ? { label: `${operacional.oil.vencidas} vencida${operacional.oil.vencidas !== 1 ? "s" : ""}`, color: "text-destructive bg-red-50" } : null,
+              operacional.oil.atencao > 0 ? { label: `${operacional.oil.atencao} próxima${operacional.oil.atencao !== 1 ? "s" : ""}`, color: "text-yellow-700 bg-yellow-50" } : null,
+            ].filter(Boolean) as Tag[]}
+            value={String(operacional.oil.vencidas + operacional.oil.atencao)}
+            valueColor={oilGravity === "ok" ? "text-green-600" : oilGravity === "warn" ? "text-yellow-600" : "text-destructive"}
+            onClick={() => navigate("/troca-oleo")}
+          />
+
+          <OperacionalRow
+            gravity={manGravity}
+            icon={<Wrench className="h-4 w-4" />}
+            title="Manutenções"
+            detail={`${operacional.man.pendentes} em andamento ou agendada${operacional.man.pendentes !== 1 ? "s" : ""}`}
+            tags={operacional.man.paradas > 0 ? [{ label: `${operacional.man.paradas} parada${operacional.man.paradas !== 1 ? "s" : ""} +5d`, color: "text-destructive bg-red-50" }] : []}
+            value={String(operacional.man.pendentes)}
+            valueColor={manGravity === "ok" ? "text-green-600" : manGravity === "warn" ? "text-yellow-600" : "text-destructive"}
+            onClick={() => navigate("/manutencoes")}
+          />
+
+          <OperacionalRow
+            gravity={ociosaGravity}
+            icon={<Clock className="h-4 w-4" />}
+            title="Motos Ociosas"
+            detail={`${operacional.ociosas.total} disponíve${operacional.ociosas.total !== 1 ? "is" : "l"}`}
+            tags={[
+              operacional.ociosas.ociosas15 > 0 ? { label: `${operacional.ociosas.ociosas15} +15d`, color: "text-destructive bg-red-50" } : null,
+              (operacional.ociosas.ociosas7 - operacional.ociosas.ociosas15) > 0
+                ? { label: `${operacional.ociosas.ociosas7 - operacional.ociosas.ociosas15} 7–15d`, color: "text-yellow-700 bg-yellow-50" }
+                : null,
+            ].filter(Boolean) as Tag[]}
+            value={String(operacional.ociosas.ociosas7)}
+            valueColor={ociosaGravity === "ok" ? "text-green-600" : ociosaGravity === "warn" ? "text-yellow-600" : "text-destructive"}
+            onClick={() => navigate("/motos")}
+          />
+
+          <OperacionalRow
+            gravity={contratoGravity}
+            icon={<ClipboardList className="h-4 w-4" />}
+            title="Contratos"
+            detail={`${operacional.contratos.ativos} ativo${operacional.contratos.ativos !== 1 ? "s" : ""} · ${operacional.contratos.renovar} vencem em 7 dias`}
+            tags={[
+              operacional.contratos.vencidos > 0 ? { label: `${operacional.contratos.vencidos} vencido${operacional.contratos.vencidos !== 1 ? "s" : ""}`, color: "text-destructive bg-red-50" } : null,
+              operacional.contratos.renovar > 0 ? { label: `${operacional.contratos.renovar} renovar`, color: "text-yellow-700 bg-yellow-50" } : null,
+            ].filter(Boolean) as Tag[]}
+            value={String(operacional.contratos.ativos)}
+            valueColor="text-green-600"
+            onClick={() => navigate("/locacoes")}
+          />
+
+        </div>
+        </div>
+      </div>
+
     </div>
   );
 });
 
-const SummaryCard = memo(function SummaryCard({ label, value, icon, color, borderColor, info }: { label: string; value: string; icon: React.ReactNode; color: string; borderColor: string; info?: string; }) {
-  return (
-    <Card className={`border-l-4 ${borderColor}`}>
-      <CardContent className="p-4 flex items-center justify-between">
-        <div>
-          <p className="text-xs text-muted-foreground uppercase tracking-wide flex items-center">
-            {label}
-            {info && <InfoTooltip text={info} />}
-          </p>
-          <p className={`text-xl font-bold ${color} mt-1`}>{value}</p>
-        </div>
-        <div className={`${color} opacity-30`}>{icon}</div>
-      </CardContent>
-    </Card>
-  );
-});
+type Tag = { label: string; color: string };
 
-const MiniKPI = memo(function MiniKPI({ label, value, sub, icon, info }: { label: string; value: string; sub: string; icon: React.ReactNode; info?: string }) {
-  return (
-    <Card>
-      <CardContent className="p-3">
-        <div className="flex items-center gap-1.5 mb-1">
-          {icon}
-          <p className="text-[11px] text-muted-foreground truncate">{label}</p>
-          {info && <InfoTooltip text={info} className="ml-0" />}
-        </div>
-        <p className="text-lg font-bold text-foreground leading-tight">{value}</p>
-        <p className="text-[10px] text-muted-foreground mt-0.5">{sub}</p>
-      </CardContent>
-    </Card>
-  );
-});
-
-const FleetBar = memo(function FleetBar({ label, count, total, color }: { label: string; count: number; total: number; color: string }) {
-  const pct = total > 0 ? (count / total) * 100 : 0;
-  return (
-    <div className="space-y-1">
-      <div className="flex items-center justify-between text-sm">
-        <span className="text-muted-foreground">{label}</span>
-        <span className="font-medium text-foreground">{count} <span className="text-muted-foreground text-xs">({pct.toFixed(0)}%)</span></span>
-      </div>
-      <div className="h-2 rounded-full bg-muted overflow-hidden">
-        <div className={`h-full rounded-full ${color} transition-all`} style={{ width: `${pct}%` }} />
-      </div>
-    </div>
-  );
-});
-
-const HighlightCard = memo(function HighlightCard({
-  label, value, unit, delta, deltaSuffix, icon, accent, info,
-}: {
-  label: string;
-  value: string;
-  unit?: string;
-  delta: number;
-  deltaSuffix?: string;
+interface OperacionalRowProps {
+  gravity: "danger" | "warn" | "ok";
   icon: React.ReactNode;
-  accent: "primary" | "success" | "destructive";
-  info?: string;
-}) {
-  const positive = delta >= 0;
-  const accentText =
-    accent === "success" ? "text-success" :
-    accent === "destructive" ? "text-destructive" :
-    "text-primary";
-  const accentBg =
-    accent === "success" ? "bg-success/10" :
-    accent === "destructive" ? "bg-destructive/10" :
-    "bg-primary/10";
+  title: string;
+  detail: string;
+  tags: Tag[];
+  value: string;
+  valueColor: string;
+  onClick: () => void;
+}
+
+const OperacionalRow = memo(function OperacionalRow({
+  gravity, icon, title, detail, tags, value, valueColor, onClick,
+}: OperacionalRowProps) {
+  const styles = {
+    danger: { border: "border-l-[3px] border-red-500", bg: "bg-red-50/50 hover:bg-red-50", icon: "text-red-500" },
+    warn:   { border: "border-l-[3px] border-yellow-400", bg: "bg-yellow-50/40 hover:bg-yellow-50", icon: "text-yellow-500" },
+    ok:     { border: "border-l-[3px] border-green-500", bg: "bg-green-50/20 hover:bg-green-50/40", icon: "text-green-500" },
+  }[gravity];
+
   return (
-    <Card className="relative overflow-hidden">
-      <div className={`absolute inset-x-0 top-0 h-1 ${accent === "success" ? "bg-success" : accent === "destructive" ? "bg-destructive" : "bg-primary"}`} />
-      <CardContent className="p-5">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <p className="text-[11px] uppercase tracking-wide text-muted-foreground flex items-center font-medium">
-              {label}
-              {info && <InfoTooltip text={info} />}
-            </p>
-            <p className={`text-2xl font-bold mt-1 ${accentText}`}>{value}</p>
-            {unit && <p className="text-xs text-muted-foreground mt-0.5">{unit}</p>}
-          </div>
-          <div className={`shrink-0 rounded-lg p-2 ${accentBg} ${accentText}`}>{icon}</div>
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={onClick}
+      onKeyDown={e => e.key === "Enter" && onClick()}
+      className={`${styles.border} ${styles.bg} rounded-r-xl pl-4 pr-3 py-3 cursor-pointer flex items-center justify-between gap-4 transition-colors`}
+    >
+      <div className="flex items-center gap-3 min-w-0">
+        <span className={`shrink-0 ${styles.icon}`}>{icon}</span>
+        <div className="min-w-0">
+          <p className="text-sm font-bold text-slate-800 leading-tight">{title}</p>
+          <p className="text-xs text-slate-400 mt-0.5 truncate">{detail}</p>
         </div>
-        <div className="mt-3 flex items-center gap-1.5">
-          <span className={`inline-flex items-center gap-0.5 text-xs font-semibold rounded-full px-2 py-0.5 ${positive ? "bg-success/10 text-success" : "bg-destructive/10 text-destructive"}`}>
-            {positive ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
-            {Math.abs(delta).toFixed(1)}%
-          </span>
-          {deltaSuffix && <span className="text-[11px] text-muted-foreground">{deltaSuffix}</span>}
+      </div>
+      <div className="flex items-center gap-2 shrink-0">
+        <div className="text-right">
+          {tags.length > 0 && (
+            <div className="flex gap-1 justify-end mb-1.5 flex-wrap">
+              {tags.map(t => (
+                <span key={t.label} className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${t.color}`}>
+                  {t.label}
+                </span>
+              ))}
+            </div>
+          )}
+          <p className={`text-lg font-black font-mono ${valueColor}`}>{value}</p>
         </div>
-      </CardContent>
-    </Card>
+        <ChevronRight className="h-4 w-4 text-slate-300" />
+      </div>
+    </div>
   );
 });
-
-// Suppress unused-variable warnings for preserved components
-void SummaryCard;
-void MiniKPI;

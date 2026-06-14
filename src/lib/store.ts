@@ -114,7 +114,10 @@ export interface FinConfig {
 }
 
 const defaultFinConfig: FinConfig = {
-  customCategorias: { receita: [], despesa: [] },
+  customCategorias: {
+    receita: [{ value: "custom_encerramento_de_contrato", label: "Encerramento de contrato" }],
+    despesa: [],
+  },
   customSubcategorias: {},
   customTags: {},
   customContas: [],
