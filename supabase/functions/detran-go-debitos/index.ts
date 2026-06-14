@@ -7,70 +7,129 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
-const INFOSIMPLES_BASE = "https://api.infosimples.com/api/v2/consultas/detran/go/debitos";
+const INFOSIMPLES_URL = "https://api.infosimples.com/api/v2/consultas/detran/go/debitos";
+
+function parseBrDate(raw: unknown): string | null {
+  if (typeof raw !== "string") return null;
+  const m = raw.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (m) return `${m[3]}-${m[2]}-${m[1]}`;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+  return null;
+}
+
+interface SafeInfracao {
+  categoria: string;
+  auto_infracao: string | null;
+  data_infracao: string | null;
+  data_vencimento: string | null;
+  data_notificacao: string | null;
+  valor: number;
+  valor_desconto: number;
+  descricao: string;
+  orgao_atuador: string;
+  grupo: string;
+  situacao: string;
+  responsavel_infracao: "PROPRIETARIO" | "CONDUTOR" | string;
+}
+
+function extractInfracoes(data0: Record<string, unknown>): SafeInfracao[] {
+  const infracoes = data0.infracoes;
+  if (!infracoes || typeof infracoes !== "object") return [];
+
+  const inf = infracoes as Record<string, unknown>;
+  const categories: Array<[string, unknown]> = [
+    ["vencida", inf.vencidas],
+    ["nao_vencida", inf.nao_vencida],
+    ["notificada", inf.notificada],
+    ["nao_notificada", inf.nao_notificada],
+    ["sob_juros", inf.sob_juice],
+    ["parcelada", inf.parcelada],
+    ["sne", inf.sne],
+  ];
+
+  const result: SafeInfracao[] = [];
+
+  for (const [categoria, items] of categories) {
+    if (!Array.isArray(items)) continue;
+    for (const item of items) {
+      if (!item || typeof item !== "object") continue;
+      const it = item as Record<string, unknown>;
+
+      const valor = typeof it.valor === "number" && isFinite(it.valor) && it.valor >= 0 && it.valor < 1_000_000
+        ? Math.round(it.valor * 100) / 100
+        : 0;
+      const valorDesconto = typeof it.valor_desconto === "number" && isFinite(it.valor_desconto)
+        ? Math.round(it.valor_desconto * 100) / 100
+        : 0;
+
+      result.push({
+        categoria,
+        auto_infracao: typeof it.ait === "string" ? it.ait.replace(/\W/g, "").slice(0, 50) : null,
+        data_infracao: parseBrDate(it.data_infracao),
+        data_vencimento: parseBrDate(it.data_vencimento ?? it.boleto_vencimento),
+        data_notificacao: parseBrDate(it.data_notificacao),
+        valor,
+        valor_desconto: valorDesconto,
+        descricao: typeof it.infracao_descricao === "string"
+          ? it.infracao_descricao.replace(/[<>"']/g, "").slice(0, 200)
+          : "MULTA DE TRÂNSITO",
+        orgao_atuador: typeof it.orgao_atuador === "string"
+          ? it.orgao_atuador.slice(0, 100)
+          : "",
+        grupo: typeof it.grupo_infracao === "string" ? it.grupo_infracao : "",
+        situacao: typeof it.situacao === "string" ? it.situacao.slice(0, 100) : "",
+        responsavel_infracao: typeof it.responsavel_infracao === "string"
+          ? it.responsavel_infracao.toUpperCase()
+          : "PROPRIETARIO",
+      });
+    }
+  }
+
+  return result;
+}
 
 async function consultarDebitos(
   placa: string,
   renavam: string,
   login: string,
   senha: string,
-): Promise<{ data: unknown[]; error: string | null }> {
+): Promise<{ data: SafeInfracao[]; error: string | null }> {
   const token = Deno.env.get("INFOSIMPLES_TOKEN");
   if (!token) return { data: [], error: "INFOSIMPLES_TOKEN não configurado." };
 
-  const params = new URLSearchParams({
+  const body = new URLSearchParams({
     token,
     timeout: "600",
-    ignore_site_receipt: "1",
     placa: placa.replace(/[^a-zA-Z0-9]/g, "").toUpperCase(),
     renavam: renavam.replace(/\D/g, ""),
-    login_cpf: login,
-    login_senha: senha,
-    pkcs12_cert: "",
-    pkcs12_pass: "",
   });
 
-  const res = await fetch(`${INFOSIMPLES_BASE}?${params}`, { signal: AbortSignal.timeout(90_000) });
+  if (login) body.set("login_cpf", login);
+  if (senha) body.set("login_senha", senha);
+
+  const res = await fetch(INFOSIMPLES_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: body.toString(),
+    signal: AbortSignal.timeout(90_000),
+  });
+
   const json = await res.json();
 
-  // code 1 = sucesso, code 100 = sucesso com avisos
-  if (json.code !== 1 && json.code !== 100) {
+  if (json.code !== 200 && json.code !== 1 && json.code !== 100) {
     const msg = json.errors?.[0] || json.code_message || `Código ${json.code}`;
     return { data: [], error: String(msg).slice(0, 300) };
   }
 
-  const rawItems: unknown[] = Array.isArray(json.data) ? json.data : [];
+  const rawData: unknown[] = Array.isArray(json.data) ? json.data : [];
+  const data0 = rawData[0];
 
-  // Limite de itens por moto para evitar payload excessivo
-  const MAX_ITEMS = 50;
+  if (!data0 || typeof data0 !== "object") {
+    return { data: [], error: null };
+  }
 
-  // Extrai apenas campos conhecidos de cada item — nenhum campo extra entra no sistema
-  const safeItems = rawItems.slice(0, MAX_ITEMS)
-    .filter((item): item is Record<string, unknown> => !!item && typeof item === "object")
-    .filter((item) => {
-      // Aceita apenas multas de trânsito — descarta IPVA, DPVAT, LICENCIAMENTO, etc.
-      const tipo = String(item.tipo_debito ?? item.tipo ?? "").toUpperCase().trim();
-      return tipo === "MULTA" || tipo.includes("INFRACAO") || tipo.includes("INFRAÇÃO") || tipo.includes("AUTO");
-    })
-    .map((item) => ({
-      // Allowlist explícita — apenas estes campos chegam ao frontend
-      tipo: "MULTA",
-      data_infracao: typeof item.data_infracao === "string" ? item.data_infracao.slice(0, 20) : null,
-      vencimento: typeof item.vencimento === "string" ? item.vencimento.slice(0, 20) : null,
-      valor: typeof item.valor === "number" && isFinite(item.valor) && item.valor >= 0 && item.valor < 1_000_000
-        ? Math.round(item.valor * 100) / 100
-        : 0,
-      descricao: typeof item.descricao === "string"
-        ? item.descricao.replace(/[<>"']/g, "").slice(0, 200)
-        : typeof item.descricao_infracao === "string"
-        ? item.descricao_infracao.replace(/[<>"']/g, "").slice(0, 200)
-        : "MULTA DE TRÂNSITO",
-      situacao: typeof item.situacao === "string" ? item.situacao.slice(0, 30) : "PENDENTE",
-      auto_infracao: typeof item.auto_infracao === "string" ? item.auto_infracao.replace(/\W/g, "").slice(0, 50) : null,
-      codigo_infracao: typeof item.codigo_infracao === "string" ? item.codigo_infracao.replace(/\W/g, "").slice(0, 20) : null,
-    }));
-
-  return { data: safeItems, error: null };
+  const infracoes = extractInfracoes(data0 as Record<string, unknown>);
+  return { data: infracoes, error: null };
 }
 
 serve(async (req) => {
@@ -98,7 +157,6 @@ serve(async (req) => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
     );
 
-    // Lê as credenciais DETRAN da empresa
     const { data: company, error: companyErr } = await supabase
       .from("companies")
       .select("detran_config")
@@ -116,13 +174,12 @@ serve(async (req) => {
       return new Response(
         JSON.stringify({
           error: "DETRAN_NOT_CONFIGURED",
-          message: "Credenciais do DETRAN-GO não configuradas. Acesse Configurações para conectar.",
+          message: "Credenciais DETRAN-GO não configuradas. Acesse Configurações para conectar.",
         }),
         { status: 422, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }
 
-    // Busca as motos
     const { data: motos, error: motosErr } = await supabase
       .from("motorcycles")
       .select("id, placa, renavam")
@@ -135,10 +192,7 @@ serve(async (req) => {
     const results = await Promise.allSettled(
       (motos ?? []).map(async (moto: { id: string; placa: string; renavam: string }) => {
         if (!moto.placa || !moto.renavam) {
-          return {
-            motoId: moto.id, placa: moto.placa || "—",
-            data: [], error: "Placa ou RENAVAM não cadastrado nesta moto.",
-          };
+          return { motoId: moto.id, placa: moto.placa || "—", data: [], error: "Placa ou RENAVAM não cadastrado." };
         }
         const { data, error } = await consultarDebitos(
           moto.placa, moto.renavam, detranConfig.login, detranConfig.senhaHash,

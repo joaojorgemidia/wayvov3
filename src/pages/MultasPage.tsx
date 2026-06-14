@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect, useCallback } from "react";
 import { localToday } from "@/lib/utils";
-import { Fine } from "@/lib/types";
+import { Fine, Rental } from "@/lib/types";
 import { saveFines } from "@/lib/store";
 import { useDataCacheSnapshot } from "@/lib/data-cache";
 import { useCompany } from "@/contexts/CompanyContext";
@@ -13,7 +13,8 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 import { Label } from "@/components/ui/label";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { Badge } from "@/components/ui/badge";
-import { Plus, Search, AlertTriangle, Pencil, Trash2, RefreshCw, Car, Loader2, CheckCircle2, XCircle, Settings, ShieldCheck } from "lucide-react";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Plus, Search, AlertTriangle, Pencil, Trash2, RefreshCw, Car, Loader2, CheckCircle2, XCircle, Info, Settings, ShieldCheck } from "lucide-react";
 import { usePermissions } from "@/hooks/usePermissions";
 import { toast } from "sonner";
 import DetranConfigDialog from "@/components/DetranConfigDialog";
@@ -22,6 +23,16 @@ import { DetranConfig } from "@/lib/companies";
 const statusLabel: Record<string, string> = { pendente: "Pendente", paga: "Paga", contestada: "Contestada", transferida: "Transferida" };
 const statusColor: Record<string, string> = { pendente: "bg-warning/10 text-warning", paga: "bg-success/10 text-success", contestada: "bg-primary/10 text-primary", transferida: "bg-muted text-muted-foreground" };
 
+const categoriaLabel: Record<string, string> = {
+  vencida: "Vencida",
+  nao_vencida: "A vencer",
+  notificada: "Notificada",
+  nao_notificada: "Não notificada",
+  sob_juros: "Sob juros",
+  parcelada: "Parcelada",
+  sne: "SNE",
+};
+
 const emptyFine = (): Fine => ({
   id: crypto.randomUUID(), motoId: "", clienteId: null, rentalId: null,
   dataMulta: localToday(), dataNotificacao: null,
@@ -29,15 +40,48 @@ const emptyFine = (): Fine => ({
   origem: "manual", autoInfracao: null, codigoInfracao: null,
 });
 
-
 // ─── Types for DETRAN results ──────────────────────────────────────────────────
-interface MotoRestricoesResult {
+interface DetranInfracao {
+  categoria: string;
+  auto_infracao: string | null;
+  data_infracao: string | null;
+  data_vencimento: string | null;
+  data_notificacao: string | null;
+  valor: number;
+  valor_desconto: number;
+  descricao: string;
+  orgao_atuador: string;
+  grupo: string;
+  situacao: string;
+  responsavel_infracao: string;
+}
+
+interface MotoResult {
   motoId: string;
   placa: string;
-  existeRestricao: boolean;
-  restricoes: string[];
+  data: DetranInfracao[];
   error: string | null;
   loading: boolean;
+}
+
+interface SelectableInfracao extends DetranInfracao {
+  _key: string;
+  motoId: string;
+  placa: string;
+  suggestedRental: Rental | null;
+  alreadyImported: boolean;
+}
+
+// ─── Rental matcher ────────────────────────────────────────────────────────────
+function findRentalAtDate(motoId: string, dateIso: string | null, rentals: Rental[]): Rental | null {
+  if (!dateIso) return null;
+  const ts = new Date(dateIso + "T00:00:00").getTime();
+  return rentals.find((r) => {
+    if (r.motoId !== motoId) return false;
+    const inicio = new Date(r.dataInicio + "T00:00:00").getTime();
+    const fim = r.dataFim ? new Date(r.dataFim + "T00:00:00").getTime() : Date.now();
+    return ts >= inicio && ts <= fim;
+  }) ?? null;
 }
 
 // ─── Main component ────────────────────────────────────────────────────────────
@@ -48,6 +92,7 @@ export default function MultasPage() {
   const [fines, setFines] = useState<Fine[]>([]);
   const motos = cache.motos;
   const clients = cache.clients;
+  const rentals = cache.rentals as Rental[];
   useEffect(() => { setFines(cache.fines); }, [cache.fines]);
 
   const detranConfigurado = !!activeCompany?.detranConfig?.login;
@@ -60,8 +105,10 @@ export default function MultasPage() {
   // DETRAN sheet state
   const [detranOpen, setDetranOpen] = useState(false);
   const [selectedMotoIds, setSelectedMotoIds] = useState<Set<string>>(new Set());
-  const [motoResults, setMotoResults] = useState<MotoRestricoesResult[]>([]);
+  const [motoResults, setMotoResults] = useState<MotoResult[]>([]);
   const [hasQueried, setHasQueried] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [importing, setImporting] = useState(false);
 
   const { canCreate, canEdit, canDelete } = usePermissions();
   const persist = (d: Fine[]) => { setFines(d); saveFines(d); };
@@ -117,14 +164,12 @@ export default function MultasPage() {
     setMotoResults(ids.map(id => ({
       motoId: id,
       placa: motos.find(m => m.id === id)?.placa ?? id,
-      existeRestricao: false,
-      restricoes: [],
-      error: null,
-      loading: true,
+      data: [], error: null, loading: true,
     })));
     setHasQueried(true);
+    setSelected(new Set());
 
-    const { data, error } = await supabase.functions.invoke("infosimples-restricoes", {
+    const { data, error } = await supabase.functions.invoke("detran-go-debitos", {
       body: { motoIds: ids, companyId: activeCompany?.id },
     });
 
@@ -134,19 +179,101 @@ export default function MultasPage() {
       return;
     }
 
-    const results: Array<{ motoId: string; placa: string; existeRestricao: boolean; restricoes: string[]; error: string | null }> =
+    const results: Array<{ motoId: string; placa: string; data: DetranInfracao[]; error: string | null }> =
       data?.results ?? [];
 
     setMotoResults(results.map(r => ({
       motoId: r.motoId,
       placa: r.placa,
       loading: false,
-      existeRestricao: r.existeRestricao ?? false,
-      restricoes: r.restricoes ?? [],
       error: r.error,
+      data: r.data ?? [],
     })));
   }, [selectedMotoIds, motos, activeCompany]);
 
+  // Flatten all infracoes into selectable rows
+  const allInfracoes = useMemo<SelectableInfracao[]>(() => {
+    const importedAits = new Set(fines.filter(f => f.autoInfracao).map(f => f.autoInfracao!));
+    return motoResults.flatMap(mr =>
+      mr.data.map((d, i) => {
+        const key = `${mr.motoId}::${d.auto_infracao || d.data_infracao || i}`;
+        const rental = findRentalAtDate(mr.motoId, d.data_infracao, rentals);
+        return {
+          ...d,
+          _key: key,
+          motoId: mr.motoId,
+          placa: mr.placa,
+          suggestedRental: rental,
+          alreadyImported: d.auto_infracao ? importedAits.has(d.auto_infracao) : false,
+        };
+      }),
+    );
+  }, [motoResults, fines, rentals]);
+
+  const toggleInfracao = (key: string) => {
+    setSelected(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  };
+
+  const selectAll = () => {
+    setSelected(prev => {
+      const next = new Set(prev);
+      allInfracoes.filter(d => !d.alreadyImported).forEach(d => next.add(d._key));
+      return next;
+    });
+  };
+
+  const handleImport = async () => {
+    const toImport = allInfracoes.filter(d => selected.has(d._key) && !d.alreadyImported);
+    if (toImport.length === 0) return;
+
+    setImporting(true);
+    try {
+      const today = localToday();
+      const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+      const newFines: Fine[] = toImport
+        .filter(d => d.valor > 0 && d.valor < 1_000_000 && motos.find(m => m.id === d.motoId))
+        .map(d => {
+          const rental = d.suggestedRental;
+          const client = rental ? clients.find(c => c.id === rental.clienteId) ?? null : null;
+          const dataMulta = d.data_infracao && ISO_DATE.test(d.data_infracao) ? d.data_infracao
+            : d.data_vencimento && ISO_DATE.test(d.data_vencimento) ? d.data_vencimento
+            : today;
+          // CONDUTOR = cliente que estava usando; PROPRIETARIO = locadora
+          const responsavel: "locadora" | "cliente" =
+            d.responsavel_infracao === "CONDUTOR" && client ? "cliente" : "locadora";
+
+          return {
+            id: crypto.randomUUID(),
+            motoId: d.motoId,
+            clienteId: client?.id ?? null,
+            rentalId: rental?.id ?? null,
+            dataMulta,
+            dataNotificacao: d.data_notificacao && ISO_DATE.test(d.data_notificacao) ? d.data_notificacao : null,
+            valor: d.valor,
+            descricao: d.descricao,
+            status: "pendente" as const,
+            responsavel,
+            origem: "detran" as const,
+            autoInfracao: d.auto_infracao,
+            codigoInfracao: null,
+          };
+        });
+
+      persist([...fines, ...newFines]);
+      toast.success(`${newFines.length} multa(s) importada(s) com sucesso.`);
+      setDetranOpen(false);
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  const fmt = (v: number) => `R$ ${v.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const fmtDate = (iso: string | null) => iso ? new Date(iso + "T00:00:00").toLocaleDateString("pt-BR") : "—";
 
   // ─── Render ──────────────────────────────────────────────────────────────────
 
@@ -161,13 +288,13 @@ export default function MultasPage() {
           {canCreate && (
             <div className="flex items-center gap-2">
               <Button variant="outline" onClick={openDetran} className="gap-2">
-                <RefreshCw className="h-4 w-4" /> Consultar DETRAN
+                <RefreshCw className="h-4 w-4" /> Consultar DETRAN-GO
               </Button>
               <Button
                 variant="ghost"
                 size="icon"
                 onClick={() => setDetranConfigOpen(true)}
-                title={detranConfigurado ? "Editar credenciais DETRAN" : "Configurar DETRAN"}
+                title={detranConfigurado ? "Editar credenciais DETRAN-GO" : "Configurar DETRAN-GO"}
                 className={detranConfigurado ? "text-blue-600 hover:text-blue-700" : "text-muted-foreground"}
               >
                 {detranConfigurado ? <ShieldCheck className="h-4 w-4" /> : <Settings className="h-4 w-4" />}
@@ -219,7 +346,7 @@ export default function MultasPage() {
                     </td>
                     <td className="px-3 py-3">{getClientName(f.clienteId)}</td>
                     <td className="px-3 py-3">{new Date(f.dataMulta + "T00:00:00").toLocaleDateString("pt-BR")}</td>
-                    <td className="px-3 py-3 font-semibold">R$ {f.valor.toFixed(2)}</td>
+                    <td className="px-3 py-3 font-semibold">{fmt(f.valor)}</td>
                     <td className="px-3 py-3 text-muted-foreground max-w-[200px] truncate">{f.descricao || "—"}</td>
                     <td className="px-3 py-3">
                       <Badge variant={f.responsavel === "cliente" ? "default" : "secondary"}>
@@ -296,7 +423,7 @@ export default function MultasPage() {
                 <SearchableSelect
                   options={Object.entries(statusLabel).map(([k, v]) => ({ value: k, label: v }))}
                   value={form.status}
-                  onValueChange={v => setForm({ ...form, status: v as any })}
+                  onValueChange={v => setForm({ ...form, status: v as Fine["status"] })}
                 />
               </div>
               <div className="grid gap-2">
@@ -334,30 +461,24 @@ export default function MultasPage() {
         <SheetContent side="right" className="w-full sm:max-w-3xl overflow-y-auto flex flex-col gap-0 p-0">
           <SheetHeader className="px-6 py-4 border-b">
             <SheetTitle className="flex items-center gap-2">
-              <Car className="h-5 w-5" /> Consultar DETRAN
+              <Car className="h-5 w-5" /> Consultar DETRAN-GO
             </SheetTitle>
-            <p className="text-sm text-muted-foreground">Busca multas e restrições diretamente no DETRAN via Infosimples (API Unificada).</p>
+            <p className="text-sm text-muted-foreground">Busca multas e débitos diretamente no portal do DETRAN-GO via Infosimples.</p>
           </SheetHeader>
 
-          {/* Banner: DETRAN não configurado */}
+          {/* Banner: não configurado */}
           {!detranConfigurado && (
-            <div className="mx-6 mt-4 rounded-lg border border-yellow-200 bg-yellow-50 dark:border-yellow-900/40 dark:bg-yellow-950/20 p-4 flex items-start gap-3">
+            <div className="mx-6 mt-4 rounded-lg border border-yellow-200 bg-yellow-50 p-4 flex items-start gap-3">
               <AlertTriangle className="h-5 w-5 text-yellow-600 shrink-0 mt-0.5" />
               <div className="flex-1 space-y-1.5">
-                <p className="text-sm font-semibold text-yellow-900 dark:text-yellow-200">
-                  Credenciais DETRAN não configuradas
-                </p>
-                <p className="text-xs text-yellow-700 dark:text-yellow-400">
-                  Para consultar multas, informe o login e senha do portal DETRAN do seu estado nas configurações.
-                </p>
+                <p className="text-sm font-semibold text-yellow-900">Credenciais DETRAN-GO não configuradas</p>
+                <p className="text-xs text-yellow-700">Informe o login e senha do portal GOV.BR / DETRAN-GO nas configurações.</p>
                 <Button
-                  size="sm"
-                  variant="outline"
-                  className="h-7 text-xs border-yellow-400 text-yellow-800 hover:bg-yellow-100 dark:border-yellow-700 dark:text-yellow-300"
+                  size="sm" variant="outline"
+                  className="h-7 text-xs border-yellow-400 text-yellow-800 hover:bg-yellow-100"
                   onClick={() => { setDetranOpen(false); setDetranConfigOpen(true); }}
                 >
-                  <Settings className="h-3.5 w-3.5 mr-1.5" />
-                  Configurar DETRAN
+                  <Settings className="h-3.5 w-3.5 mr-1.5" /> Configurar DETRAN-GO
                 </Button>
               </div>
             </div>
@@ -368,12 +489,8 @@ export default function MultasPage() {
             <div className="flex items-center justify-between">
               <Label className="font-semibold">Motos a consultar</Label>
               <div className="flex gap-2">
-                <Button variant="ghost" size="sm" onClick={() => setSelectedMotoIds(new Set(frotaAtiva.map(m => m.id)))}>
-                  Todas
-                </Button>
-                <Button variant="ghost" size="sm" onClick={() => setSelectedMotoIds(new Set())}>
-                  Nenhuma
-                </Button>
+                <Button variant="ghost" size="sm" onClick={() => setSelectedMotoIds(new Set(frotaAtiva.map(m => m.id)))}>Todas</Button>
+                <Button variant="ghost" size="sm" onClick={() => setSelectedMotoIds(new Set())}>Nenhuma</Button>
               </div>
             </div>
             <div className="flex flex-wrap gap-2">
@@ -411,11 +528,9 @@ export default function MultasPage() {
                 <span
                   key={r.motoId}
                   className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full border font-mono ${
-                    r.loading
-                      ? "border-muted-foreground/30 text-muted-foreground"
-                      : r.error
-                      ? "border-destructive/30 bg-destructive/10 text-destructive"
-                      : "border-success/30 bg-success/10 text-success"
+                    r.loading ? "border-muted-foreground/30 text-muted-foreground"
+                    : r.error ? "border-destructive/30 bg-destructive/10 text-destructive"
+                    : "border-success/30 bg-success/10 text-success"
                   }`}
                 >
                   {r.loading ? <Loader2 className="h-3 w-3 animate-spin" /> : r.error ? <XCircle className="h-3 w-3" /> : <CheckCircle2 className="h-3 w-3" />}
@@ -426,66 +541,134 @@ export default function MultasPage() {
           )}
 
           {/* Resultados */}
-          <div className="flex-1 px-6 py-4 space-y-3 overflow-y-auto">
+          <div className="flex-1 px-6 py-4 space-y-2 overflow-y-auto">
             {!hasQueried && (
               <div className="flex flex-col items-center justify-center py-16 text-center text-muted-foreground gap-3">
                 <RefreshCw className="h-10 w-10 opacity-30" />
-                <p className="text-sm">Selecione as motos e clique em <strong>Consultar</strong> para verificar restrições no DETRAN.</p>
+                <p className="text-sm">Selecione as motos e clique em <strong>Consultar</strong> para buscar multas no DETRAN-GO.</p>
               </div>
             )}
 
-            {hasQueried && motoResults.map(r => (
-              <div
-                key={r.motoId}
-                className={`rounded-lg border p-4 space-y-2 ${
-                  r.loading
-                    ? "border-border bg-muted/20"
-                    : r.error
-                    ? "border-destructive/30 bg-destructive/5"
-                    : r.existeRestricao
-                    ? "border-orange-300 bg-orange-50"
-                    : "border-green-300 bg-green-50"
-                }`}
-              >
-                <div className="flex items-center gap-2">
-                  {r.loading ? (
-                    <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-                  ) : r.error ? (
-                    <XCircle className="h-4 w-4 text-destructive shrink-0" />
-                  ) : r.existeRestricao ? (
-                    <AlertTriangle className="h-4 w-4 text-orange-600 shrink-0" />
-                  ) : (
-                    <CheckCircle2 className="h-4 w-4 text-green-600 shrink-0" />
-                  )}
-                  <span className="font-mono font-bold text-sm">{r.placa}</span>
-                  {!r.loading && !r.error && (
-                    <span className={`ml-auto text-xs font-semibold ${r.existeRestricao ? "text-orange-700" : "text-green-700"}`}>
-                      {r.existeRestricao ? "Com restrições" : "Sem restrições"}
-                    </span>
-                  )}
-                  {r.error && (
-                    <span className="ml-auto text-xs text-destructive">{r.error}</span>
-                  )}
-                </div>
-                {!r.loading && !r.error && r.restricoes.length > 0 && (
-                  <ul className="space-y-1 pl-6">
-                    {r.restricoes.map((res, i) => (
-                      <li key={i} className="text-xs text-orange-800 flex items-start gap-1.5">
-                        <span className="mt-1 h-1.5 w-1.5 rounded-full bg-orange-500 shrink-0" />
-                        {res}
-                      </li>
-                    ))}
-                  </ul>
-                )}
-                {!r.loading && !r.error && r.restricoes.length === 0 && !r.existeRestricao && (
-                  <p className="pl-6 text-xs text-green-700">Veículo sem bloqueios ou pendências no DETRAN.</p>
-                )}
+            {allInfracoes.length > 0 && (
+              <div className="flex items-center justify-between pb-2">
+                <span className="text-sm font-semibold">{allInfracoes.length} multa(s) encontrada(s)</span>
+                <Button variant="ghost" size="sm" onClick={selectAll} className="text-xs h-7">
+                  Selecionar todas
+                </Button>
+              </div>
+            )}
+
+            {allInfracoes.map(d => (
+              <InfracaoCard
+                key={d._key}
+                infracao={d}
+                checked={selected.has(d._key)}
+                onToggle={() => toggleInfracao(d._key)}
+                fmt={fmt}
+                fmtDate={fmtDate}
+                clientName={d.suggestedRental ? clients.find(c => c.id === d.suggestedRental!.clienteId)?.nome ?? null : null}
+              />
+            ))}
+
+            {motoResults.filter(r => r.error).map(r => (
+              <div key={r.motoId} className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
+                <XCircle className="h-4 w-4 mt-0.5 shrink-0" />
+                <span><strong>{r.placa}:</strong> {r.error}</span>
               </div>
             ))}
+
+            {hasQueried && !motoResults.some(r => r.loading) && allInfracoes.length === 0 && motoResults.every(r => !r.error) && (
+              <div className="flex flex-col items-center justify-center py-12 text-center text-muted-foreground gap-2">
+                <CheckCircle2 className="h-8 w-8 text-success opacity-60" />
+                <p className="text-sm">Nenhuma multa pendente encontrada.</p>
+              </div>
+            )}
           </div>
+
+          {/* Footer */}
+          {selected.size > 0 && (
+            <div className="px-6 py-4 border-t flex items-center justify-between bg-background">
+              <span className="text-sm text-muted-foreground">{selected.size} multa(s) selecionada(s)</span>
+              <Button onClick={handleImport} disabled={importing} className="gap-2">
+                {importing ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                Importar selecionadas
+              </Button>
+            </div>
+          )}
         </SheetContent>
       </Sheet>
     </div>
   );
 }
 
+// ─── Card de infração ─────────────────────────────────────────────────────────
+function InfracaoCard({
+  infracao, checked, onToggle, fmt, fmtDate, clientName,
+}: {
+  infracao: SelectableInfracao;
+  checked: boolean;
+  onToggle: () => void;
+  fmt: (v: number) => string;
+  fmtDate: (iso: string | null) => string;
+  clientName: string | null;
+}) {
+  const grupoColor: Record<string, string> = {
+    GRAVE: "bg-red-100 text-red-700",
+    GRAVISSIMA: "bg-red-200 text-red-800",
+    MEDIA: "bg-yellow-100 text-yellow-700",
+    LEVE: "bg-blue-100 text-blue-700",
+  };
+
+  return (
+    <div
+      className={`rounded-lg border p-3 flex items-start gap-3 transition-colors ${
+        infracao.alreadyImported ? "opacity-50 bg-muted/30 cursor-default"
+        : checked ? "border-primary/40 bg-primary/5 cursor-pointer"
+        : "hover:bg-muted/30 cursor-pointer"
+      }`}
+      onClick={() => !infracao.alreadyImported && onToggle()}
+    >
+      <Checkbox
+        checked={checked}
+        disabled={infracao.alreadyImported}
+        onCheckedChange={() => !infracao.alreadyImported && onToggle()}
+        className="mt-0.5"
+      />
+      <div className="flex-1 min-w-0 space-y-1">
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="font-mono font-bold text-sm">{infracao.placa}</span>
+          {infracao.grupo && (
+            <span className={`text-[10px] px-1.5 py-0.5 rounded font-semibold ${grupoColor[infracao.grupo.toUpperCase()] ?? "bg-muted text-muted-foreground"}`}>
+              {infracao.grupo}
+            </span>
+          )}
+          {infracao.categoria && (
+            <Badge variant="outline" className="text-[10px] px-1.5 py-0">
+              {categoriaLabel[infracao.categoria] ?? infracao.categoria}
+            </Badge>
+          )}
+          {infracao.alreadyImported && <Badge variant="secondary" className="text-[10px] px-1.5 py-0">Já importada</Badge>}
+          <span className="font-semibold text-sm ml-auto">{fmt(infracao.valor)}</span>
+        </div>
+        <p className="text-xs text-foreground/80 leading-tight">{infracao.descricao}</p>
+        {infracao.orgao_atuador && (
+          <p className="text-xs text-muted-foreground">{infracao.orgao_atuador}</p>
+        )}
+        <div className="flex gap-4 text-xs text-muted-foreground flex-wrap">
+          {infracao.data_infracao && <span>Infração: {fmtDate(infracao.data_infracao)}</span>}
+          {infracao.data_vencimento && <span>Vencimento: {fmtDate(infracao.data_vencimento)}</span>}
+          {infracao.valor_desconto > 0 && infracao.valor_desconto < infracao.valor && (
+            <span className="text-green-600">Com desconto: {fmt(infracao.valor_desconto)}</span>
+          )}
+        </div>
+        {clientName && (
+          <div className="flex items-center gap-1 text-xs text-primary font-medium">
+            <Info className="h-3 w-3" />
+            Locatário na data: <strong>{clientName}</strong>
+            {infracao.responsavel_infracao === "CONDUTOR" ? " — responsável (condutor)" : " — locadora é responsável (proprietário)"}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
