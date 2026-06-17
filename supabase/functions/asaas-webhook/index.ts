@@ -27,19 +27,71 @@ function parseFeeSubcategoria(description: string): string {
   if (d.includes("pix")) return "Taxa PIX";
   if (d.includes("transferência") || d.includes("transferencia") || d.includes("ted") || d.includes("doc")) return "Taxa de transferência";
   if (d.includes("antecipação") || d.includes("antecipacao")) return "Taxa de antecipação";
+  if (d.includes("cartão") || d.includes("cartao") || d.includes("credit") || d.includes("debit")) return "Taxa de cartão";
   return "Taxa Asaas";
 }
 
-// O Asaas pode retornar `payment` como string-ID ou como objeto { id }.
-// Também testa o campo `document` usado em algumas versões da API.
-function feeMatchesPayment(f: Record<string, unknown>, paymentId: string): boolean {
-  const p = f.payment;
-  if (typeof p === "string") return p === paymentId;
-  if (p && typeof p === "object") return (p as { id?: string }).id === paymentId;
-  const d = f.document;
-  if (typeof d === "string") return d === paymentId;
-  if (d && typeof d === "object") return (d as { id?: string }).id === paymentId;
-  return false;
+function billingTypeToSubcategoria(billingType: string): string {
+  switch ((billingType || "").toUpperCase()) {
+    case "PIX":         return "Taxa PIX";
+    case "BOLETO":      return "Taxa de boleto";
+    case "CREDIT_CARD": return "Taxa de cartão";
+    case "DEBIT_CARD":  return "Taxa de cartão";
+    default:            return "Taxa Asaas";
+  }
+}
+
+function calcPlatformFee(payment: Record<string, any>): number {
+  const value = Number(payment.value || 0);
+  const netValue = Number(payment.netValue ?? payment.net_value ?? value);
+  return Math.max(0, Math.round((value - netValue) * 100) / 100);
+}
+
+function calcJurosAmount(payment: Record<string, any>): number {
+  const interest = payment.interest;
+  if (!interest) return 0;
+  const rate = Number(interest.value || 0);
+  if (rate <= 0) return 0;
+  const type = String(interest.type || "PERCENTAGE").toUpperCase();
+  const principal = Number(payment.value || 0);
+  const dueDate = payment.dueDate ? new Date(payment.dueDate + "T00:00:00") : null;
+  const payDate = payment.paymentDate
+    ? new Date(payment.paymentDate + "T00:00:00")
+    : payment.creditDate
+    ? new Date(payment.creditDate + "T00:00:00")
+    : null;
+  if (!dueDate || !payDate) return 0;
+  const daysLate = payDate > dueDate
+    ? Math.floor((payDate.getTime() - dueDate.getTime()) / 86400000)
+    : 0;
+  if (daysLate <= 0) return 0;
+  if (type === "MONTHLY_PERCENTAGE" || type === "PERCENTAGE") {
+    return Math.floor((principal * (rate / 100) / 30) * daysLate * 100) / 100;
+  }
+  if (type === "DAILY_PERCENTAGE") {
+    return Math.floor((principal * (rate / 100)) * daysLate * 100) / 100;
+  }
+  return Math.floor(rate * daysLate * 100) / 100;
+}
+
+function calcMultaAmount(payment: Record<string, any>): number {
+  const fine = payment.fine;
+  if (!fine) return 0;
+  const value = Number(fine.value || 0);
+  if (value <= 0) return 0;
+  const dueDate = payment.dueDate ? new Date(payment.dueDate + "T00:00:00") : null;
+  const payDate = payment.paymentDate
+    ? new Date(payment.paymentDate + "T00:00:00")
+    : payment.creditDate
+    ? new Date(payment.creditDate + "T00:00:00")
+    : null;
+  if (!dueDate || !payDate) return 0;
+  if (payDate <= dueDate) return 0;
+  const type = String(fine.type || "").toUpperCase();
+  if (type === "PERCENTAGE") {
+    return Math.floor(Number(payment.value || 0) * (value / 100) * 100) / 100;
+  }
+  return Math.floor(value * 100) / 100;
 }
 
 function computePeriodoRef(dataInicio: string, frequencia: string, dueDateStr: string): string {
@@ -65,139 +117,197 @@ type EntryContext = {
   moto_id?: string | null;
   placa?: string | null;
   rental_id?: string | null;
+  data_prevista?: string | null;
 };
 
-async function registerAsaasFees(
+type LinkFields = {
+  company_id: string;
+  cliente_id: string | null;
+  cliente_nome: string | null;
+  moto_id: string | null;
+  placa: string | null;
+  rental_id: string | null;
+};
+
+function dateAddDays(dateStr: string, days: number): string {
+  const d = new Date(dateStr + "T00:00:00");
+  d.setDate(d.getDate() + days);
+  return d.toISOString().split("T")[0];
+}
+
+// Estratégia primária: busca todas as taxas pelo número da fatura no creditDate.
+// Captura taxa de boleto/PIX + taxa de mensageria em uma única consulta.
+async function syncFeesFromTransactions(
   supabase: ReturnType<typeof createClient>,
-  entry: EntryContext,
   apiKey: string,
-  paymentDate: string,
-  paymentValue?: number,
-  nossoNumero?: string,
-) {
-  try {
-    const seenFeeIds = new Set<string>();
-    const feesToInsert: Array<{ id: string; value: number; description: string }> = [];
-
-    // Estratégia 1: filtrar diretamente pelo payment ID
-    const s1Res = await fetch(
-      `${ASAAS_BASE}/financialTransactions?payment=${entry.asaas_payment_id}&type=DEBIT`,
-      { headers: { "access_token": apiKey } },
-    );
-    if (s1Res.ok) {
-      const s1Rows = ((await s1Res.json()).data || []) as Array<Record<string, unknown>>;
-      console.log(`[registerAsaasFees] s1: ${s1Rows.length} rows`);
-      for (const f of s1Rows) {
-        const fId = String(f.id ?? "");
-        if (!fId || seenFeeIds.has(fId)) continue;
-        if (!feeMatchesPayment(f, entry.asaas_payment_id)) continue;
-        seenFeeIds.add(fId);
-        feesToInsert.push({ id: fId, value: Number(f.value ?? 0), description: String(f.description ?? "") });
-      }
-    }
-
-    // Estratégia 2: todos os lançamentos do creditDate + filtro por nº da fatura
-    if (feesToInsert.length === 0) {
-      const s2Res = await fetch(
-        `${ASAAS_BASE}/financialTransactions?startDate=${paymentDate}&finishDate=${paymentDate}&limit=100`,
-        { headers: { "access_token": apiKey } },
-      );
-      if (s2Res.ok) {
-        const s2Rows = ((await s2Res.json()).data || []) as Array<Record<string, unknown>>;
-        console.log(`[registerAsaasFees] s2: ${s2Rows.length} rows`);
-
-        let faturaRef = nossoNumero || "";
-        if (!faturaRef) {
-          const creditTx = s2Rows.find(tx => {
-            if (Number(tx.value) <= 0) return false;
-            if (feeMatchesPayment(tx, entry.asaas_payment_id)) return true;
-            return paymentValue != null && Math.abs(Number(tx.value) - paymentValue) < 0.50;
-          });
-          if (creditTx) {
-            const m = String(creditTx.description || "").match(/fatura\s+nr\.?\s*(\d+)/i);
-            if (m) faturaRef = m[1];
-            console.log(`[registerAsaasFees] s2 creditTx="${creditTx.description}" faturaRef=${faturaRef}`);
-          }
-        }
-
-        for (const f of s2Rows) {
-          if (Number(f.value) >= 0) continue;
-          const fId = String(f.id ?? "");
-          if (!fId || seenFeeIds.has(fId)) continue;
-          const desc = String(f.description ?? "").toLowerCase();
-          if (!desc.includes("taxa") && !desc.includes("tarifa") && !desc.includes("antecip")) continue;
-          const matches = feeMatchesPayment(f, entry.asaas_payment_id) ||
-                          (faturaRef && String(f.description ?? "").includes(faturaRef));
-          if (!matches) continue;
-          seenFeeIds.add(fId);
-          feesToInsert.push({ id: fId, value: Number(f.value ?? 0), description: String(f.description ?? "") });
-        }
-      }
-    }
-
-    for (const fee of feesToInsert) {
-      const feeAmount = Math.abs(fee.value);
-      if (feeAmount <= 0) continue;
-
-      const feeDate = paymentDate;
-      const subcategoria = parseFeeSubcategoria(fee.description);
-
-      const { error } = await supabase.from("financial_entries").upsert({
-        id: await deterministicUUID(`asaas-fee:${fee.id}`),
-        tipo: "despesa",
-        categoria: "taxas",
-        subcategoria,
-        descricao: fee.description || subcategoria,
-        observacao: fee.description || subcategoria,
-        valor: feeAmount,
-        data: feeDate,
-        data_prevista: feeDate,
-        pago: true,
-        conta: "Asaas",
-        natureza: entry.placa || entry.moto_id ? "operacional" : "administrativa",
-        company_id: entry.company_id,
-        cliente_id: entry.cliente_id || null,
-        cliente_nome: entry.cliente_nome || null,
-        moto_id: entry.moto_id || null,
-        placa: entry.placa || null,
-        rental_id: entry.rental_id || null,
-        tags: ["Asaas"],
-        recorrente: false,
-        despesa_fixa: false,
-        ignorada: false,
-        deleted_at: null,
-      }, { onConflict: "id", ignoreDuplicates: true });
-
-      if (error) {
-        console.error(`[registerAsaasFees] erro ao inserir taxa ${fee.id}:`, error.message);
-      } else {
-        console.log(`[registerAsaasFees] taxa registrada: ${subcategoria} R$ ${feeAmount} em ${feeDate}`);
-      }
-    }
-  } catch (err) {
-    console.error("[registerAsaasFees] erro inesperado:", err);
+  payment: Record<string, any>,
+  linkFields: LinkFields,
+  creditDate: string,
+): Promise<number> {
+  const today = new Date().toISOString().split("T")[0];
+  if (creditDate > today) {
+    console.log(`[syncFeesFromTransactions] creditDate=${creditDate} futuro — aguardar cron`);
+    return 0;
   }
+
+  // Janela de 4 dias: taxa de mensageria pode aparecer 1-2 dias úteis após compensação.
+  const finishDate = dateAddDays(creditDate, 3) > today ? today : dateAddDays(creditDate, 3);
+  const txRes = await fetch(
+    `${ASAAS_BASE}/financialTransactions?startDate=${creditDate}&finishDate=${finishDate}&limit=100`,
+    { headers: { "access_token": apiKey } },
+  );
+  if (!txRes.ok) {
+    console.warn(`[syncFeesFromTransactions] financialTransactions retornou ${txRes.status}`);
+    return 0;
+  }
+
+  const rows = ((await txRes.json()).data || []) as Array<Record<string, unknown>>;
+  console.log(`[syncFeesFromTransactions] ${rows.length} transações em ${creditDate}`);
+
+  // Referência da fatura: nossoNumero (boleto) ou extraído da descrição do crédito.
+  let faturaRef = String(payment.nossoNumero || "").trim();
+  if (!faturaRef) {
+    const creditTx = rows.find(tx =>
+      Number(tx.value) > 0 &&
+      Math.abs(Number(tx.value) - Number(payment.value || 0)) < 1.00
+    );
+    if (creditTx) {
+      const m = String(creditTx.description || "").match(/fatura\s+nr\.?\s*(\d+)/i);
+      if (m) faturaRef = m[1];
+      console.log(`[syncFeesFromTransactions] faturaRef="${faturaRef}" desc="${creditTx.description}"`);
+    }
+  } else {
+    console.log(`[syncFeesFromTransactions] nossoNumero="${faturaRef}"`);
+  }
+
+  if (!faturaRef) {
+    console.warn("[syncFeesFromTransactions] faturaRef não encontrada");
+    return 0;
+  }
+
+  const feeTxs = rows.filter(tx => {
+    if (Number(tx.value) >= 0) return false;
+    const desc = String(tx.description || "");
+    const descLower = desc.toLowerCase();
+    if (!descLower.includes("taxa") && !descLower.includes("tarifa")) return false;
+    return desc.includes(faturaRef);
+  });
+
+  console.log(`[syncFeesFromTransactions] ${feeTxs.length} taxas para fatura ${faturaRef}`);
+
+  let inserted = 0;
+  for (const fee of feeTxs) {
+    const feeId = String(fee.id ?? "");
+    const feeAmount = Math.abs(Number(fee.value));
+    if (!feeId || feeAmount <= 0.005) continue;
+
+    const desc = String(fee.description || "");
+    const subcategoria = parseFeeSubcategoria(desc);
+
+    const { error } = await supabase.from("financial_entries").upsert({
+      id: await deterministicUUID(`asaas-fee-tx:${feeId}`),
+      tipo: "despesa",
+      categoria: "taxas",
+      subcategoria,
+      descricao: desc,
+      observacao: desc,
+      valor: feeAmount,
+      data: creditDate,
+      data_prevista: creditDate,
+      pago: true,
+      conta: "Asaas",
+      natureza: linkFields.placa || linkFields.moto_id ? "operacional" : "administrativa",
+      ...linkFields,
+      tags: ["Asaas"],
+      recorrente: false,
+      despesa_fixa: false,
+      ignorada: false,
+      deleted_at: null,
+    }, { onConflict: "id", ignoreDuplicates: true });
+
+    if (!error) {
+      inserted++;
+      console.log(`[syncFeesFromTransactions] ${subcategoria} R$ ${feeAmount} (tx=${feeId})`);
+    } else {
+      console.error(`[syncFeesFromTransactions] erro tx ${feeId}:`, error.message);
+    }
+  }
+
+  // Se as taxas reais foram inseridas, remove o fallback anterior (value-netValue)
+  // para evitar duplicata da taxa de processamento.
+  if (inserted > 0) {
+    const fallbackId = await deterministicUUID(`asaas-fee:${payment.id}`);
+    await supabase.from("financial_entries")
+      .update({ deleted_at: new Date().toISOString() })
+      .eq("id", fallbackId)
+      .is("deleted_at", null);
+  }
+
+  return inserted;
+}
+
+// Fallback: insere apenas a taxa de processamento via value - netValue.
+// Usado quando creditDate ainda é futuro (boleto com liquidação D+1).
+// O cron vai substituir isso pelas taxas reais quando o creditDate chegar.
+async function syncFeeFromNetValue(
+  supabase: ReturnType<typeof createClient>,
+  payment: Record<string, any>,
+  linkFields: LinkFields,
+  creditDate: string,
+): Promise<number> {
+  const feeAmount = calcPlatformFee(payment);
+  if (feeAmount <= 0.005) return 0;
+
+  const subcategoria = billingTypeToSubcategoria(payment.billingType || "");
+  const faturaRef = payment.nossoNumero || payment.id;
+  const descricao = `${subcategoria} - fatura nr. ${faturaRef}`;
+
+  const { error } = await supabase.from("financial_entries").upsert({
+    id: await deterministicUUID(`asaas-fee:${payment.id}`),
+    tipo: "despesa",
+    categoria: "taxas",
+    subcategoria,
+    descricao,
+    observacao: descricao,
+    valor: feeAmount,
+    data: creditDate,
+    data_prevista: creditDate,
+    pago: true,
+    conta: "Asaas",
+    natureza: linkFields.placa || linkFields.moto_id ? "operacional" : "administrativa",
+    ...linkFields,
+    tags: ["Asaas"],
+    recorrente: false,
+    despesa_fixa: false,
+    ignorada: false,
+    deleted_at: null,
+  }, { onConflict: "id", ignoreDuplicates: true });
+
+  if (!error) {
+    console.log(`[syncFeeFromNetValue] fallback: ${subcategoria} R$ ${feeAmount}`);
+    return 1;
+  }
+  console.error(`[syncFeeFromNetValue] erro:`, error.message);
+  return 0;
 }
 
 async function registerJurosMulta(
   supabase: ReturnType<typeof createClient>,
   entry: EntryContext,
-  payment: { id: string; dueDate?: string; interest?: { value?: number }; fine?: { value?: number } },
+  payment: Record<string, any>,
   paymentDate: string,
 ) {
-  const interestValue = Number(payment.interest?.value || 0);
-  const fineValue = Number(payment.fine?.value || 0);
+  const interestValue = calcJurosAmount(payment);
+  const fineValue = calcMultaAmount(payment);
   const total = interestValue + fineValue;
-
   if (total <= 0) return;
 
   const parts: string[] = [];
   if (interestValue > 0) parts.push(`Juros R$ ${interestValue.toFixed(2)}`);
   if (fineValue > 0) parts.push(`Multa R$ ${fineValue.toFixed(2)}`);
 
-  // Calcula referência de período usando dueDate do pagamento (= vencimento original)
   let periodoRef = "";
-  const dueDateStr = payment.dueDate || "";
+  const dueDateStr = payment.dueDate || entry.data_prevista || "";
   if (entry.rental_id && dueDateStr) {
     const { data: rental } = await supabase
       .from("rentals")
@@ -240,13 +350,34 @@ async function registerJurosMulta(
     despesa_fixa: false,
     ignorada: false,
     deleted_at: null,
-  }, { onConflict: "id", ignoreDuplicates: true });
+  }, { onConflict: "id", ignoreDuplicates: false });
 
   if (error) {
-    console.error(`[registerJurosMulta] erro para payment ${payment.id}:`, error.message);
+    console.error(`[registerJurosMulta] erro para ${payment.id}:`, error.message);
   } else {
-    console.log(`[registerJurosMulta] R$ ${total} registrado (${parts.join(", ")}) para payment ${payment.id}${periodoRef ? ` | ${periodoRef}` : ""}`);
+    console.log(`[registerJurosMulta] R$ ${total} para ${payment.id}${periodoRef ? ` | ${periodoRef}` : ""}`);
   }
+}
+
+// Busca o pagamento completo na API se o webhook não trouxer netValue ou nossoNumero.
+async function fetchPaymentIfNeeded(
+  payment: Record<string, any>,
+  apiKey: string,
+): Promise<Record<string, any>> {
+  if (payment.netValue != null && payment.nossoNumero != null) return payment;
+  try {
+    const res = await fetch(`${ASAAS_BASE}/payments/${payment.id}`, {
+      headers: { "access_token": apiKey },
+    });
+    if (res.ok) {
+      const full = await res.json();
+      console.log(`[fetchPaymentIfNeeded] dados completos: netValue=${full.netValue} nossoNumero=${full.nossoNumero}`);
+      return { ...payment, ...full };
+    }
+  } catch (err) {
+    console.warn("[fetchPaymentIfNeeded] erro:", err);
+  }
+  return payment;
 }
 
 serve(async (req) => {
@@ -263,7 +394,7 @@ serve(async (req) => {
     const body = await req.json();
     const { event, payment } = body;
 
-    console.log(`[asaas-webhook] event=${event} paymentId=${payment?.id}`);
+    console.log(`[asaas-webhook] event=${event} id=${payment?.id} billingType=${payment?.billingType} value=${payment?.value} netValue=${payment?.netValue} creditDate=${payment?.creditDate} nossoNumero=${payment?.nossoNumero}`);
 
     if (!event || !payment?.id) {
       return new Response(JSON.stringify({ error: "Payload inválido" }), { status: 400 });
@@ -276,12 +407,12 @@ serve(async (req) => {
 
     const { data: entry, error } = await supabase
       .from("financial_entries")
-      .select("id, pago, asaas_status, asaas_payment_id, company_id, cliente_id, cliente_nome, moto_id, placa, rental_id")
+      .select("id, pago, asaas_status, asaas_payment_id, company_id, cliente_id, cliente_nome, moto_id, placa, rental_id, data_prevista")
       .eq("asaas_payment_id", payment.id)
       .single();
 
     if (error || !entry) {
-      console.warn(`[asaas-webhook] entrada não encontrada para payment ${payment.id}`);
+      console.warn(`[asaas-webhook] entrada não encontrada para ${payment.id}`);
       return new Response(JSON.stringify({ ok: true, notFound: true }), { status: 200 });
     }
 
@@ -289,7 +420,6 @@ serve(async (req) => {
     if (payment.bankSlipUrl) updates.asaas_boleto_url = payment.bankSlipUrl;
     if (payment.invoiceUrl) updates.asaas_invoice_url = payment.invoiceUrl;
 
-    // creditDate = data em que o valor fica disponível para saque na conta Asaas
     const paymentDate = payment.creditDate || payment.paymentDate || payment.confirmedDate || new Date().toISOString().split("T")[0];
 
     if (newStatus === "RECEIVED") {
@@ -299,7 +429,7 @@ serve(async (req) => {
     }
 
     await supabase.from("financial_entries").update(updates).eq("id", entry.id);
-    console.log(`[asaas-webhook] entrada ${entry.id} atualizada: asaas_status=${newStatus}`);
+    console.log(`[asaas-webhook] ${entry.id} → asaas_status=${newStatus}`);
 
     if (newStatus === "RECEIVED" && entry.company_id) {
       const { data: company } = await supabase
@@ -308,11 +438,30 @@ serve(async (req) => {
         .eq("id", entry.company_id)
         .single();
       const apiKey = company?.asaas_config?.apiKey || Deno.env.get("ASAAS_API_KEY") || "";
+
       if (apiKey) {
-        await Promise.all([
-          registerAsaasFees(supabase, entry, apiKey, paymentDate, payment.value, payment.nossoNumero),
-          registerJurosMulta(supabase, entry, payment, paymentDate),
-        ]);
+        // Enriquece o pagamento com nossoNumero e netValue se ausentes no payload
+        const fullPayment = await fetchPaymentIfNeeded(payment, apiKey);
+
+        const linkFields: LinkFields = {
+          company_id: entry.company_id,
+          cliente_id: entry.cliente_id || null,
+          cliente_nome: entry.cliente_nome || null,
+          moto_id: entry.moto_id || null,
+          placa: entry.placa || null,
+          rental_id: entry.rental_id || null,
+        };
+
+        const creditDate = fullPayment.creditDate || paymentDate;
+
+        // Primária: taxas via financialTransactions (boleto/PIX + mensageria)
+        // Fallback: apenas taxa de processamento via value - netValue
+        const feesFromTx = await syncFeesFromTransactions(supabase, apiKey, fullPayment, linkFields, creditDate);
+        if (feesFromTx === 0) {
+          await syncFeeFromNetValue(supabase, fullPayment, linkFields, creditDate);
+        }
+
+        await registerJurosMulta(supabase, entry, fullPayment, paymentDate);
       }
     }
 

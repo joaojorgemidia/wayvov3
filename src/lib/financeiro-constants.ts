@@ -72,6 +72,7 @@ export const DEFAULT_CATEGORIAS = {
     { value: "ajuste_saldo", label: "Ajuste de Saldo", icon: ArrowLeftRight },
     { value: "fatura_cartao", label: "Fatura de Cartão", icon: CreditCard },
     { value: "transferencia", label: "Transferência", icon: ArrowLeftRight },
+    { value: "repasse", label: "Repasse", icon: Wallet },
     { value: "outro_despesa", label: "Outros", icon: DollarSign },
   ],
 };
@@ -86,6 +87,7 @@ export const SYSTEM_CATEGORY_VALUES = new Set([
   "ajuste_saldo",
   "compra_moto",
   "venda_moto",
+  "repasse",
   "manutencao_receita",
   "manutencao_despesa",
 ]);

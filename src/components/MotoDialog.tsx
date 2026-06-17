@@ -994,6 +994,19 @@ export function MotoDialog({ open, onOpenChange, moto, onSave, mode }: MotoDialo
                 </div>
               </div>
 
+              {form.tipo === "terceiro" && (
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="grid gap-1">
+                    <Label className="text-xs">Nome do parceiro</Label>
+                    <Input value={form.proprietario || ""} onChange={(e) => setForm({ ...form, proprietario: e.target.value })} placeholder="João Silva" />
+                  </div>
+                  <div className="grid gap-1">
+                    <Label className="text-xs">Contato do parceiro</Label>
+                    <Input value={form.parceiroContato || ""} onChange={(e) => setForm({ ...form, parceiroContato: e.target.value })} placeholder="(11) 99999-9999" />
+                  </div>
+                </div>
+              )}
+
               <div className="grid gap-1">
                 <Label className="flex items-center gap-1 text-xs">
                   Modelo <span className="text-destructive">*</span>

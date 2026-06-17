@@ -233,6 +233,74 @@ export function downloadExport(
   }
 }
 
+// ──────────────────────────────────────────────────────────────────
+// Export no formato "Modelo - Upload de veículos" (terceiros)
+// ──────────────────────────────────────────────────────────────────
+
+const KNOWN_BRANDS = [
+  "HONDA", "YAMAHA", "SUZUKI", "KAWASAKI", "BMW", "TRIUMPH", "HARLEY-DAVIDSON",
+  "HARLEY DAVIDSON", "DUCATI", "KTM", "ROYAL ENFIELD", "SHINERAY", "HAOJUE",
+  "DAFRA", "TRAXX", "KASINSKI", "SUNDOWN", "BRAVA", "GAS GAS",
+];
+
+function splitMarcaModelo(modelo: string): { marca: string; modelo: string } {
+  const trimmed = (modelo || "").trim();
+  for (const brand of KNOWN_BRANDS) {
+    if (trimmed.toUpperCase().startsWith(brand)) {
+      return { marca: brand, modelo: trimmed.slice(brand.length).trim() };
+    }
+  }
+  return { marca: "", modelo: trimmed };
+}
+
+// Excel serial date computed from pure UTC arithmetic (Excel epoch = 1899-12-30).
+// Avoids the sub-second drift that `json_to_sheet` introduces when converting JS
+// Date objects through the local timezone's historical (pre-standardization) offset.
+function excelDateSerial(iso: string): number | "" {
+  const m = iso.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!m) return "";
+  const ms = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])) - Date.UTC(1899, 11, 30);
+  return Math.round(ms / 86400000);
+}
+
+const DATA_COMPRA_COL = 9; // 0-indexed column for "Data Compra" in the row shape below
+
+export function downloadVeiculosUploadTemplate(motos: Motorcycle[], email: string) {
+  const rows = motos.map(m => {
+    const { marca, modelo } = splitMarcaModelo(m.modelo);
+    return {
+      "(email cadastrado)": email || "",
+      "Placa": m.placa || "",
+      "Marca": marca,
+      "Modelo": modelo,
+      "fipe - marca": "",
+      "fipe- modelo": "",
+      "fipe ano": "",
+      "Ano": m.anoModelo ?? m.anoFabricacao ?? "",
+      "valor de compra": m.valorCompra ?? "",
+      "Data Compra": m.dataCompra ? excelDateSerial(m.dataCompra) : "",
+      "Cor": m.cor || "",
+      "KM ATUAL": m.kmAtual ?? "",
+      "Moto ou carro?": "Moto",
+      "Chassi": m.chassi || "",
+      "renavam": m.renavam || "",
+      "n motor": m.numMotor || "",
+    };
+  });
+  const ws = XLSX.utils.json_to_sheet(rows);
+  const range = XLSX.utils.decode_range(ws["!ref"] || "A1");
+  for (let r = range.s.r + 1; r <= range.e.r; r++) {
+    const cellRef = XLSX.utils.encode_cell({ r, c: DATA_COMPRA_COL });
+    const cell = ws[cellRef];
+    if (cell && typeof cell.v === "number") cell.z = "dd/mm/yyyy";
+  }
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "Página1");
+  const buf = XLSX.write(wb, { bookType: "xlsx", type: "array" });
+  const stamp = new Date().toISOString().slice(0, 10);
+  triggerDownload(new Blob([buf]), `upload-veiculos-${stamp}.xlsx`, "application/octet-stream");
+}
+
 function triggerDownload(content: string | Blob, filename: string, mime: string) {
   const blob = typeof content === "string" ? new Blob([content], { type: mime }) : content;
   const url = URL.createObjectURL(blob);

@@ -17,6 +17,7 @@ export interface Motorcycle {
   aplicativo: string;
   tipo: "propria" | "terceiro";
   proprietario?: string;
+  parceiroContato?: string;
   ultimaVistoria: string | null;
   ultimaTrocaOleo: string | null;
   kmTrocaOleo: number | null;

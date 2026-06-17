@@ -8,11 +8,12 @@ import { Badge } from "./ui/badge";
 import { Download, Upload, FileSpreadsheet, ChevronDown, AlertCircle, CheckCircle2, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import {
-  EntityKind, downloadTemplate, downloadExport, parseFile,
+  EntityKind, downloadTemplate, downloadExport, parseFile, downloadVeiculosUploadTemplate,
   buildFinanceiroPreview, buildMotosPreview, buildLocacoesPreview, PreviewRow,
 } from "@/lib/import-export";
 import { Motorcycle, Rental, FinancialEntry, Client } from "@/lib/types";
 import { ColumnMapper, SystemField } from "./ColumnMapper";
+import { useAuth } from "@/contexts/AuthContext";
 
 // ── System fields shown in the mapping step ──────────────────────────────────
 
@@ -89,6 +90,7 @@ interface MappingStage {
 }
 
 export function ImportExportBar({ kind, items, motos = [], clients = [], onImport }: Props) {
+  const { user } = useAuth();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [mappingStage, setMappingStage] = useState<MappingStage | null>(null);
   const [preview, setPreview] = useState<PreviewRow<any>[] | null>(null);
@@ -238,6 +240,11 @@ export function ImportExportBar({ kind, items, motos = [], clients = [], onImpor
           <DropdownMenuContent>
             <DropdownMenuItem onClick={() => downloadExport(kind, items, "xlsx", { motos, clients })}>Excel (.xlsx)</DropdownMenuItem>
             <DropdownMenuItem onClick={() => downloadExport(kind, items, "csv", { motos, clients })}>CSV</DropdownMenuItem>
+            {kind === "motos" && (
+              <DropdownMenuItem onClick={() => downloadVeiculosUploadTemplate(items as Motorcycle[], user?.email || "")}>
+                Modelo Upload de Veículos (.xlsx)
+              </DropdownMenuItem>
+            )}
           </DropdownMenuContent>
         </DropdownMenu>
 

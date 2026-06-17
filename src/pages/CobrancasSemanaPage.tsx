@@ -429,6 +429,10 @@ export default function CobrancasSemanaPage() {
     [pending, debtDetailClientId],
   );
 
+  const todayISO = toISODate(today);
+  // Snoozed via localStorage: oculto até a data escolhida, sem alterar dataPrevista
+  const isSnoozed = (id: string) => { const d = snoozeMap[id]; return !!d && d >= todayISO; };
+
   const weekItems = pending.filter(
     (i) => i.due && i.due >= monday && i.due <= sunday && i.daysLate <= 0 &&
     (i.originalDaysLate <= 0 || isSnoozed(i.entry.id)),
@@ -437,9 +441,6 @@ export default function CobrancasSemanaPage() {
   const upcomingItems = weekItems.filter(i => i.daysLate < 0);
   const firstDayOfCurrentMonth = new Date(today.getFullYear(), today.getMonth(), 1);
   const overdueItems = pending.filter((i) => i.originalDaysLate > 0 && i.due && i.due >= firstDayOfCurrentMonth);
-  const todayISO = toISODate(today);
-  // Snoozed via localStorage: oculto até a data escolhida, sem alterar dataPrevista
-  const isSnoozed = (id: string) => { const d = snoozeMap[id]; return !!d && d >= todayISO; };
   // Vencidos e não ocultados → aparecem por padrão
   const overdueVisible = overdueItems.filter((i) => i.daysLate > 0 && !isSnoozed(i.entry.id));
   // Adiados: data de ação no futuro OU snooze ativo

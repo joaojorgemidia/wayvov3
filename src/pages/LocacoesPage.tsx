@@ -261,7 +261,7 @@ export default function LocacoesPage() {
       newFinancialEntries.push(resolveAssociations({
         id: crypto.randomUUID(), tipo: "receita", categoria: "caucao",
         descricao: `Caução - ${numContrato} - ${motoPlaca}${obsExtra}`,
-        valor: rental.valorCaucao, data: rental.dataInicio, pago: true,
+        valor: rental.valorCaucao, data: rental.dataInicio, pago: false,
         motoId: rental.motoId, rentalId: rental.id, clienteId: client.id,
         placa: motoPlaca, clienteNome: client.nome, natureza: "operacional",
       }, ctx));

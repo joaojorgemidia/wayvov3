@@ -97,6 +97,16 @@ export default function LandingPage() {
 
   return (
     <div style={{ ...fontBody, backgroundColor: COLORS.canvas, color: COLORS.ink }} className="min-h-screen w-full">
+      {/* ============ FAIXA DE OFERTA ============ */}
+      <div
+        className="w-full text-center px-4 py-2.5"
+        style={{ backgroundColor: COLORS.primary, color: "#04200F" }}
+      >
+        <p style={{ ...fontBody, fontSize: 13.5, fontWeight: 600 }}>
+          🎉 Oferta por tempo limitado: <strong>30 dias grátis</strong> para testar a Wayvo sem compromisso.
+        </p>
+      </div>
+
       {/* ============ HEADER ============ */}
       <header
         className="sticky top-0 z-50 w-full transition-all"

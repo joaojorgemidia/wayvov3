@@ -32,9 +32,15 @@ export function computeSemanaNumero(
   if (diffDays < 0) return null;
   // Usa Math.round nas divisões para tolerar desvios de 1-3 dias entre
   // vencimentos criados antes de a locação virar pré/pós-paga.
-  return rental.cobrancaPrePaga
-    ? Math.round(diffDays / 7) + 1
-    : Math.max(1, Math.round(diffDays / 7));
+  if (rental.cobrancaPrePaga) {
+    return Math.round(diffDays / 7) + 1;
+  }
+  // Fallback pós-pago: se o vencimento cai antes de 6 dias após o início
+  // (período retroagiria antes da locação), o entry usa semântica pré-paga.
+  if (diffDays < 6) {
+    return Math.round(diffDays / 7) + 1;
+  }
+  return Math.max(1, Math.round(diffDays / 7));
 }
 
 /** Janela [início, fim] da semana cobrada (datas ISO yyyy-mm-dd). */
@@ -53,6 +59,11 @@ export function computeSemanaPeriodo(
     // Pós-pago: vencimento = fim do período → início é 6 dias antes
     inicioPeriodo = new Date(due);
     inicioPeriodo.setDate(inicioPeriodo.getDate() - 6);
+    // Fallback: se o período calculado começa antes do início da locação,
+    // o vencimento está sendo tratado como início (semântica pré-paga) — corrige.
+    if (ini && inicioPeriodo < ini) {
+      inicioPeriodo = new Date(due);
+    }
   }
   const fimPeriodo = new Date(inicioPeriodo);
   fimPeriodo.setDate(fimPeriodo.getDate() + 6);
