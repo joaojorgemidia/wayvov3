@@ -5130,7 +5130,7 @@ export default function FinanceiroPage() {
               </div>
 
               {/* Bloco de atraso — aparece quando há multa/juros configurados e a data de pagamento é posterior ao vencimento */}
-              {confirmToggleEntry.rentalId && confirmToggleEntry.tipo === "receita" && confirmDate && (() => {
+              {confirmToggleEntry.rentalId && confirmToggleEntry.tipo === "receita" && confirmToggleEntry.categoria !== "juros_atraso" && confirmDate && (() => {
                 const rental = rentals.find(r => r.id === confirmToggleEntry.rentalId);
                 const dueDateStr = confirmToggleEntry.dataPrevista || confirmToggleEntry.data;
                 if (!rental || !dueDateStr) return null;
