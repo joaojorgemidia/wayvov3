@@ -15,6 +15,7 @@ async function deterministicUUID(key: string): Promise<string> {
   return `${h.slice(0,8)}-${h.slice(8,12)}-5${h.slice(13,16)}-${(["8","9","a","b"])[parseInt(h[16],16)&3]}${h.slice(17,20)}-${h.slice(20,32)}`;
 }
 
+// Detecta a subcategoria da taxa a partir da descrição da transação Asaas.
 function parseFeeSubcategoria(description: string): string {
   const d = description.toLowerCase();
   if (d.includes("mensageria") || d.includes("sms") || d.includes("whatsapp")) return "Taxa de mensageria";
@@ -22,19 +23,73 @@ function parseFeeSubcategoria(description: string): string {
   if (d.includes("pix")) return "Taxa PIX";
   if (d.includes("transferência") || d.includes("transferencia") || d.includes("ted") || d.includes("doc")) return "Taxa de transferência";
   if (d.includes("antecipação") || d.includes("antecipacao")) return "Taxa de antecipação";
+  if (d.includes("cartão") || d.includes("cartao") || d.includes("credit") || d.includes("debit")) return "Taxa de cartão";
   return "Taxa Asaas";
 }
 
-// O Asaas pode retornar `payment` como string-ID ou como objeto { id }.
-// Também testa o campo `document` usado em algumas versões da API.
-function feeMatchesPayment(f: Record<string, unknown>, paymentId: string): boolean {
-  const p = f.payment;
-  if (typeof p === "string") return p === paymentId;
-  if (p && typeof p === "object") return (p as { id?: string }).id === paymentId;
-  const d = f.document;
-  if (typeof d === "string") return d === paymentId;
-  if (d && typeof d === "object") return (d as { id?: string }).id === paymentId;
-  return false;
+function billingTypeToSubcategoria(billingType: string): string {
+  switch ((billingType || "").toUpperCase()) {
+    case "PIX":         return "Taxa PIX";
+    case "BOLETO":      return "Taxa de boleto";
+    case "CREDIT_CARD": return "Taxa de cartão";
+    case "DEBIT_CARD":  return "Taxa de cartão";
+    default:            return "Taxa Asaas";
+  }
+}
+
+// Calcula a taxa de plataforma como fallback via value - netValue.
+// Cobre apenas a taxa de processamento (boleto/PIX), sem mensageria.
+function calcPlatformFee(payment: Record<string, any>): number {
+  const value = Number(payment.value || 0);
+  const netValue = Number(payment.netValue ?? payment.net_value ?? value);
+  return Math.max(0, Math.round((value - netValue) * 100) / 100);
+}
+
+function calcJurosAmount(payment: Record<string, any>): number {
+  const interest = payment.interest;
+  if (!interest) return 0;
+  const rate = Number(interest.value || 0);
+  if (rate <= 0) return 0;
+  const type = String(interest.type || "PERCENTAGE").toUpperCase();
+  const principal = Number(payment.value || 0);
+  const dueDate = payment.dueDate ? new Date(payment.dueDate + "T00:00:00") : null;
+  const payDate = payment.paymentDate
+    ? new Date(payment.paymentDate + "T00:00:00")
+    : payment.creditDate
+    ? new Date(payment.creditDate + "T00:00:00")
+    : null;
+  if (!dueDate || !payDate) return 0;
+  const daysLate = payDate > dueDate
+    ? Math.floor((payDate.getTime() - dueDate.getTime()) / 86400000)
+    : 0;
+  if (daysLate <= 0) return 0;
+  if (type === "MONTHLY_PERCENTAGE" || type === "PERCENTAGE") {
+    return Math.floor((principal * (rate / 100) / 30) * daysLate * 100) / 100;
+  }
+  if (type === "DAILY_PERCENTAGE") {
+    return Math.floor((principal * (rate / 100)) * daysLate * 100) / 100;
+  }
+  return Math.floor(rate * daysLate * 100) / 100;
+}
+
+function calcMultaAmount(payment: Record<string, any>): number {
+  const fine = payment.fine;
+  if (!fine) return 0;
+  const value = Number(fine.value || 0);
+  if (value <= 0) return 0;
+  const dueDate = payment.dueDate ? new Date(payment.dueDate + "T00:00:00") : null;
+  const payDate = payment.paymentDate
+    ? new Date(payment.paymentDate + "T00:00:00")
+    : payment.creditDate
+    ? new Date(payment.creditDate + "T00:00:00")
+    : null;
+  if (!dueDate || !payDate) return 0;
+  if (payDate <= dueDate) return 0;
+  const type = String(fine.type || "").toUpperCase();
+  if (type === "PERCENTAGE") {
+    return Math.floor(Number(payment.value || 0) * (value / 100) * 100) / 100;
+  }
+  return Math.floor(value * 100) / 100;
 }
 
 function computePeriodoRef(dataInicio: string, frequencia: string, dueDateStr: string): string {
@@ -49,6 +104,180 @@ function computePeriodoRef(dataInicio: string, frequencia: string, dueDateStr: s
   const fmt = (d: Date) => `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}`;
   const labelTipo = frequencia === "quinzenal" ? "Quinzena" : frequencia === "mensal" ? "Mês" : "Semana";
   return `${labelTipo} ${String(periodoNum).padStart(2, "0")}: ${fmt(periodoInicio)} até ${fmt(periodoFim)}`;
+}
+
+type LinkFields = {
+  company_id: string;
+  cliente_id: string | null;
+  cliente_nome: string | null;
+  moto_id: string | null;
+  placa: string | null;
+  rental_id: string | null;
+};
+
+function dateAddDays(dateStr: string, days: number): string {
+  const d = new Date(dateStr + "T00:00:00");
+  d.setDate(d.getDate() + days);
+  return d.toISOString().split("T")[0];
+}
+
+// Estratégia primária: busca TODAS as taxas do creditDate pelo número da fatura.
+// Captura taxa de boleto/PIX E taxa de mensageria em uma única consulta.
+// Retorna o número de taxas inseridas (0 = não encontrou nada, usar fallback).
+async function syncFeesFromTransactions(
+  supabase: ReturnType<typeof createClient>,
+  apiKey: string,
+  payment: Record<string, any>,
+  linkFields: LinkFields,
+  creditDate: string,
+): Promise<number> {
+  const today = new Date().toISOString().split("T")[0];
+
+  // Transações só existem após o creditDate; se ainda não chegou, não há o que buscar.
+  if (creditDate > today) {
+    console.log(`[syncFeesFromTransactions] creditDate=${creditDate} ainda no futuro — aguardar cron`);
+    return 0;
+  }
+
+  // Consulta janela de 4 dias (creditDate até creditDate+3) para capturar
+  // débitos de taxa que aparecem 1-2 dias úteis após a compensação.
+  const finishDate = dateAddDays(creditDate, 3) > today ? today : dateAddDays(creditDate, 3);
+  const txRes = await fetch(
+    `${ASAAS_BASE}/financialTransactions?startDate=${creditDate}&finishDate=${finishDate}&limit=100`,
+    { headers: { "access_token": apiKey } },
+  );
+  if (!txRes.ok) {
+    console.warn(`[syncFeesFromTransactions] GET financialTransactions retornou ${txRes.status}`);
+    return 0;
+  }
+
+  const rows = ((await txRes.json()).data || []) as Array<Record<string, unknown>>;
+  console.log(`[syncFeesFromTransactions] ${rows.length} transações em ${creditDate}`);
+
+  // Obtém a referência da fatura: nossoNumero do pagamento (boleto) ou
+  // extrai da descrição do lançamento de crédito (PIX e outros).
+  let faturaRef = String(payment.nossoNumero || "").trim();
+  if (!faturaRef) {
+    const creditTx = rows.find(tx =>
+      Number(tx.value) > 0 &&
+      Math.abs(Number(tx.value) - Number(payment.value || 0)) < 1.00
+    );
+    if (creditTx) {
+      const m = String(creditTx.description || "").match(/fatura\s+nr\.?\s*(\d+)/i);
+      if (m) faturaRef = m[1];
+      console.log(`[syncFeesFromTransactions] faturaRef extraída da descrição: ${faturaRef} | desc: "${creditTx.description}"`);
+    }
+  } else {
+    console.log(`[syncFeesFromTransactions] faturaRef do nossoNumero: ${faturaRef}`);
+  }
+
+  // Todas as taxas do Asaas (PIX, boleto, mensageria) contêm "fatura nr. XXXXXX"
+  // na descrição — o mesmo número do lançamento de crédito. O filtro por faturaRef
+  // associa automaticamente cada taxa ao pagamento correto.
+  const feeTxs = rows.filter(tx => {
+    if (Number(tx.value) >= 0) return false;
+    const desc = String(tx.description || "");
+    const descLower = desc.toLowerCase();
+    if (!descLower.includes("taxa") && !descLower.includes("tarifa")) return false;
+    return !!faturaRef && desc.includes(faturaRef);
+  });
+
+  if (feeTxs.length === 0) {
+    console.warn(`[syncFeesFromTransactions] nenhuma taxa encontrada${faturaRef ? ` para fatura ${faturaRef}` : " (sem faturaRef)"} — usando fallback`);
+    return 0; // 0 = nada encontrado → chamar fallback
+  }
+
+  console.log(`[syncFeesFromTransactions] ${feeTxs.length} taxas encontradas${faturaRef ? ` para fatura ${faturaRef}` : ""}`);
+
+  let inserted = 0;
+  for (const fee of feeTxs) {
+    const feeId = String(fee.id ?? "");
+    const feeAmount = Math.abs(Number(fee.value));
+    if (!feeId || feeAmount <= 0.005) continue;
+
+    const desc = String(fee.description || "");
+    const subcategoria = parseFeeSubcategoria(desc);
+
+    const { data: upserted, error } = await supabase.from("financial_entries").upsert({
+      id: await deterministicUUID(`asaas-fee-tx:${feeId}`),
+      tipo: "despesa",
+      categoria: "taxas",
+      subcategoria,
+      descricao: desc,
+      observacao: desc,
+      valor: feeAmount,
+      data: creditDate,
+      data_prevista: creditDate,
+      pago: true,
+      conta: "Asaas",
+      natureza: linkFields.placa || linkFields.moto_id ? "operacional" : "administrativa",
+      ...linkFields,
+      tags: ["Asaas"],
+      recorrente: false,
+      despesa_fixa: false,
+      ignorada: false,
+      deleted_at: null,
+    }, { onConflict: "id", ignoreDuplicates: true }).select("id");
+
+    if (error) {
+      console.error(`[syncFeesFromTransactions] erro ao inserir tx ${feeId}:`, error.message);
+    } else if (upserted && upserted.length > 0) {
+      inserted++;
+      console.log(`[syncFeesFromTransactions] taxa inserida: ${subcategoria} R$ ${feeAmount} (txId=${feeId})`);
+    } else {
+      console.log(`[syncFeesFromTransactions] taxa já existia, ignorada: ${subcategoria} R$ ${feeAmount} (txId=${feeId})`);
+    }
+  }
+
+  // Retorna -1 quando encontrou taxas mas todas já existiam no banco.
+  // Isso impede o fallback (que criaria duplicata com UUID diferente)
+  // e sinaliza ao frontend para marcar o entry como sincronizado sem exibir toast.
+  return inserted > 0 ? inserted : -1;
+}
+
+// Fallback: insere somente a taxa de processamento a partir de value - netValue.
+// Usado quando as transações do creditDate ainda não estão disponíveis.
+async function syncFeeFromNetValue(
+  supabase: ReturnType<typeof createClient>,
+  payment: Record<string, any>,
+  linkFields: LinkFields,
+  creditDate: string,
+): Promise<number> {
+  const feeAmount = calcPlatformFee(payment);
+  if (feeAmount <= 0.005) return 0;
+
+  const subcategoria = billingTypeToSubcategoria(payment.billingType || "");
+  const faturaRef = payment.nossoNumero || payment.id;
+  const descricao = `${subcategoria} - fatura nr. ${faturaRef}`;
+
+  const { error } = await supabase.from("financial_entries").upsert({
+    id: await deterministicUUID(`asaas-fee:${payment.id}`),
+    tipo: "despesa",
+    categoria: "taxas",
+    subcategoria,
+    descricao,
+    observacao: descricao,
+    valor: feeAmount,
+    data: creditDate,
+    data_prevista: creditDate,
+    pago: true,
+    conta: "Asaas",
+    natureza: linkFields.placa || linkFields.moto_id ? "operacional" : "administrativa",
+    ...linkFields,
+    tags: ["Asaas"],
+    recorrente: false,
+    despesa_fixa: false,
+    ignorada: false,
+    deleted_at: null,
+  }, { onConflict: "id", ignoreDuplicates: true });
+
+  if (!error) {
+    console.log(`[syncFeeFromNetValue] fallback: ${subcategoria} R$ ${feeAmount} inserida para ${payment.id}`);
+    return 1;
+  } else {
+    console.error(`[syncFeeFromNetValue] erro:`, error.message);
+    return 0;
+  }
 }
 
 serve(async (req) => {
@@ -83,7 +312,7 @@ serve(async (req) => {
       });
     }
 
-    // Busca a entrada financeira para obter os dados de vínculo
+    // Busca entrada financeira para campos de vínculo
     let entry: Record<string, any> | null = null;
     if (entryId) {
       const { data } = await supabase
@@ -101,9 +330,7 @@ serve(async (req) => {
       entry = data;
     }
 
-    const today = new Date().toISOString().split("T")[0];
-
-    const linkFields = {
+    const linkFields: LinkFields = {
       company_id: companyId,
       cliente_id: entry?.cliente_id || null,
       cliente_nome: entry?.cliente_nome || null,
@@ -112,197 +339,103 @@ serve(async (req) => {
       rental_id: entry?.rental_id || null,
     };
 
-    // ── Busca dados do pagamento para obter a data real de recebimento ────────
-    let paymentData: Record<string, any> = {};
+    // Busca dados completos do pagamento no Asaas
     const paymentRes = await fetch(
       `${ASAAS_BASE}/payments/${asaasPaymentId}`,
       { headers: { "access_token": apiKey } },
     );
-    if (paymentRes.ok) {
-      paymentData = await paymentRes.json();
-    } else {
-      console.warn(`[asaas-sync-fees] GET payment retornou ${paymentRes.status}`);
+    if (!paymentRes.ok) {
+      console.error(`[asaas-sync-fees] GET payment retornou ${paymentRes.status}`);
+      return new Response(JSON.stringify({ error: `Asaas retornou ${paymentRes.status}` }), {
+        status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
     }
 
-    // creditDate = data em que o valor fica disponível para saque na conta Asaas
-    const paymentDate = paymentData.creditDate || paymentData.paymentDate || entry?.data || today;
+    const paymentData = await paymentRes.json();
+    const today = new Date().toISOString().split("T")[0];
+    const creditDate = paymentData.creditDate || paymentData.paymentDate || entry?.data || today;
 
-    // ── 1. Taxas de plataforma Asaas (DEBIT) ────────────────────────────────
-    let registeredFees = 0;
-    const seenFeeIds = new Set<string>();
-    const feesToInsert: Array<{ id: string; value: number; description: string }> = [];
+    console.log(`[asaas-sync-fees] payment=${asaasPaymentId} value=${paymentData.value} netValue=${paymentData.netValue} billingType=${paymentData.billingType} creditDate=${creditDate} nossoNumero=${paymentData.nossoNumero}`);
 
-    // Estratégia 1: filtrar diretamente pelo payment ID
-    const s1Res = await fetch(
-      `${ASAAS_BASE}/financialTransactions?payment=${asaasPaymentId}&type=DEBIT`,
-      { headers: { "access_token": apiKey } },
-    );
-    if (s1Res.ok) {
-      const s1Rows = ((await s1Res.json()).data || []) as Array<Record<string, unknown>>;
-      console.log(`[asaas-sync-fees] s1: ${s1Rows.length} rows`);
-      for (const f of s1Rows) {
-        const fId = String(f.id ?? "");
-        if (!fId || seenFeeIds.has(fId)) continue;
-        if (!feeMatchesPayment(f, asaasPaymentId)) {
-          console.log(`[asaas-sync-fees] s1 skip id=${fId} payment=${JSON.stringify(f.payment)}`);
-          continue;
-        }
-        seenFeeIds.add(fId);
-        feesToInsert.push({ id: fId, value: Number(f.value ?? 0), description: String(f.description ?? "") });
-      }
-    }
-
-    // Estratégia 2: busca todos os lançamentos do creditDate e filtra pelo nº da fatura.
-    // O Asaas vincula taxas ao pagamento via "fatura nr. XXXXX" na descrição,
-    // não necessariamente pelo campo payment.id. Buscamos o crédito de recebimento
-    // para extrair o nº da fatura e então filtramos os débitos por esse número.
-    if (feesToInsert.length === 0 && paymentDate) {
-      const s2Res = await fetch(
-        `${ASAAS_BASE}/financialTransactions?startDate=${paymentDate}&finishDate=${paymentDate}&limit=100`,
-        { headers: { "access_token": apiKey } },
-      );
-      if (s2Res.ok) {
-        const s2Rows = ((await s2Res.json()).data || []) as Array<Record<string, unknown>>;
-        console.log(`[asaas-sync-fees] s2: ${s2Rows.length} rows`);
-
-        // Tenta extrair o nº da fatura do nossoNumero ou da descrição do crédito
-        let faturaRef = String(paymentData.nossoNumero || "");
-        if (!faturaRef) {
-          const creditTx = s2Rows.find(tx => {
-            if (Number(tx.value) <= 0) return false;
-            if (feeMatchesPayment(tx, asaasPaymentId)) return true;
-            // Fallback: mesmo valor do pagamento ± R$0,50
-            return Math.abs(Number(tx.value) - (paymentData.value || 0)) < 0.50;
-          });
-          if (creditTx) {
-            const m = String(creditTx.description || "").match(/fatura\s+nr\.?\s*(\d+)/i);
-            if (m) faturaRef = m[1];
-            console.log(`[asaas-sync-fees] s2 creditTx desc="${creditTx.description}" faturaRef=${faturaRef}`);
-          }
-        } else {
-          console.log(`[asaas-sync-fees] s2 usando nossoNumero=${faturaRef}`);
-        }
-
-        for (const f of s2Rows) {
-          if (Number(f.value) >= 0) continue; // somente débitos
-          const fId = String(f.id ?? "");
-          if (!fId || seenFeeIds.has(fId)) continue;
-          const desc = String(f.description ?? "").toLowerCase();
-          // Considera apenas transações que pareçam taxas de plataforma
-          const isFee = desc.includes("taxa") || desc.includes("tarifa") || desc.includes("antecip");
-          if (!isFee) continue;
-          const matches = feeMatchesPayment(f, asaasPaymentId) ||
-                          (faturaRef && String(f.description ?? "").includes(faturaRef));
-          if (!matches) continue;
-          seenFeeIds.add(fId);
-          feesToInsert.push({ id: fId, value: Number(f.value ?? 0), description: String(f.description ?? "") });
-        }
-      }
-    }
-
-    for (const fee of feesToInsert) {
-      const feeAmount = Math.abs(fee.value);
-      if (feeAmount <= 0) continue;
-
-      const feeDate = paymentDate;
-      const subcategoria = parseFeeSubcategoria(fee.description);
-
-      const { error } = await supabase.from("financial_entries").upsert({
-        id: await deterministicUUID(`asaas-fee:${fee.id}`),
-        tipo: "despesa",
-        categoria: "taxas",
-        subcategoria,
-        descricao: fee.description || subcategoria,
-        observacao: fee.description || subcategoria,
-        valor: feeAmount,
-        data: feeDate,
-        data_prevista: feeDate,
-        pago: true,
-        conta: "Asaas",
-        natureza: linkFields.placa || linkFields.moto_id ? "operacional" : "administrativa",
-        ...linkFields,
-        tags: ["Asaas"],
-        recorrente: false,
-        despesa_fixa: false,
-        ignorada: false,
-        deleted_at: null,
-      }, { onConflict: "id", ignoreDuplicates: true });
-
-      if (!error) {
-        registeredFees++;
-        console.log(`[asaas-sync-fees] taxa registrada: ${subcategoria} R$ ${feeAmount} em ${feeDate}`);
-      } else {
-        console.error(`[asaas-sync-fees] erro ao inserir taxa ${fee.id}:`, error.message);
-      }
+    // ── 1. Taxas de plataforma ───────────────────────────────────────────────
+    // Primária: busca todas as taxas (boleto + mensageria) via financialTransactions.
+    // Fallback: apenas taxa de processamento via value - netValue.
+    // txResult: 0 = nada encontrado (fallback), -1 = tudo já existia (não usar fallback), >0 = N novas taxas
+    const txResult = await syncFeesFromTransactions(supabase, apiKey, paymentData, linkFields, creditDate);
+    const usedFallback = txResult === 0;
+    let registeredFees = Math.max(0, txResult); // -1 → 0 para a resposta
+    if (usedFallback) {
+      registeredFees = await syncFeeFromNetValue(supabase, paymentData, linkFields, creditDate);
     }
 
     // ── 2. Juros e multa recebidos (receita juros_atraso) ────────────────────
     let registeredJuros = 0;
-    if (paymentRes.ok) {
-      const interestValue = Number(paymentData.interest?.value || 0);
-      const fineValue = Number(paymentData.fine?.value || 0);
-      const total = interestValue + fineValue;
+    const enrichedPayment = {
+      ...paymentData,
+      paymentDate: paymentData.paymentDate || paymentData.creditDate || creditDate,
+      dueDate: paymentData.dueDate || entry?.data_prevista,
+    };
+    const interestValue = calcJurosAmount(enrichedPayment);
+    const fineValue = calcMultaAmount(enrichedPayment);
+    const jurosTotal = interestValue + fineValue;
 
-      if (total > 0) {
-        const parts: string[] = [];
-        if (interestValue > 0) parts.push(`Juros R$ ${interestValue.toFixed(2)}`);
-        if (fineValue > 0) parts.push(`Multa R$ ${fineValue.toFixed(2)}`);
+    if (jurosTotal > 0) {
+      const parts: string[] = [];
+      if (interestValue > 0) parts.push(`Juros R$ ${interestValue.toFixed(2)}`);
+      if (fineValue > 0) parts.push(`Multa R$ ${fineValue.toFixed(2)}`);
 
-        // Calcula referência de período usando data_prevista da entrada (= vencimento original)
-        let periodoRef = "";
-        const dueDateStr = entry?.data_prevista || paymentData.dueDate || "";
-        if (entry?.rental_id && dueDateStr) {
-          const { data: rental } = await supabase
-            .from("rentals")
-            .select("data_inicio, frequencia_pagamento")
-            .eq("id", entry.rental_id)
-            .single();
-          if (rental?.data_inicio && rental?.frequencia_pagamento) {
-            periodoRef = computePeriodoRef(rental.data_inicio, rental.frequencia_pagamento, dueDateStr);
-          }
+      let periodoRef = "";
+      const dueDateStr = entry?.data_prevista || paymentData.dueDate || "";
+      if (entry?.rental_id && dueDateStr) {
+        const { data: rental } = await supabase
+          .from("rentals")
+          .select("data_inicio, frequencia_pagamento")
+          .eq("id", entry.rental_id)
+          .single();
+        if (rental?.data_inicio && rental?.frequencia_pagamento) {
+          periodoRef = computePeriodoRef(rental.data_inicio, rental.frequencia_pagamento, dueDateStr);
         }
+      }
 
-        const descricao = periodoRef
-          ? `Juros/Multa - ${entry?.cliente_nome || ""} (${periodoRef})`.trim()
-          : `Juros/Multa - ${entry?.cliente_nome || ""}`.trim();
-        const observacao = periodoRef
-          ? `${parts.join(" + ")} | ${periodoRef}`
-          : parts.join(" + ");
+      const descricao = periodoRef
+        ? `Juros/Multa - ${entry?.cliente_nome || ""} (${periodoRef})`.trim()
+        : `Juros/Multa - ${entry?.cliente_nome || ""}`.trim();
+      const observacao = periodoRef
+        ? `${parts.join(" + ")} | ${periodoRef}`
+        : parts.join(" + ");
 
-        const { error } = await supabase.from("financial_entries").upsert({
-          id: await deterministicUUID(`asaas-juros:${asaasPaymentId}`),
-          tipo: "receita",
-          categoria: "juros_atraso",
-          subcategoria: "Mensal",
-          descricao,
-          observacao,
-          valor: total,
-          data: paymentDate,
-          data_prevista: paymentDate,
-          pago: true,
-          conta: "Asaas",
-          natureza: "operacional",
-          ...linkFields,
-          tags: ["Asaas", "Pago Asaas"],
-          recorrente: false,
-          despesa_fixa: false,
-          ignorada: false,
-          deleted_at: null,
-        }, { onConflict: "id", ignoreDuplicates: true });
+      const { error } = await supabase.from("financial_entries").upsert({
+        id: await deterministicUUID(`asaas-juros:${asaasPaymentId}`),
+        tipo: "receita",
+        categoria: "juros_atraso",
+        subcategoria: "Mensal",
+        descricao,
+        observacao,
+        valor: jurosTotal,
+        data: creditDate,
+        data_prevista: creditDate,
+        pago: true,
+        conta: "Asaas",
+        natureza: "operacional",
+        ...linkFields,
+        tags: ["Asaas", "Pago Asaas"],
+        recorrente: false,
+        despesa_fixa: false,
+        ignorada: false,
+        deleted_at: null,
+      }, { onConflict: "id", ignoreDuplicates: false });
 
-        if (!error) {
-          registeredJuros++;
-          console.log(`[asaas-sync-fees] juros/multa registrado: R$ ${total} (${parts.join(", ")})${periodoRef ? ` | ${periodoRef}` : ""}`);
-        } else {
-          console.error(`[asaas-sync-fees] erro ao inserir juros/multa:`, error.message);
-        }
+      if (!error) {
+        registeredJuros++;
+        console.log(`[asaas-sync-fees] juros/multa R$ ${jurosTotal} registrado${periodoRef ? ` | ${periodoRef}` : ""}`);
+      } else {
+        console.error(`[asaas-sync-fees] erro ao inserir juros/multa:`, error.message);
       }
     }
 
-    // Sinaliza quando não há taxas esperadas (value == netValue) para evitar retries infinitos
-    const noFeesExpected = paymentRes.ok &&
-      registeredFees === 0 &&
-      Math.abs((paymentData.value || 0) - (paymentData.netValue || 0)) < 0.01;
+    // noFeesExpected = true quando: taxas já existiam no banco (txResult === -1)
+    // ou quando não há taxa de plataforma esperada (PIX sem custo, etc.)
+    const noFeesExpected = txResult === -1 || (calcPlatformFee(paymentData) <= 0.005 && !usedFallback);
 
     return new Response(
       JSON.stringify({ registeredFees, registeredJuros, noFeesExpected }),

@@ -9,7 +9,7 @@ import { auditCompraMotoEntry, shouldLockManualClassification } from "@/lib/fina
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter, AlertDialogAction, AlertDialogCancel } from "@/components/ui/alert-dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator, DropdownMenuLabel } from "@/components/ui/dropdown-menu";
 import { Label } from "@/components/ui/label";
@@ -820,6 +820,13 @@ export default function FinanceiroPage() {
   const [pagoFilter, setPagoFilter] = useState<"all" | "pago" | "pendente">("all");
   const [placaFilter, setPlacaFilter] = useState("");
   const [locatarioFilter, setLocatarioFilter] = useState("");
+  const [motoOwnerFilter, setMotoOwnerFilter] = useState<"all" | "propria" | "terceiro">("all");
+  const [repasseDialogOpen, setRepasseDialogOpen] = useState(false);
+  const [repasseParceiroSelecionado, setRepasseParceiroSelecionado] = useState("");
+  const [repasseValorInput, setRepasseValorInput] = useState("");
+  const [repasseDataInput, setRepasseDataInput] = useState(localToday());
+  const [repasseObsInput, setRepasseObsInput] = useState("");
+  const [repasseContaInput, setRepasseContaInput] = useState("");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [onlyPagas, setOnlyPagas] = useState(false);
@@ -930,6 +937,18 @@ export default function FinanceiroPage() {
   const autoSyncedFeesRef = useRef<Set<string>>(new Set());
   const prevPaidAsaasRef = useRef<Set<string> | null>(null);
 
+  // Carrega IDs já sincronizados do localStorage para evitar re-sync desnecessário após reload
+  useEffect(() => {
+    if (!currentCompanyId) return;
+    try {
+      const stored = localStorage.getItem(`asaas-synced-fees-${currentCompanyId}`);
+      if (stored) {
+        const ids: string[] = JSON.parse(stored);
+        for (const id of ids) autoSyncedFeesRef.current.add(id);
+      }
+    } catch {}
+  }, [currentCompanyId]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Fecha o Sheet de detalhe automaticamente quando a entrada for removida de entries
   // (evita o overlay do Sheet bloquear cliques no AlertDialog de exclusão).
   useEffect(() => {
@@ -958,6 +977,10 @@ export default function FinanceiroPage() {
         // ou quando a edge function confirma que não há taxas esperadas (ex: PIX sem custo)
         if (fees > 0 || data?.noFeesExpected) {
           autoSyncedFeesRef.current.add(e.id);
+          try {
+            const key = `asaas-synced-fees-${currentCompanyId}`;
+            localStorage.setItem(key, JSON.stringify(Array.from(autoSyncedFeesRef.current).slice(-500)));
+          } catch {}
           if (fees > 0) toast.success(`${fees} taxa(s) Asaas registrada(s).`);
         }
       }).catch(() => {});
@@ -990,6 +1013,10 @@ export default function FinanceiroPage() {
         const fees = data?.registeredFees ?? 0;
         if (fees > 0 || data?.noFeesExpected) {
           autoSyncedFeesRef.current.add(e.id);
+          try {
+            const key = `asaas-synced-fees-${currentCompanyId}`;
+            localStorage.setItem(key, JSON.stringify(Array.from(autoSyncedFeesRef.current).slice(-500)));
+          } catch {}
           if (fees > 0) toast.success(`${fees} taxa(s) Asaas registrada(s).`);
         }
       }).catch(() => {});
@@ -1447,6 +1474,9 @@ export default function FinanceiroPage() {
       // Placa filter — comparação exata (dropdown sempre fornece placa completa)
       const motoPlaca = (e.motoId ? (motos.find(m => m.id === e.motoId)?.placa || e.placa || "") : (e.placa || "")).trim();
       const matchPlaca = !placaFilter || motoPlaca === placaFilter;
+      // Proprietário da moto filter
+      const entryMoto = e.motoId ? motos.find(m => m.id === e.motoId) : null;
+      const matchMotoOwner = motoOwnerFilter === "all" || (entryMoto ? entryMoto.tipo === motoOwnerFilter : motoOwnerFilter === "propria");
       // Locatário filter
       const clientName = e.clienteId ? (clients.find(c => c.id === e.clienteId)?.nome || e.clienteNome || "") : (e.clienteNome || "");
       const matchLocatario = !locatarioFilter || clientName === locatarioFilter || clientName.toLowerCase().includes(locatarioFilter.toLowerCase());
@@ -1475,7 +1505,7 @@ export default function FinanceiroPage() {
         }
       }
       const matchIgnoradas = ignoradasFilter === "incluir" ? true : ignoradasFilter === "ocultar" ? !e.ignorada : !!e.ignorada;
-      return matchSearch && matchTipo && matchPago && matchCategoria && matchConta && matchPlaca && matchLocatario && matchDateFrom && matchDateTo && matchRecorrente && matchDue && matchIgnoradas;
+      return matchSearch && matchTipo && matchPago && matchCategoria && matchConta && matchPlaca && matchMotoOwner && matchLocatario && matchDateFrom && matchDateTo && matchRecorrente && matchDue && matchIgnoradas;
     }).sort((a, b) => {
       // Primeiro: ordenar por data efetiva decrescente (dias do mês)
       const dateA = a.pago ? a.data : (a.dataPrevista || a.data);
@@ -1495,11 +1525,65 @@ export default function FinanceiroPage() {
       if (createdA && createdB && createdA !== createdB) return createdB.localeCompare(createdA);
       return (entryOrder.get(b.id) ?? -1) - (entryOrder.get(a.id) ?? -1);
     });
-  }, [filteredSource, search, tipoFilter, pagoFilter, categoriaFilter, contaFilter, getCatLabel, placaFilter, locatarioFilter, dateFrom, dateTo, onlyPagas, onlyPendentes, onlyRecorrentes, dueFilter, ignoradasFilter, motos, clients]);
+  }, [filteredSource, search, tipoFilter, pagoFilter, categoriaFilter, contaFilter, getCatLabel, placaFilter, motoOwnerFilter, locatarioFilter, dateFrom, dateTo, onlyPagas, onlyPendentes, onlyRecorrentes, dueFilter, ignoradasFilter, motos, clients]);
 
   // Reset page when filters change
   const filteredLen = filtered.length;
-  React.useEffect(() => { setCurrentPage(1); }, [filteredLen, search, tipoFilter, pagoFilter, categoriaFilter, contaFilter, placaFilter, locatarioFilter, rowsPerPage]);
+  React.useEffect(() => { setCurrentPage(1); }, [filteredLen, search, tipoFilter, pagoFilter, categoriaFilter, contaFilter, placaFilter, motoOwnerFilter, locatarioFilter, rowsPerPage]);
+
+  // ─── Repasse: dados por parceiro ─────────────────────────────────
+  const parceiroDados = useMemo(() => {
+    const terceiroMotos = motos.filter(m => m.tipo === "terceiro" && m.proprietario);
+    const byParceiro = new Map<string, typeof motos>();
+    for (const m of terceiroMotos) {
+      const p = m.proprietario!;
+      if (!byParceiro.has(p)) byParceiro.set(p, []);
+      byParceiro.get(p)!.push(m);
+    }
+    return Array.from(byParceiro.entries()).map(([parceiro, parceiroMotos]) => {
+      const motoIds = new Set(parceiroMotos.map(m => m.id));
+      const parceiroEntries = monthEntries.filter(e => e.motoId && motoIds.has(e.motoId) && !e.ignorada);
+      const receitas = parceiroEntries.filter(e => e.tipo === "receita").reduce((s, e) => s + e.valor, 0);
+      const despesas = parceiroEntries.filter(e => e.tipo === "despesa").reduce((s, e) => s + e.valor, 0);
+      const repassesFeitos = monthEntries.filter(e => e.categoria === "repasse" && e.observacao === parceiro).reduce((s, e) => s + e.valor, 0);
+      const saldoLiquido = receitas - despesas;
+      const aRepassar = saldoLiquido - repassesFeitos;
+      const contato = parceiroMotos[0].parceiroContato || "";
+      return { parceiro, contato, motos: parceiroMotos, receitas, despesas, saldoLiquido, repassesFeitos, aRepassar };
+    });
+  }, [motos, monthEntries]);
+
+  const historicoRepasses = useMemo(() =>
+    entries.filter(e => e.categoria === "repasse").sort((a, b) => b.data.localeCompare(a.data)),
+    [entries]
+  );
+
+  const handleRegistrarRepasse = async () => {
+    const valor = parseFloat(repasseValorInput.replace(/\./g, "").replace(",", "."));
+    if (!repasseParceiroSelecionado || isNaN(valor) || valor <= 0) return;
+    const newEntry: FinancialEntry = {
+      ...emptyEntry(),
+      id: crypto.randomUUID(),
+      tipo: "despesa",
+      categoria: "repasse",
+      descricao: `Repasse - ${repasseParceiroSelecionado}`,
+      valor,
+      data: repasseDataInput || localToday(),
+      pago: true,
+      observacao: repasseObsInput || repasseParceiroSelecionado,
+      motoId: null,
+      natureza: "administrativa",
+      conta: repasseContaInput || "",
+    };
+    const saved = await persistWithFeedback([...entries, newEntry], { successMessage: "Repasse registrado!" });
+    if (saved) {
+      setRepasseDialogOpen(false);
+      setRepasseParceiroSelecionado("");
+      setRepasseValorInput("");
+      setRepasseObsInput("");
+      setRepasseContaInput("");
+    }
+  };
 
   const groupedByDay = useMemo(() => {
     const groups: Record<string, FinancialEntry[]> = {};
@@ -2398,14 +2482,26 @@ export default function FinanceiroPage() {
     let finalEntries = deduped;
     if (isRentalPayment && pendente > 0.009) {
       const dueFmt = dueDateStr ? new Date(dueDateStr + "T12:00:00").toLocaleDateString("pt-BR") : "?";
+      // A referência semanal do juros é a da cobrança original em atraso (dueDate),
+      // nunca a do dia em que o pagamento foi confirmado — senão o juros aparece
+      // associado à semana seguinte em vez da semana que de fato gerou o atraso.
+      const semanaNum = rental && dueDate ? computeSemanaNumero(rental, dueDate) : null;
+      const { inicio: semanaInicio, fim: semanaFim } = rental && dueDate ? computeSemanaPeriodo(rental, dueDate) : { inicio: null, fim: null };
+      let periodoRef = "";
+      if (semanaNum && semanaInicio && semanaFim) {
+        const fmtDM = (d: string) => new Date(d + "T00:00:00").toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" });
+        const lbl = rental?.frequenciaPagamento === "quinzenal" ? "Quinzena" : rental?.frequenciaPagamento === "mensal" ? "Mês" : "Semana";
+        periodoRef = `${lbl} ${String(semanaNum).padStart(2, "0")}: ${fmtDM(semanaInicio)} até ${fmtDM(semanaFim)}`;
+      }
       const feeEntry: FinancialEntry = {
         id: crypto.randomUUID(),
         tipo: "receita",
         categoria: "juros_atraso",
-        descricao: `Juros/Multa — ref. venc. ${dueFmt}`,
+        descricao: periodoRef ? `Juros/Multa — ${periodoRef}` : `Juros/Multa — ref. venc. ${dueFmt}`,
         valor: pendente,
         data: payDate,
         dataPrevista: payDate,
+        dataOriginal: dueDateStr || undefined,
         pago: false,
         conta: confirmConta || confirmToggleEntry.conta || "",
         natureza: confirmToggleEntry.natureza || "operacional",
@@ -2415,7 +2511,7 @@ export default function FinanceiroPage() {
         clienteNome: confirmToggleEntry.clienteNome || "",
         motoId: confirmToggleEntry.motoId ?? null,
         placa: confirmToggleEntry.placa || "",
-        observacao: `Juros e multa referente ao pagamento com vencimento em ${dueFmt}`,
+        observacao: `Juros e multa referente ao pagamento com vencimento em ${dueFmt}${periodoRef ? ` (${periodoRef})` : ""}`,
         recorrente: false,
         despesaFixa: false,
         ignorada: false,
@@ -2741,7 +2837,7 @@ export default function FinanceiroPage() {
     return bank;
   };
 
-  const hasActiveFilters =categoriaFilter !== "all" || contaFilter !== "all" || dateFrom || dateTo || placaFilter || locatarioFilter || tipoFilter !== "all" || onlyPagas || onlyPendentes || onlyRecorrentes || dueFilter !== "all" || ignoradasFilter !== "incluir" || search;
+  const hasActiveFilters =categoriaFilter !== "all" || contaFilter !== "all" || dateFrom || dateTo || placaFilter || motoOwnerFilter !== "all" || locatarioFilter || tipoFilter !== "all" || onlyPagas || onlyPendentes || onlyRecorrentes || dueFilter !== "all" || ignoradasFilter !== "incluir" || search;
 
   return (
     <div className="p-4 md:p-6 space-y-5 max-w-7xl mx-auto">
@@ -3466,6 +3562,7 @@ export default function FinanceiroPage() {
               { value: "transacoes", label: "Transações" },
               { value: "categorias", label: "Categorias" },
               { value: "evolucao", label: "Evolução" },
+              { value: "repasse", label: "Repasse" },
             ].map(tab => (
               <button key={tab.value}
                 onClick={() => setActiveTab(tab.value)}
@@ -3560,7 +3657,7 @@ export default function FinanceiroPage() {
                   placeholder="Buscar descrição, placa, locatário, valor…" value={search} onChange={e => setSearch(e.target.value)} />
               </div>
               {hasActiveFilters && (
-                <button onClick={() => { setCategoriaFilter("all"); setContaFilter("all"); setDateFrom(""); setDateTo(""); setPlacaFilter(""); setLocatarioFilter(""); setOnlyPagas(false); setOnlyPendentes(false); setOnlyRecorrentes(false); setDueFilter("all"); setIgnoradasFilter("incluir"); setTipoFilter("all"); setSearch(""); }}
+                <button onClick={() => { setCategoriaFilter("all"); setContaFilter("all"); setDateFrom(""); setDateTo(""); setPlacaFilter(""); setMotoOwnerFilter("all"); setLocatarioFilter(""); setOnlyPagas(false); setOnlyPendentes(false); setOnlyRecorrentes(false); setDueFilter("all"); setIgnoradasFilter("incluir"); setTipoFilter("all"); setSearch(""); }}
                   className="text-xs text-muted-foreground hover:text-foreground transition-colors underline underline-offset-2">Limpar</button>
               )}
             </div>
@@ -3611,6 +3708,17 @@ export default function FinanceiroPage() {
                     />
                   </div>
                   <div>
+                    <Label className="text-[10px] text-muted-foreground uppercase tracking-wider">Frota</Label>
+                    <Select value={motoOwnerFilter} onValueChange={v => setMotoOwnerFilter(v as "all" | "propria" | "terceiro")}>
+                      <SelectTrigger className="h-7 text-xs mt-0.5"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">Todas</SelectItem>
+                        <SelectItem value="propria">Próprias</SelectItem>
+                        <SelectItem value="terceiro">Terceiros</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div>
                     <Label className="text-[10px] text-muted-foreground uppercase tracking-wider">Categoria</Label>
                     <SearchableSelect
                       value={categoriaFilter}
@@ -3652,9 +3760,17 @@ export default function FinanceiroPage() {
                   </div>
                 </div>
               </div>
+            {/* ── Banner de carregamento ── */}
+            {!cache.initialized && (
+              <div className="flex items-center gap-2 rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-warning mb-1">
+                <Loader2 className="h-3.5 w-3.5 animate-spin shrink-0" />
+                <span>Carregando dados do servidor… Os filtros podem não refletir todos os lançamentos ainda.</span>
+              </div>
+            )}
             {/* ── Totais do filtro ── */}
             <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 rounded-lg border border-border/30 bg-muted/20 px-3 py-2 text-xs">
-              <span className="text-muted-foreground">
+              <span className="text-muted-foreground flex items-center gap-1.5">
+                {!cache.initialized && <Loader2 className="h-3 w-3 animate-spin" />}
                 {filteredNonCC.length} lançamento{filteredNonCC.length !== 1 ? "s" : ""}
               </span>
               <div className="flex flex-wrap items-center gap-4">
@@ -3877,7 +3993,10 @@ export default function FinanceiroPage() {
                               if (m) {
                                 refSemanal = m[1];
                               } else {
-                                const due = e.dataPrevista ? parseISO(e.dataPrevista) : parseISO(e.data);
+                                // dataOriginal = vencimento da cobrança que gerou o juros.
+                                // NUNCA usar dataPrevista/data aqui: é a data em que o
+                                // pagamento foi confirmado, não a semana em atraso.
+                                const due = e.dataOriginal ? parseISO(e.dataOriginal) : (e.dataPrevista ? parseISO(e.dataPrevista) : parseISO(e.data));
                                 refSemanal = calcRefFromRental(due, e.rentalId);
                               }
                             }
@@ -4243,7 +4362,164 @@ export default function FinanceiroPage() {
             </CardContent>
           </Card>
         </TabsContent>
+
+        {/* TAB: Repasse */}
+        <TabsContent value="repasse" className="mt-4 space-y-6">
+          {parceiroDados.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-16 text-center text-muted-foreground gap-2">
+              <p className="text-sm font-medium">Nenhum parceiro cadastrado</p>
+              <p className="text-xs">Cadastre uma moto com tipo "Terceiro" e preencha o nome do parceiro.</p>
+            </div>
+          ) : (
+            <>
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                {parceiroDados.map(p => (
+                  <Card key={p.parceiro} className="overflow-hidden">
+                    <CardHeader className="pb-3">
+                      <div className="flex items-start justify-between gap-2">
+                        <div>
+                          <CardTitle className="text-base">{p.parceiro}</CardTitle>
+                          {p.contato && <p className="text-xs text-muted-foreground mt-0.5">{p.contato}</p>}
+                        </div>
+                        <div className="flex flex-wrap gap-1">
+                          {p.motos.map(m => (
+                            <span key={m.id} className="text-[10px] bg-muted px-1.5 py-0.5 rounded font-mono">{m.placa}</span>
+                          ))}
+                        </div>
+                      </div>
+                    </CardHeader>
+                    <CardContent className="space-y-2 pt-0">
+                      <div className="flex justify-between text-sm">
+                        <span className="text-muted-foreground">Receitas</span>
+                        <span className="text-green-600 font-medium">R$ {p.receitas.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</span>
+                      </div>
+                      <div className="flex justify-between text-sm">
+                        <span className="text-muted-foreground">Despesas</span>
+                        <span className="text-red-600 font-medium">R$ {p.despesas.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</span>
+                      </div>
+                      <div className="border-t border-border/50 my-1" />
+                      <div className="flex justify-between text-sm font-medium">
+                        <span className="text-muted-foreground">Saldo líquido</span>
+                        <span style={{ color: p.saldoLiquido >= 0 ? "#16a34a" : "#dc2626" }}>R$ {p.saldoLiquido.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</span>
+                      </div>
+                      <div className="flex justify-between text-sm">
+                        <span className="text-muted-foreground">Repasses feitos</span>
+                        <span className="text-muted-foreground">– R$ {p.repassesFeitos.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</span>
+                      </div>
+                      <div className="border-t border-border/50 my-1" />
+                      <div className="flex justify-between text-sm font-semibold">
+                        <span>A repassar</span>
+                        <span style={{ color: p.aRepassar > 0 ? "#16a34a" : p.aRepassar < 0 ? "#dc2626" : undefined }}>
+                          R$ {p.aRepassar.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                        </span>
+                      </div>
+                      <Button
+                        size="sm"
+                        className="w-full mt-2"
+                        onClick={() => {
+                          setRepasseParceiroSelecionado(p.parceiro);
+                          setRepasseValorInput(Math.max(0, p.aRepassar).toFixed(2).replace(".", ","));
+                          setRepasseDataInput(localToday());
+                          setRepasseObsInput("");
+                          setRepasseContaInput(CONTAS[0] || "");
+                          setRepasseDialogOpen(true);
+                        }}
+                      >
+                        Registrar Repasse
+                      </Button>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+
+              {/* Histórico de repasses */}
+              <div>
+                <h3 className="text-sm font-semibold mb-3">Histórico de Repasses</h3>
+                {historicoRepasses.length === 0 ? (
+                  <p className="text-xs text-muted-foreground">Nenhum repasse registrado ainda.</p>
+                ) : (
+                  <div className="rounded-lg border border-border/50 overflow-hidden">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b border-border/50 bg-muted/30">
+                          <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground">Data</th>
+                          <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground">Parceiro</th>
+                          <th className="px-3 py-2 text-right text-xs font-medium text-muted-foreground">Valor</th>
+                          <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground">Observação</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {historicoRepasses.map((e, i) => (
+                          <tr key={e.id} className={`border-b border-border/30 ${i % 2 === 0 ? "" : "bg-muted/10"}`}>
+                            <td className="px-3 py-2 font-mono text-xs">{e.data ? new Date(e.data + "T12:00:00").toLocaleDateString("pt-BR") : "—"}</td>
+                            <td className="px-3 py-2">{e.observacao || e.descricao.replace("Repasse - ", "")}</td>
+                            <td className="px-3 py-2 text-right font-medium text-red-600">R$ {e.valor.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</td>
+                            <td className="px-3 py-2 text-xs text-muted-foreground">{e.observacao && e.observacao !== e.descricao.replace("Repasse - ", "") ? e.observacao : "—"}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+        </TabsContent>
       </Tabs>}
+
+      {/* Dialog de repasse */}
+      <Dialog open={repasseDialogOpen} onOpenChange={setRepasseDialogOpen}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Registrar Repasse</DialogTitle>
+            {repasseParceiroSelecionado && (
+              <DialogDescription>Parceiro: {repasseParceiroSelecionado}</DialogDescription>
+            )}
+          </DialogHeader>
+          <div className="space-y-3 py-2">
+            <div className="grid gap-1">
+              <Label className="text-xs">Valor (R$)</Label>
+              <Input
+                value={repasseValorInput}
+                onChange={e => setRepasseValorInput(e.target.value)}
+                placeholder="0,00"
+              />
+            </div>
+            <div className="grid gap-1">
+              <Label className="text-xs">Data</Label>
+              <Input
+                type="date"
+                value={repasseDataInput}
+                onChange={e => setRepasseDataInput(e.target.value)}
+              />
+            </div>
+            <div className="grid gap-1">
+              <Label className="text-xs">Banco / Conta</Label>
+              <Select value={repasseContaInput || "__none__"} onValueChange={v => setRepasseContaInput(v === "__none__" ? "" : v)}>
+                <SelectTrigger><SelectValue placeholder="Selecione a conta" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">Sem conta</SelectItem>
+                  {CONTAS.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid gap-1">
+              <Label className="text-xs">Observação (opcional)</Label>
+              <Input
+                value={repasseObsInput}
+                onChange={e => setRepasseObsInput(e.target.value)}
+                placeholder="Referência, período, etc."
+              />
+            </div>
+          </div>
+          <div className="flex gap-2 justify-end">
+            <Button variant="outline" size="sm" onClick={() => setRepasseDialogOpen(false)}>Cancelar</Button>
+            <Button size="sm" onClick={handleRegistrarRepasse} disabled={isSaving}>
+              {isSaving ? "Salvando…" : "Registrar"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* ═══════ Dialog for add/edit ═══════ */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
@@ -5141,6 +5417,35 @@ export default function FinanceiroPage() {
             const catLabel = getCatLabel(de.categoria, de.tipo);
             const overdue = isOverdue(de);
             const bankBadge = de.conta ? getBankBadge(de.conta) : null;
+            // Referência de período (Semana/Quinzena/Mês XX: dd/MM até dd/MM)
+            const detailRefSemanal = (() => {
+              const calcRef = (due: Date | null, rentalId: string | null | undefined) => {
+                const rental = rentalId ? rentals.find(r => r.id === rentalId) : undefined;
+                if (!rental || !due) return null;
+                const num = computeSemanaNumero(rental, due);
+                const { inicio, fim } = computeSemanaPeriodo(rental, due);
+                if (!num || !inicio || !fim) return null;
+                const fmt = (d: string) => new Date(d + "T00:00:00").toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" });
+                const lbl = rental.frequenciaPagamento === "quinzenal" ? "Quinzena" : rental.frequenciaPagamento === "mensal" ? "Mês" : "Semana";
+                return `${lbl} ${String(num).padStart(2, "0")}: ${fmt(inicio)} até ${fmt(fim)}`;
+              };
+              if (de.categoria === "aluguel") {
+                if (de.subcategoria === "Parcelamento" && de.descricao) {
+                  const m = de.descricao.match(/((?:Semana|Quinzena|M[eê]s)\s+\d+:\s+\d{2}\/\d{2}\s+até\s+\d{2}\/\d{2})/i);
+                  return m ? m[1] : null;
+                }
+                const due = de.dataPrevista ? parseISO(de.dataPrevista) : parseISO(de.data);
+                return calcRef(due, de.rentalId);
+              }
+              if (de.categoria === "juros_atraso") {
+                const src = (de.descricao || "") + " " + (de.observacao || "");
+                const m = src.match(/((?:Semana|Quinzena|M[eê]s)\s+\d+:\s*\d{2}\/\d{2}\s+até\s+\d{2}\/\d{2})/i);
+                if (m) return m[1];
+                const due = de.dataPrevista ? parseISO(de.dataPrevista) : parseISO(de.data);
+                return calcRef(due, de.rentalId);
+              }
+              return null;
+            })();
 
             return (
               <div className="space-y-5 mt-4">
@@ -5186,6 +5491,14 @@ export default function FinanceiroPage() {
                     </span>
                   ) : <span className="text-sm text-muted-foreground">—</span>}
                 </div>
+
+                {/* Período de referência */}
+                {detailRefSemanal && (
+                  <div className="flex items-center justify-between py-1.5 border-b border-border/20">
+                    <span className="text-sm text-muted-foreground">Período</span>
+                    <span className="text-sm font-medium text-foreground">{detailRefSemanal}</span>
+                  </div>
+                )}
 
                 {/* Observação */}
                 <div className="py-1.5 border-b border-border/20">

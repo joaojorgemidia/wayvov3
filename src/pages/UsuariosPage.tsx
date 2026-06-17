@@ -13,7 +13,6 @@ import { Badge } from "@/components/ui/badge";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Plus, Loader2, Shield, ShieldCheck, Eye, Pencil, Trash2 } from "lucide-react";
 import { toast } from "sonner";
-import { loadCompanies } from "@/lib/companies";
 import { Navigate } from "react-router-dom";
 import { usePermissions } from "@/hooks/usePermissions";
 
@@ -62,11 +61,8 @@ export default function UsuariosPage() {
   const [deleteTarget, setDeleteTarget] = useState<UserRow | null>(null);
   const [deleting, setDeleting] = useState(false);
 
-  const localCompanies = loadCompanies();
-  const [companyMap, setCompanyMap] = useState<Record<string, string>>(
-    Object.fromEntries(localCompanies.map(c => [c.id, c.nome]))
-  );
-  const companies = localCompanies;
+  const [companyMap, setCompanyMap] = useState<Record<string, string>>({});
+  const [companies, setCompanies] = useState<{ id: string; nome: string }[]>([]);
 
   const fetchUsers = useCallback(async () => {
     setLoading(true);
@@ -77,32 +73,29 @@ export default function UsuariosPage() {
     const { data: allCompanies } = await supabase.from("user_companies").select("user_id, company_id");
     const { data: companyRows } = await supabase.from("companies").select("id, nome");
 
-    // Build name map: prefer DB names, fallback to local, then derive from slug
-    const allIds = Array.from(new Set((allCompanies || []).map((c: any) => c.company_id)));
-    setCompanyMap(prev => {
-      const next = { ...prev };
-      for (const row of companyRows || []) {
-        if (row.nome) next[row.id] = row.nome;
-      }
-      for (const id of allIds) {
-        if (!next[id]) {
-          const base = id.replace(/-\d{4,}$/, "").replace(/-/g, " ");
-          next[id] = base.replace(/\b\w/g, (c) => c.toUpperCase());
-        }
-      }
-      return next;
-    });
+    // Filtra empresas pelo que o usuário logado tem permissão
+    const myCompanyIds = new Set(
+      (allCompanies || [])
+        .filter((c: any) => c.user_id === currentUser?.id)
+        .map((c: any) => c.company_id)
+    );
+    const visibleCompanies = (companyRows || []).filter((c: any) => myCompanyIds.has(c.id));
 
-    const rows: UserRow[] = profiles.map((p: any) => ({
-      user_id: p.user_id,
-      display_name: p.display_name,
-      email: p.email,
-      roles: (allRoles || []).filter((r: any) => r.user_id === p.user_id).map((r: any) => r.role),
-      companies: (allCompanies || []).filter((c: any) => c.user_id === p.user_id).map((c: any) => c.company_id),
-    }));
+    setCompanies(visibleCompanies);
+    setCompanyMap(Object.fromEntries((companyRows || []).map((c: any) => [c.id, c.nome])));
+
+    const rows: UserRow[] = profiles
+      .map((p: any) => ({
+        user_id: p.user_id,
+        display_name: p.display_name,
+        email: p.email,
+        roles: (allRoles || []).filter((r: any) => r.user_id === p.user_id).map((r: any) => r.role),
+        companies: (allCompanies || []).filter((c: any) => c.user_id === p.user_id).map((c: any) => c.company_id),
+      }))
+      .filter(u => u.user_id === currentUser?.id || u.companies.some(cid => myCompanyIds.has(cid)));
     setUsers(rows);
     setLoading(false);
-  }, []);
+  }, [currentUser?.id]);
 
   useEffect(() => { fetchUsers(); }, [fetchUsers]);
 
