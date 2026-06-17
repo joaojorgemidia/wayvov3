@@ -37,7 +37,7 @@ const ROLE_ICONS: Record<string, React.ReactNode> = {
 
 export default function UsuariosPage() {
   const { isAdmin, user: currentUser } = useAuth();
-  const { canManageUsers } = usePermissions();
+  const { canManageUsers, isSuperAdmin } = usePermissions();
   const [users, setUsers] = useState<UserRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -90,9 +90,16 @@ export default function UsuariosPage() {
         display_name: p.display_name,
         email: p.email,
         roles: (allRoles || []).filter((r: any) => r.user_id === p.user_id).map((r: any) => r.role),
-        companies: (allCompanies || []).filter((c: any) => c.user_id === p.user_id).map((c: any) => c.company_id),
+        // Mostra apenas as locadoras que o usuário logado tem acesso
+        companies: (allCompanies || [])
+          .filter((c: any) => c.user_id === p.user_id && (isSuperAdmin || myCompanyIds.has(c.company_id)))
+          .map((c: any) => c.company_id),
       }))
-      .filter(u => u.user_id === currentUser?.id || u.companies.some(cid => myCompanyIds.has(cid)));
+      .filter(u => {
+        // Oculta usuários superadmin da lista de não-superadmins
+        if (!isSuperAdmin && u.roles.includes("superadmin")) return false;
+        return u.user_id === currentUser?.id || u.companies.some(cid => myCompanyIds.has(cid));
+      });
     setUsers(rows);
     setLoading(false);
   }, [currentUser?.id]);
@@ -299,7 +306,7 @@ export default function UsuariosPage() {
                     <TableCell>{u.email}</TableCell>
                     <TableCell>
                       <div className="flex gap-1 flex-wrap">
-                        {u.roles.map(r => (
+                        {u.roles.filter(r => isSuperAdmin || r !== "superadmin").map(r => (
                           <Badge key={r} variant="secondary" className="gap-1">
                             {ROLE_ICONS[r]} {ROLE_LABELS[r] || r}
                           </Badge>
