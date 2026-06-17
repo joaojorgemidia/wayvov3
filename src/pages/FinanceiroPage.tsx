@@ -2482,7 +2482,11 @@ export default function FinanceiroPage() {
     // Deduplicar por id para evitar conflito de upsert
     const deduped = entriesWithoutStaleFee.filter((e, i, arr) => arr.findIndex(x => x.id === e.id) === i);
     let finalEntries = deduped;
-    if (isRentalPayment && pendente > 0.009) {
+    if (isRentalPayment && temAcrescimo) {
+      // Quando o valor recebido cobre tudo (pendente ≤ 0), ainda assim cria o lançamento
+      // de juros/multa pelo valor total dos acréscimos, mas já marcado como pago.
+      const feeAmount = pendente > 0.009 ? pendente : (multa + totalJuros);
+      const feePago   = pendente <= 0.009;
       const dueFmt = dueDateStr ? new Date(dueDateStr + "T12:00:00").toLocaleDateString("pt-BR") : "?";
       // A referência semanal do juros é a da cobrança original em atraso (dueDate),
       // nunca a do dia em que o pagamento foi confirmado — senão o juros aparece
@@ -2500,11 +2504,11 @@ export default function FinanceiroPage() {
         tipo: "receita",
         categoria: "juros_atraso",
         descricao: periodoRef ? `Juros/Multa — ${periodoRef}` : `Juros/Multa — ref. venc. ${dueFmt}`,
-        valor: pendente,
+        valor: feeAmount,
         data: payDate,
         dataPrevista: payDate,
         dataOriginal: dueDateStr || undefined,
-        pago: false,
+        pago: feePago,
         conta: confirmConta || confirmToggleEntry.conta || "",
         natureza: confirmToggleEntry.natureza || "operacional",
         tags: confirmToggleEntry.categoria === "juros_atraso" ? ["sem_juros"] : [],
@@ -5199,8 +5203,9 @@ export default function FinanceiroPage() {
                       }
                       if (parsed >= total) {
                         return (
-                          <div className="text-center text-green-600 dark:text-green-400 text-xs border-t pt-1.5 font-medium">
-                            ✓ Valor cobre todas as taxas
+                          <div className="text-xs border-t pt-1.5 space-y-0.5">
+                            <div className="text-center text-green-600 dark:text-green-400 font-medium">✓ Valor cobre todas as taxas</div>
+                            <div className="text-center text-muted-foreground">Um lançamento de juros/multa será gerado já quitado.</div>
                           </div>
                         );
                       }
