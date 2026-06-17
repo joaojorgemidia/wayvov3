@@ -102,7 +102,7 @@ export default function UsuariosPage() {
       });
     setUsers(rows);
     setLoading(false);
-  }, [currentUser?.id]);
+  }, [currentUser?.id, isSuperAdmin]);
 
   useEffect(() => { fetchUsers(); }, [fetchUsers]);
 
