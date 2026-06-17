@@ -5,6 +5,7 @@ import {
 } from "lucide-react";
 import { WayvoLogo } from "@/components/WayvoLogo";
 import { useAuth } from "@/contexts/AuthContext";
+import { usePermissions } from "@/hooks/usePermissions";
 import { NavLink } from "@/components/NavLink";
 import { useLocation } from "react-router-dom";
 import {
@@ -68,6 +69,9 @@ const moreComingSoonItems: MenuItem[] = [
 
 const adminItems: MenuItem[] = [
   { title: "Usuários", url: "/usuarios", icon: ShieldCheck },
+];
+
+const superAdminItems: MenuItem[] = [
   { title: "Empresas", url: "/empresas", icon: Building2 },
 ];
 
@@ -76,6 +80,7 @@ export function AppSidebar() {
   const collapsed = state === "collapsed";
   const location = useLocation();
   const { isAdmin } = useAuth();
+  const { canManageEmpresas } = usePermissions();
 
   return (
     <Sidebar collapsible="icon">
@@ -188,7 +193,7 @@ export function AppSidebar() {
                   {!collapsed && (
                     <CollapsibleContent>
                       <div className="ml-6 mt-1 space-y-0.5 border-l border-sidebar-border pl-3">
-                        {[...moreItems, ...(isAdmin ? adminItems : [])].map((item) => {
+                        {[...moreItems, ...(isAdmin ? adminItems : []), ...(canManageEmpresas ? superAdminItems : [])].map((item) => {
                           const isActive = location.pathname === item.url;
                           return (
                             <SidebarMenuButton key={item.title} asChild>

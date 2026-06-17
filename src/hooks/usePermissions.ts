@@ -2,7 +2,8 @@ import { useAuth } from "@/contexts/AuthContext";
 
 export function usePermissions() {
   const { roles } = useAuth();
-  const isAdmin = roles.includes("admin");
+  const isSuperAdmin = roles.includes("superadmin");
+  const isAdmin = isSuperAdmin || roles.includes("admin");
   const isOperador = roles.includes("operador");
   const isVisualizador = roles.includes("visualizador");
   return {
@@ -11,7 +12,9 @@ export function usePermissions() {
     canEdit: isAdmin || isOperador,
     canDelete: isAdmin,
     canManageUsers: isAdmin,
+    canManageEmpresas: isSuperAdmin,
     isAdmin,
+    isSuperAdmin,
     isOperador,
     isVisualizador,
   };

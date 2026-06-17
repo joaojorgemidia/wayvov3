@@ -40,7 +40,7 @@ const ROLE_ICONS: Record<string, React.ReactNode> = {
 export default function EmpresasPage() {
   const { user: currentUser } = useAuth();
   const { companies, updateCompany, removeCompany, updateAutentiqueConfig } = useCompany();
-  const { canManageUsers } = usePermissions();
+  const { canManageEmpresas } = usePermissions();
 
   const [users, setUsers] = useState<UserRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -97,7 +97,7 @@ export default function EmpresasPage() {
     setAutCompany(null);
   };
 
-  if (!canManageUsers) return <Navigate to="/dashboard" replace />;
+  if (!canManageEmpresas) return <Navigate to="/dashboard" replace />;
 
   const extractInvokeError = async (res: { error: any; data: any }): Promise<string | null> => {
     if (!res.error && !res.data?.error) return null;
