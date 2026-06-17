@@ -3454,10 +3454,10 @@ export default function FinanceiroPage() {
                       <th className="text-left py-2.5 px-2"><span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Tipo</span></th>
                       <th className="text-left py-2.5 px-2"><span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Placa</span></th>
                       <th className="text-left py-2.5 px-2"><span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Categoria / Sub</span></th>
-                      <th className="text-left py-2.5 px-2"><span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Obs.</span></th>
-                      <th className="text-left py-2.5 px-2"><span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Tags</span></th>
                       <th className="text-center py-2.5 px-2"><span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Data Compra</span></th>
                       <th className="text-right py-2.5 px-2 w-[120px]"><span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Valor</span></th>
+                      <th className="text-left py-2.5 px-2"><span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Tags</span></th>
+                      <th className="text-left py-2.5 px-2"><span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Obs.</span></th>
                       <th className="w-[36px] p-0"></th>
                     </tr>
                   </thead>
@@ -3504,10 +3504,11 @@ export default function FinanceiroPage() {
                               {fmtClientName && <span className="text-xs text-muted-foreground mt-0.5 block">{fmtClientName}</span>}
                             </div>
                           </td>
-                          <td className="py-2 px-2 max-w-[200px]">
-                            {e.observacao ? (
-                              <span className="text-xs font-medium text-foreground/80 italic truncate block" title={e.observacao}>{e.observacao}</span>
-                            ) : <span className="text-xs text-muted-foreground/40">—</span>}
+                          <td className="py-2 px-2 text-center">
+                            <span className={`text-sm ${mono} whitespace-nowrap text-muted-foreground`}>{fmtDateCC(e.data)}</span>
+                          </td>
+                          <td className="py-2 px-2 text-right">
+                            <span className={`text-sm font-bold ${mono} whitespace-nowrap text-destructive`}>– {fmtValor}</span>
                           </td>
                           <td className="py-2 px-2">
                             <div className="flex items-center gap-1.5 flex-wrap">
@@ -3518,11 +3519,10 @@ export default function FinanceiroPage() {
                               {!(e.tags || []).length && !e.recorrente && <span className="text-xs text-muted-foreground/40">—</span>}
                             </div>
                           </td>
-                          <td className="py-2 px-2 text-center">
-                            <span className={`text-sm ${mono} whitespace-nowrap text-muted-foreground`}>{fmtDateCC(e.data)}</span>
-                          </td>
-                          <td className="py-2 px-2 text-right">
-                            <span className={`text-sm font-bold ${mono} whitespace-nowrap text-destructive`}>– {fmtValor}</span>
+                          <td className="py-2 px-2 max-w-[200px]">
+                            {e.observacao ? (
+                              <span className="text-xs font-medium text-foreground/80 italic truncate block" title={e.observacao}>{e.observacao}</span>
+                            ) : <span className="text-xs text-muted-foreground/40">—</span>}
                           </td>
                           <td className="py-2 pr-1" onClick={(ev) => ev.stopPropagation()}>
                             <DropdownMenu>
@@ -3832,14 +3832,26 @@ export default function FinanceiroPage() {
                     </th>
                     <th className="text-left py-2.5 px-2">
                       <div className="flex items-center gap-1">
-                        <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Obs.</span>
-                        <HelpTip text="Observações e notas sobre a transação." />
+                        <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Data</span>
+                        <HelpTip text="Data do pagamento (efetuado) ou vencimento (pendente)." />
+                      </div>
+                    </th>
+                    <th className="text-right py-2.5 px-2 w-[120px]">
+                      <div className="flex items-center justify-end gap-1">
+                        <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Valor</span>
+                        <HelpTip text="Valor da transação. Verde = receita, Vermelho = despesa." />
                       </div>
                     </th>
                     <th className="text-left py-2.5 px-2">
                       <div className="flex items-center gap-1">
                         <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Tags</span>
                         <HelpTip text="Etiquetas para organizar e filtrar transações." />
+                      </div>
+                    </th>
+                    <th className="text-left py-2.5 px-2">
+                      <div className="flex items-center gap-1">
+                        <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Obs.</span>
+                        <HelpTip text="Observações e notas sobre a transação." />
                       </div>
                     </th>
                     <th className="text-center py-2.5 px-2 w-[80px]">
@@ -3849,18 +3861,6 @@ export default function FinanceiroPage() {
                       <div className="flex items-center justify-center gap-1">
                         <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Conta</span>
                         <HelpTip text="Conta bancária ou forma de pagamento utilizada." />
-                      </div>
-                    </th>
-                    <th className="text-left py-2.5 px-2">
-                      <div className="flex items-center gap-1">
-                        <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Data</span>
-                        <HelpTip text="Data do pagamento (efetuado) ou vencimento (pendente)." />
-                      </div>
-                    </th>
-                    <th className="text-right py-2.5 px-2 w-[120px]">
-                      <div className="flex items-center justify-end gap-1">
-                        <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Valor</span>
-                        <HelpTip text="Valor da transação. Verde = receita, Vermelho = despesa." />
                       </div>
                     </th>
                     <th className="w-[36px] p-0"></th>
@@ -3964,58 +3964,31 @@ export default function FinanceiroPage() {
                             )}
                           </div>
                         </td>
-                        {/* Observação — destaque maior, antes das tags */}
-                        <td className="py-2 px-2 max-w-[200px]">
-                          {(() => {
-                            const obsText = e.categoria === "aluguel" && fmtClientName ? fmtClientName : (e.observacao || "");
-                            // Referência semanal para entradas de aluguel e juros por atraso
-                            let refSemanal: string | null = null;
-                            const calcRefFromRental = (due: Date | null, rentalId: string | null | undefined) => {
-                              const rental = rentalId ? rentals.find(r => r.id === rentalId) : undefined;
-                              if (!rental || !due) return null;
-                              const num = computeSemanaNumero(rental, due);
-                              const { inicio, fim } = computeSemanaPeriodo(rental, due);
-                              if (!num || !inicio || !fim) return null;
-                              const fmt = (d: string) => new Date(d + "T00:00:00").toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" });
-                              const lbl = rental.frequenciaPagamento === "quinzenal" ? "Quinzena" : rental.frequenciaPagamento === "mensal" ? "Mês" : "Semana";
-                              return `${lbl} ${String(num).padStart(2, "0")}: ${fmt(inicio)} até ${fmt(fim)}`;
-                            };
-                            if (e.categoria === "aluguel") {
-                              if (e.subcategoria === "Parcelamento" && e.descricao) {
-                                const m = e.descricao.match(/((?:Semana|Quinzena|M[eê]s)\s+\d+:\s+\d{2}\/\d{2}\s+até\s+\d{2}\/\d{2})/i);
-                                if (m) refSemanal = m[1];
-                              } else {
-                                const due = e.dataPrevista ? parseISO(e.dataPrevista) : parseISO(e.data);
-                                refSemanal = calcRefFromRental(due, e.rentalId);
-                              }
-                            } else if (e.categoria === "juros_atraso") {
-                              // Tenta extrair do texto da descrição ou observação
-                              const src = (e.descricao || "") + " " + (e.observacao || "");
-                              const m = src.match(/((?:Semana|Quinzena|M[eê]s)\s+\d+:\s*\d{2}\/\d{2}\s+até\s+\d{2}\/\d{2})/i);
-                              if (m) {
-                                refSemanal = m[1];
-                              } else {
-                                // dataOriginal = vencimento da cobrança que gerou o juros.
-                                // NUNCA usar dataPrevista/data aqui: é a data em que o
-                                // pagamento foi confirmado, não a semana em atraso.
-                                const due = e.dataOriginal ? parseISO(e.dataOriginal) : (e.dataPrevista ? parseISO(e.dataPrevista) : parseISO(e.data));
-                                refSemanal = calcRefFromRental(due, e.rentalId);
-                              }
-                            }
-                            const hasContent = !!(obsText || parcelaLabel || refSemanal);
-                            return hasContent ? (
-                              <div className="min-w-0">
-                                {(obsText || parcelaLabel) && (
-                                  <span className="text-xs font-medium text-foreground/80 italic truncate block" title={[obsText, parcelaLabel].filter(Boolean).join(" ")}>
-                                    {obsText}{parcelaLabel && <span className="text-muted-foreground/70 not-italic ml-1">{parcelaLabel}</span>}
-                                  </span>
+                        {/* Data */}
+                        <td className="py-2 px-2">
+                          <div className="flex flex-col">
+                            {e.pago ? (
+                              <>
+                                <span className={`text-sm ${mono} whitespace-nowrap text-muted-foreground`}>{fmtDate(e.data)}</span>
+                                {e.dataPrevista && e.dataPrevista !== e.data && (
+                                  <span className="text-[10px] text-muted-foreground/60 whitespace-nowrap">prev. {fmtDate(e.dataPrevista)}</span>
                                 )}
-                                {refSemanal && (
-                                  <span className="text-[10px] text-muted-foreground truncate block" title={refSemanal}>{refSemanal}</span>
-                                )}
-                              </div>
-                            ) : <span className="text-xs text-muted-foreground/40">—</span>;
-                          })()}
+                              </>
+                            ) : (
+                              <>
+                                <span className={`text-sm ${mono} whitespace-nowrap ${overdue ? "text-destructive font-semibold" : "text-muted-foreground"}`}>
+                                  {fmtDate(e.dataPrevista || e.data)}
+                                </span>
+                                {overdue && <span className="text-[10px] text-destructive font-medium">atrasado</span>}
+                              </>
+                            )}
+                          </div>
+                        </td>
+                        {/* Valor */}
+                        <td className="py-2 px-2 text-right">
+                          <span className={`text-sm font-bold ${mono} whitespace-nowrap ${e.tipo === "receita" ? "text-success" : "text-destructive"}`}>
+                            {e.tipo === "receita" ? "+" : "–"} {fmtValor}
+                          </span>
                         </td>
                         {/* Tags — com badge leve */}
                         <td className="py-2 px-2">
@@ -4046,6 +4019,57 @@ export default function FinanceiroPage() {
                             )}
                             {!(e.tags || []).length && !e.recorrente && !e.despesaFixa && !e.asaasPaymentId && <span className="text-xs text-muted-foreground/40">—</span>}
                           </div>
+                        </td>
+                        {/* Observação */}
+                        <td className="py-2 px-2 max-w-[200px]">
+                          {(() => {
+                            const obsText = e.categoria === "aluguel" && fmtClientName ? fmtClientName : (e.observacao || "");
+                            let refSemanal: string | null = null;
+                            const calcRefFromRental = (due: Date | null, rentalId: string | null | undefined) => {
+                              const rental = rentalId ? rentals.find(r => r.id === rentalId) : undefined;
+                              if (!rental || !due) return null;
+                              const num = computeSemanaNumero(rental, due);
+                              const { inicio, fim } = computeSemanaPeriodo(rental, due);
+                              if (!num || !inicio || !fim) return null;
+                              const fmt = (d: string) => new Date(d + "T00:00:00").toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" });
+                              const lbl = rental.frequenciaPagamento === "quinzenal" ? "Quinzena" : rental.frequenciaPagamento === "mensal" ? "Mês" : "Semana";
+                              return `${lbl} ${String(num).padStart(2, "0")}: ${fmt(inicio)} até ${fmt(fim)}`;
+                            };
+                            if (e.categoria === "aluguel") {
+                              if (e.subcategoria === "Parcelamento" && e.descricao) {
+                                const m = e.descricao.match(/((?:Semana|Quinzena|M[eê]s)\s+\d+:\s+\d{2}\/\d{2}\s+até\s+\d{2}\/\d{2})/i);
+                                if (m) refSemanal = m[1];
+                              } else {
+                                const due = e.dataPrevista ? parseISO(e.dataPrevista) : parseISO(e.data);
+                                refSemanal = calcRefFromRental(due, e.rentalId);
+                              }
+                            } else if (e.categoria === "juros_atraso") {
+                              const src = (e.descricao || "") + " " + (e.observacao || "");
+                              const m = src.match(/((?:Semana|Quinzena|M[eê]s)\s+\d+:\s*\d{2}\/\d{2}\s+até\s+\d{2}\/\d{2})/i);
+                              if (m) {
+                                refSemanal = m[1];
+                              } else {
+                                // dataOriginal = vencimento da cobrança que gerou o juros.
+                                // NUNCA usar dataPrevista/data aqui: é a data em que o
+                                // pagamento foi confirmado, não a semana em atraso.
+                                const due = e.dataOriginal ? parseISO(e.dataOriginal) : (e.dataPrevista ? parseISO(e.dataPrevista) : parseISO(e.data));
+                                refSemanal = calcRefFromRental(due, e.rentalId);
+                              }
+                            }
+                            const hasContent = !!(obsText || parcelaLabel || refSemanal);
+                            return hasContent ? (
+                              <div className="min-w-0">
+                                {(obsText || parcelaLabel) && (
+                                  <span className="text-xs font-medium text-foreground/80 italic truncate block" title={[obsText, parcelaLabel].filter(Boolean).join(" ")}>
+                                    {obsText}{parcelaLabel && <span className="text-muted-foreground/70 not-italic ml-1">{parcelaLabel}</span>}
+                                  </span>
+                                )}
+                                {refSemanal && (
+                                  <span className="text-[10px] text-muted-foreground truncate block" title={refSemanal}>{refSemanal}</span>
+                                )}
+                              </div>
+                            ) : <span className="text-xs text-muted-foreground/40">—</span>;
+                          })()}
                         </td>
                         {/* Cobrança — boleto + WhatsApp */}
                         <td className="py-2 px-2" onClick={(ev) => ev.stopPropagation()}>
@@ -4114,32 +4138,6 @@ export default function FinanceiroPage() {
                               </TooltipProvider>
                             );
                           })()}
-                        </td>
-                        {/* Data */}
-                        <td className="py-2 px-2">
-                          <div className="flex flex-col">
-                            {e.pago ? (
-                              <>
-                                <span className={`text-sm ${mono} whitespace-nowrap text-muted-foreground`}>{fmtDate(e.data)}</span>
-                                {e.dataPrevista && e.dataPrevista !== e.data && (
-                                  <span className="text-[10px] text-muted-foreground/60 whitespace-nowrap">prev. {fmtDate(e.dataPrevista)}</span>
-                                )}
-                              </>
-                            ) : (
-                              <>
-                                <span className={`text-sm ${mono} whitespace-nowrap ${overdue ? "text-destructive font-semibold" : "text-muted-foreground"}`}>
-                                  {fmtDate(e.dataPrevista || e.data)}
-                                </span>
-                                {overdue && <span className="text-[10px] text-destructive font-medium">atrasado</span>}
-                              </>
-                            )}
-                          </div>
-                        </td>
-                        {/* Valor */}
-                        <td className="py-2 px-2 text-right">
-                          <span className={`text-sm font-bold ${mono} whitespace-nowrap ${e.tipo === "receita" ? "text-success" : "text-destructive"}`}>
-                            {e.tipo === "receita" ? "+" : "–"} {fmtValor}
-                          </span>
                         </td>
                         {/* Ações */}
                         <td className="py-2 pr-1" onClick={(ev) => ev.stopPropagation()}>
