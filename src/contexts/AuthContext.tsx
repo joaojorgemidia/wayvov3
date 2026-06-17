@@ -2,7 +2,7 @@ import { createContext, useContext, useState, useEffect, useCallback, ReactNode 
 import { supabase } from "@/integrations/supabase/client";
 import type { User, Session } from "@supabase/supabase-js";
 
-type AppRole = "admin" | "operador" | "visualizador";
+type AppRole = "admin" | "operador" | "visualizador" | "superadmin";
 
 interface AuthContextType {
   user: User | null;
@@ -85,11 +85,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (session) {
         // Validate the session against the server — getSession() trusts localStorage
         // blindly and a stale/expired token blocks login without showing an error.
+        // Only sign out on clear auth errors (401); transient network errors keep the local session.
         const { error } = await supabase.auth.getUser();
         if (error) {
-          await supabase.auth.signOut({ scope: "local" });
-          if (mounted) { await syncSession(null); setLoading(false); }
-          return;
+          const status = (error as any)?.status ?? (error as any)?.code;
+          const isAuthError = status === 401 || status === 403
+            || error.message?.toLowerCase().includes("invalid")
+            || error.message?.toLowerCase().includes("expired")
+            || error.message?.toLowerCase().includes("not authenticated");
+          if (isAuthError) {
+            await supabase.auth.signOut({ scope: "local" });
+            if (mounted) { await syncSession(null); setLoading(false); }
+            return;
+          }
+          // Network/unknown error — trust the local session and continue
         }
       }
 
