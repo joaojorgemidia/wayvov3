@@ -2427,7 +2427,9 @@ export default function FinanceiroPage() {
     const finalValor = !isNaN(parsedValor) && parsedValor > 0 ? parsedValor : confirmToggleEntry.valor;
     const payDate = confirmDate || localToday();
     const isRentalPayment = !confirmToggleEntry.pago && !!confirmToggleEntry.rentalId
-      && confirmToggleEntry.tipo === "receita" && confirmToggleEntry.categoria === "aluguel";
+      && confirmToggleEntry.tipo === "receita"
+      && (confirmToggleEntry.categoria === "aluguel"
+          || (confirmToggleEntry.categoria === "juros_atraso" && !confirmToggleEntry.tags?.includes("sem_juros")));
 
     // ── Calcular acréscimos por atraso (hierarquia: locação > empresa) ──────
     const rental = isRentalPayment ? rentals.find(r => r.id === confirmToggleEntry.rentalId) : null;
@@ -2505,7 +2507,7 @@ export default function FinanceiroPage() {
         pago: false,
         conta: confirmConta || confirmToggleEntry.conta || "",
         natureza: confirmToggleEntry.natureza || "operacional",
-        tags: [],
+        tags: confirmToggleEntry.categoria === "juros_atraso" ? ["sem_juros"] : [],
         rentalId: confirmToggleEntry.rentalId ?? null,
         clienteId: confirmToggleEntry.clienteId ?? null,
         clienteNome: confirmToggleEntry.clienteNome || "",
@@ -5130,7 +5132,7 @@ export default function FinanceiroPage() {
               </div>
 
               {/* Bloco de atraso — aparece quando há multa/juros configurados e a data de pagamento é posterior ao vencimento */}
-              {confirmToggleEntry.rentalId && confirmToggleEntry.tipo === "receita" && confirmToggleEntry.categoria !== "juros_atraso" && confirmDate && (() => {
+              {confirmToggleEntry.rentalId && confirmToggleEntry.tipo === "receita" && !confirmToggleEntry.tags?.includes("sem_juros") && confirmDate && (() => {
                 const rental = rentals.find(r => r.id === confirmToggleEntry.rentalId);
                 const dueDateStr = confirmToggleEntry.dataPrevista || confirmToggleEntry.data;
                 if (!rental || !dueDateStr) return null;
