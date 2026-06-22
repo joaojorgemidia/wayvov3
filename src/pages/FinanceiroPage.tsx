@@ -2391,6 +2391,11 @@ export default function FinanceiroPage() {
   useEffect(() => {
     if (!confirmToggleEntry || confirmToggleEntry.pago || !confirmDate) return;
     if (confirmValorEditado) return;
+    // Juros automático só se aplica a aluguéis — nunca sobre juros_atraso ou outras categorias
+    if (confirmToggleEntry.categoria !== "aluguel") {
+      setConfirmValor(confirmToggleEntry.valor.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
+      return;
+    }
     const rental = confirmToggleEntry.rentalId && confirmToggleEntry.tipo === "receita"
       ? rentals.find(r => r.id === confirmToggleEntry.rentalId)
       : null;
@@ -2426,13 +2431,13 @@ export default function FinanceiroPage() {
     const parsedValor = parseFloat(confirmValor.replace(/\./g, "").replace(",", "."));
     const finalValor = !isNaN(parsedValor) && parsedValor > 0 ? parsedValor : confirmToggleEntry.valor;
     const payDate = confirmDate || localToday();
+    const rental = rentals.find(r => r.id === confirmToggleEntry.rentalId) ?? null;
     const isRentalPayment = !confirmToggleEntry.pago && !!confirmToggleEntry.rentalId
       && confirmToggleEntry.tipo === "receita"
-      && (confirmToggleEntry.categoria === "aluguel"
-          || (confirmToggleEntry.categoria === "juros_atraso" && !confirmToggleEntry.tags?.includes("sem_juros")));
+      && confirmToggleEntry.categoria === "aluguel"
+      && rental?.status === "ativa";
 
     // ── Calcular acréscimos por atraso (hierarquia: locação > empresa) ──────
-    const rental = isRentalPayment ? rentals.find(r => r.id === confirmToggleEntry.rentalId) : null;
     const dueDateStr = confirmToggleEntry.dataPrevista || confirmToggleEntry.data;
     const dueDate = dueDateStr ? new Date(dueDateStr + "T00:00:00") : null;
     const daysOverdue = (isRentalPayment && dueDate)
@@ -2466,8 +2471,13 @@ export default function FinanceiroPage() {
           obs = obs.replace(/\s*•\s*Pago via [^•]+/g, "").trim();
           obs = (obs ? obs + " " : "") + `• Pago via ${confirmPayBank}`;
         }
-        // Para aluguéis em atraso preserva o valor original; para demais usa o valor informado
-        const savedValor = (isRentalPayment && daysOverdue > 0) ? e.valor : finalValor;
+        // Para aluguéis em atraso: se o usuário pagou mais do que o valor do contrato
+        // mas não cobriu tudo (pendente > 0), salva o que foi efetivamente recebido para
+        // não perder a diferença no fluxo de caixa. Se cobriu tudo (feePago), preserva
+        // o valor original para não inflar a categoria aluguel com os acréscimos.
+        const savedValor = (isRentalPayment && daysOverdue > 0)
+          ? (pendente > 0.009 && finalValor > e.valor ? finalValor : e.valor)
+          : finalValor;
         return { ...e, pago: true, valor: savedValor, data: payDate, conta: finalConta, observacao: obs };
       } else {
         return { ...e, pago: false, data: e.dataPrevista || e.data };
@@ -2475,9 +2485,13 @@ export default function FinanceiroPage() {
     });
 
     // ── Cria entrada pendente de juros/multa quando houver saldo devedor ────
-    // Remove stale juros_atraso desta locação/período (tentativas anteriores que falharam)
+    // Remove stale juros_atraso desta locação/período (tentativas anteriores que falharam).
+    // Filtra tanto por dataPrevista === payDate (caso mais comum) quanto por fixedOriginId
+    // apontando para este aluguel — necessário quando o usuário retenta com data diferente.
+    const aluguelOrigemId = confirmToggleEntry.id;
     const entriesWithoutStaleFee = updatedEntries.filter(e =>
-      !(e.categoria === "juros_atraso" && e.rentalId === confirmToggleEntry.rentalId && !e.pago && e.dataPrevista === payDate)
+      !(e.categoria === "juros_atraso" && e.rentalId === confirmToggleEntry.rentalId && !e.pago &&
+        (e.dataPrevista === payDate || e.fixedOriginId === aluguelOrigemId))
     );
     // Deduplicar por id para evitar conflito de upsert
     const deduped = entriesWithoutStaleFee.filter((e, i, arr) => arr.findIndex(x => x.id === e.id) === i);
@@ -2518,6 +2532,7 @@ export default function FinanceiroPage() {
         motoId: confirmToggleEntry.motoId ?? null,
         placa: confirmToggleEntry.placa || "",
         observacao: `Juros e multa referente ao pagamento com vencimento em ${dueFmt}${periodoRef ? ` (${periodoRef})` : ""}`,
+        fixedOriginId: aluguelOrigemId,
         recorrente: false,
         despesaFixa: false,
         ignorada: false,
@@ -5134,10 +5149,10 @@ export default function FinanceiroPage() {
               </div>
 
               {/* Bloco de atraso — aparece quando há multa/juros configurados e a data de pagamento é posterior ao vencimento */}
-              {confirmToggleEntry.rentalId && confirmToggleEntry.tipo === "receita" && !confirmToggleEntry.tags?.includes("sem_juros") && confirmDate && (() => {
+              {confirmToggleEntry.rentalId && confirmToggleEntry.tipo === "receita" && confirmToggleEntry.categoria === "aluguel" && confirmDate && (() => {
                 const rental = rentals.find(r => r.id === confirmToggleEntry.rentalId);
                 const dueDateStr = confirmToggleEntry.dataPrevista || confirmToggleEntry.data;
-                if (!rental || !dueDateStr) return null;
+                if (!rental || !dueDateStr || rental.status !== "ativa") return null;
                 const due = new Date(dueDateStr + "T00:00:00");
                 const pay = new Date(confirmDate + "T00:00:00");
                 const daysOverdue = Math.max(0, Math.floor((pay.getTime() - due.getTime()) / 86400000));

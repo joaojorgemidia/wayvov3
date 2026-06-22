@@ -46,6 +46,10 @@ function calcPlatformFee(payment: Record<string, any>): number {
 }
 
 function calcJurosAmount(payment: Record<string, any>): number {
+  // Usa o valor exato cobrado pelo Asaas quando disponível
+  const direct = Number(payment.interestValue ?? 0);
+  if (direct > 0) return Math.round(direct * 100) / 100;
+
   const interest = payment.interest;
   if (!interest) return 0;
   const rate = Number(interest.value || 0);
@@ -73,6 +77,14 @@ function calcJurosAmount(payment: Record<string, any>): number {
 }
 
 function calcMultaAmount(payment: Record<string, any>): number {
+  // Usa o valor exato cobrado pelo Asaas quando disponível
+  const direct = Number(payment.fineValue ?? 0);
+  if (direct > 0) return Math.round(direct * 100) / 100;
+
+  // Se interestValue já foi fornecido pelo Asaas, o total está lá (combinado ou só juros).
+  // Não recalcular multa pela taxa para evitar dupla contagem.
+  if (Number(payment.interestValue ?? 0) > 0) return 0;
+
   const fine = payment.fine;
   if (!fine) return 0;
   const value = Number(fine.value || 0);
@@ -154,40 +166,27 @@ async function syncFeesFromTransactions(
   const rows = ((await txRes.json()).data || []) as Array<Record<string, unknown>>;
   console.log(`[syncFeesFromTransactions] ${rows.length} transações em ${creditDate}`);
 
-  // Obtém a referência da fatura: nossoNumero do pagamento (boleto) ou
-  // extrai da descrição do lançamento de crédito (PIX e outros).
-  let faturaRef = String(payment.nossoNumero || "").trim();
-  if (!faturaRef) {
-    const creditTx = rows.find(tx =>
-      Number(tx.value) > 0 &&
-      Math.abs(Number(tx.value) - Number(payment.value || 0)) < 1.00
-    );
-    if (creditTx) {
-      const m = String(creditTx.description || "").match(/fatura\s+nr\.?\s*(\d+)/i);
-      if (m) faturaRef = m[1];
-      console.log(`[syncFeesFromTransactions] faturaRef extraída da descrição: ${faturaRef} | desc: "${creditTx.description}"`);
-    }
-  } else {
-    console.log(`[syncFeesFromTransactions] faturaRef do nossoNumero: ${faturaRef}`);
-  }
+  // Filtra todas as transações desse pagamento usando o campo paymentId nativo do Asaas.
+  // Mais confiável que comparar valores ou regex no nossoNumero.
+  const paymentTxs = rows.filter(tx => String(tx.paymentId || "") === payment.id);
+  console.log(`[syncFeesFromTransactions] ${paymentTxs.length} transações para ${payment.id}`);
 
-  // Todas as taxas do Asaas (PIX, boleto, mensageria) contêm "fatura nr. XXXXXX"
-  // na descrição — o mesmo número do lançamento de crédito. O filtro por faturaRef
-  // associa automaticamente cada taxa ao pagamento correto.
-  const feeTxs = rows.filter(tx => {
+  const feeTxs = paymentTxs.filter(tx => {
     if (Number(tx.value) >= 0) return false;
-    const desc = String(tx.description || "");
-    const descLower = desc.toLowerCase();
-    if (!descLower.includes("taxa") && !descLower.includes("tarifa")) return false;
-    return !!faturaRef && desc.includes(faturaRef);
+    const desc = String(tx.description || "").toLowerCase();
+    return desc.includes("taxa") || desc.includes("tarifa");
   });
 
   if (feeTxs.length === 0) {
-    console.warn(`[syncFeesFromTransactions] nenhuma taxa encontrada${faturaRef ? ` para fatura ${faturaRef}` : " (sem faturaRef)"} — usando fallback`);
-    return 0; // 0 = nada encontrado → chamar fallback
+    if (paymentTxs.length > 0) {
+      console.log(`[syncFeesFromTransactions] ${paymentTxs.length} transações sem taxa de plataforma`);
+      return -1;
+    }
+    console.warn(`[syncFeesFromTransactions] nenhuma transação encontrada para ${payment.id} — usando fallback`);
+    return 0;
   }
 
-  console.log(`[syncFeesFromTransactions] ${feeTxs.length} taxas encontradas${faturaRef ? ` para fatura ${faturaRef}` : ""}`);
+  console.log(`[syncFeesFromTransactions] ${feeTxs.length} taxas para ${payment.id}`);
 
   let inserted = 0;
   for (const fee of feeTxs) {
@@ -408,7 +407,7 @@ serve(async (req) => {
         id: await deterministicUUID(`asaas-juros:${asaasPaymentId}`),
         tipo: "receita",
         categoria: "juros_atraso",
-        subcategoria: "Mensal",
+        subcategoria: null,
         descricao,
         observacao,
         valor: jurosTotal,

@@ -10,7 +10,7 @@ import {
   type DeviceTrack, type PlaybackPoint, type AlarmRecord,
   type KmSyncConfig,
 } from "@/lib/brasilsat";
-import { loadMotos, loadRentals, loadClients } from "@/lib/store";
+import { loadMotos, loadRentals, loadClients, saveMotos } from "@/lib/store";
 import { isPrivacyEnabled, getRealDataCache, useDataCacheSnapshot } from "@/lib/data-cache";
 import { useCompany } from "@/contexts/CompanyContext";
 import { maskPlaca, maskName, maskImei } from "@/lib/privacy-mask";
@@ -389,23 +389,35 @@ export default function RastreamentoPage() {
     return token.access_token;
   }, [auth, companyId]);
 
-  // ── Sincronização km moto → rastreador ────────────────────────────────────
-  const syncKm = useCallback(async (freshTracks: DeviceTrack[]) => {
+  // ── Sincronização km rastreador ↔ sistema ────────────────────────────────
+  const syncKm = useCallback(async (freshTracks: DeviceTrack[]): Promise<boolean> => {
     // Usa dados REAIS para que o sync funcione mesmo com modo demo ativo
     const motos = getRealDataCache().motos;
-    if (!motos.length || !freshTracks.length) return;
+    if (!motos.length || !freshTracks.length) return false;
     let token: string;
-    try { token = await getValidToken(); } catch { return; }
+    try { token = await getValidToken(); } catch { return false; }
 
     const { marginKm } = loadKmSyncConfig(companyId);
+    let anySynced = false;
+    // Motos cujo kmAtual deve ser atualizado com o valor do rastreador
+    const kmUpdates = new Map<string, number>();
 
     for (const track of freshTracks) {
       const realName = (auth?.devices.find(d => d.imei === track.imei)?.deviceName || track.deviceName || customNames[track.imei] || track.imei).toUpperCase();
       const moto = motos.find(m => m.placa && realName.includes(m.placa.toUpperCase()));
-      if (!moto || moto.kmAtual == null) continue;
+      if (!moto) continue;
 
-      // KM alvo = km do sistema + margem configurada
-      const targetKm = moto.kmAtual + (marginKm ?? 0);
+      const trackerKm = track.mileage ?? 0;
+      const kmAtual = moto.kmAtual ?? 0;
+
+      // Rastreador à frente: atualiza kmAtual no sistema para refletir em todas as páginas
+      if (trackerKm > kmAtual) {
+        kmUpdates.set(moto.id, trackerKm);
+      }
+
+      // KM alvo para push = kmAtual efetivo + margem configurada
+      const effectiveKmAtual = kmUpdates.get(moto.id) ?? kmAtual;
+      const targetKm = effectiveKmAtual + (marginKm ?? 0);
 
       // Pula se já sincronizamos este valor na sessão atual
       const lastSynced = syncedKmRef.current.get(track.imei) ?? -1;
@@ -421,19 +433,35 @@ export default function RastreamentoPage() {
         }
       } catch { /* ignora falha de localStorage */ }
 
-      const trackerKm = track.mileage ?? 0;
-      if (targetKm !== trackerKm) {
+      if (kmAtual > trackerKm) {
+        // Sistema tem km maior (ex: troca de óleo registrada): push para o rastreador
         try {
           await setMileage(token, track.imei, targetKm);
           toast.success(`KM sincronizado: ${getDisplayName(track.imei)} → ${targetKm.toLocaleString("pt-BR")} km`);
+          // Marca como sincronizado apenas após sucesso — falhas não bloqueiam retries futuros
+          syncedKmRef.current.set(track.imei, targetKm);
+          try { localStorage.setItem(persistKey, String(targetKm)); } catch { /* ignora */ }
+          anySynced = true;
         } catch (e: any) {
           console.warn("syncKm:", e.message);
         }
+      } else {
+        // Rastreador igual ou maior: marca targetKm como visto para evitar re-checagem
+        syncedKmRef.current.set(track.imei, targetKm);
+        try { localStorage.setItem(persistKey, String(targetKm)); } catch { /* ignora */ }
       }
-      // Marca como sincronizado (mesmo que os valores já fossem iguais) para evitar re-checagem
-      syncedKmRef.current.set(track.imei, targetKm);
-      try { localStorage.setItem(persistKey, String(targetKm)); } catch { /* ignora */ }
     }
+
+    // Persiste atualizações de kmAtual vindas do rastreador para todas as páginas refletirem
+    if (kmUpdates.size > 0) {
+      const allMotos = getRealDataCache().motos;
+      const updatedList = allMotos.map(m =>
+        kmUpdates.has(m.id) ? { ...m, kmAtual: kmUpdates.get(m.id)! } : m
+      );
+      saveMotos(updatedList);
+    }
+
+    return anySynced;
   }, [getValidToken, customNames, getDisplayName, auth, companyId]);
 
   // ── Conexão ────────────────────────────────────────────────────────────────
@@ -465,7 +493,9 @@ export default function RastreamentoPage() {
       if (!imeis.length) return;
       const result = await trackDevices(token, imeis);
       setTracks(result);
-      syncKm(result);
+      const hadSync = await syncKm(result);
+      // Se algum km foi sincronizado, re-busca após 2s para exibir o valor atualizado do rastreador
+      if (hadSync) setTimeout(() => { fetchTracksRef.current?.(); }, 2000);
     } catch (e: any) {
       toast.error(e.message ?? "Erro ao buscar posições");
     } finally {

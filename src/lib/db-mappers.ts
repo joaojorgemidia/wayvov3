@@ -224,7 +224,7 @@ export function dbToFinancial(r: any): FinancialEntry {
 export function financialToDb(e: FinancialEntry): any {
   return {
     tipo: e.tipo, categoria: e.categoria, subcategoria: e.subcategoria || null,
-    descricao: e.descricao, valor: e.valor, data: e.data,
+    descricao: e.descricao, valor: Math.round(e.valor * 100) / 100, data: e.data,
     data_prevista: e.dataPrevista || null,
     moto_id: e.motoId || null, rental_id: e.rentalId || null,
     cliente_id: e.clienteId || null, pago: e.pago,

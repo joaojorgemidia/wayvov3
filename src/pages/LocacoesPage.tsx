@@ -649,7 +649,23 @@ export default function LocacoesPage() {
                   </div>
                 </TableCell>
                 <TableCell className="text-xs">{(() => { const d = new Date(r.dataInicio + "T00:00:00"); const dias = ["Dom","Seg","Ter","Qua","Qui","Sex","Sáb"]; return `${dias[d.getDay()]} ${d.toLocaleDateString("pt-BR")}`; })()}</TableCell>
-                <TableCell className="text-xs">{(() => { const d = r.status === "ativa" ? r.dataFimContrato : r.dataFim; return d ? new Date(d + "T00:00:00").toLocaleDateString("pt-BR") : "—"; })()}</TableCell>
+                <TableCell className="text-xs">{(() => {
+                  if (r.status === "ativa") {
+                    const d = r.dataFimContrato;
+                    return d ? new Date(d + "T00:00:00").toLocaleDateString("pt-BR") : "—";
+                  }
+                  const fim = r.dataFim;
+                  const contrato = r.dataFimContrato;
+                  const fimAnticipado = fim && contrato && fim !== contrato;
+                  return (
+                    <div className="flex flex-col gap-0.5">
+                      <span>{fim ? new Date(fim + "T00:00:00").toLocaleDateString("pt-BR") : "—"}</span>
+                      {fimAnticipado && (
+                        <span className="text-[10px] text-muted-foreground">Contrato: {new Date(contrato + "T00:00:00").toLocaleDateString("pt-BR")}</span>
+                      )}
+                    </div>
+                  );
+                })()}</TableCell>
                 <TableCell className="text-xs text-right font-medium">R$ {r.valorDiario.toFixed(2)}</TableCell>
                 <TableCell className="text-xs text-center">
                   {(() => {
@@ -1039,7 +1055,10 @@ export default function LocacoesPage() {
                   })()}
                 </div>
                 <div><span className="text-muted-foreground">Início:</span> {new Date(viewRental.dataInicio + "T00:00:00").toLocaleDateString("pt-BR")} {viewRental.horaInicio}</div>
-                <div><span className="text-muted-foreground">Fim contrato:</span> {(() => { const d = viewRental.status === "ativa" ? viewRental.dataFimContrato : viewRental.dataFim; return d ? new Date(d + "T00:00:00").toLocaleDateString("pt-BR") : "—"; })()}</div>
+                <div><span className="text-muted-foreground">Fim contrato:</span> {viewRental.dataFimContrato ? new Date(viewRental.dataFimContrato + "T00:00:00").toLocaleDateString("pt-BR") : "—"}</div>
+                {viewRental.status !== "ativa" && viewRental.dataFim && viewRental.dataFim !== viewRental.dataFimContrato && (
+                  <div><span className="text-muted-foreground">Encerrado em:</span> <span className="text-amber-600 font-medium">{new Date(viewRental.dataFim + "T00:00:00").toLocaleDateString("pt-BR")}</span> <span className="text-[10px] text-muted-foreground">(antecipado)</span></div>
+                )}
                 <div><span className="text-muted-foreground">Valor:</span> R$ {viewRental.valorDiario.toFixed(2)}</div>
                 <div><span className="text-muted-foreground">Caução:</span> R$ {viewRental.valorCaucao.toFixed(2)} {viewRental.caucaoParcelado ? "(Parcelado)" : ""}</div>
                 <div><span className="text-muted-foreground">Multa atraso:</span> R$ {(viewRental.multaAtraso || 0).toFixed(2)}</div>

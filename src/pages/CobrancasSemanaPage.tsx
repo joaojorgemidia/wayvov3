@@ -787,36 +787,28 @@ export default function CobrancasSemanaPage() {
     setDebtDetailClientId(null);
   };
 
-  const applyRescheduleClient = async () => {
+  const applyRescheduleClient = () => {
     if (!reschedClientItems.length || !reschedClientDate) return;
-    try {
-      const ids = new Set(reschedClientItems.map(i => i.entry.id));
-      const next = loadFinancial().map(e => ids.has(e.id) ? { ...e, dataPrevista: reschedClientDate, dataOriginal: e.dataOriginal || e.dataPrevista || e.data } : e);
-      await saveFinancial(next);
-      const d = new Date(reschedClientDate + "T00:00:00").toLocaleDateString("pt-BR");
-      toast.success(`${reschedClientItems.length} cobrança${reschedClientItems.length !== 1 ? "s" : ""} adiada${reschedClientItems.length !== 1 ? "s" : ""} para ${d}`);
-      setReschedClientItems([]);
-    } catch {
-      toast.error("Erro ao adiar cobranças");
-    }
+    const newMap = { ...readSnoozeMap() };
+    reschedClientItems.forEach(i => { newMap[i.entry.id] = reschedClientDate; });
+    writeSnoozeMap(newMap);
+    setSnoozeMap(newMap);
+    const d = new Date(reschedClientDate + "T00:00:00").toLocaleDateString("pt-BR");
+    toast.success(`${reschedClientItems.length} cobrança${reschedClientItems.length !== 1 ? "s" : ""} adiada${reschedClientItems.length !== 1 ? "s" : ""} para ${d}`);
+    setReschedClientItems([]);
   };
 
-  const applyReschedule = async (newDate: string) => {
+  const applyReschedule = (newDate: string) => {
     const target = reschedItem;
     if (!target || !newDate) return;
-    try {
-      const next = loadFinancial().map((e) =>
-        e.id === target.entry.id ? { ...e, dataPrevista: newDate, dataOriginal: e.dataOriginal || e.dataPrevista || e.data } : e,
-      );
-      await saveFinancial(next);
-      toast.success(`Vencimento adiado para ${new Date(newDate + "T00:00:00").toLocaleDateString("pt-BR")}`);
-      setReschedItem(null);
-    } catch {
-      toast.error("Erro ao adiar vencimento");
-    }
+    const newMap = { ...readSnoozeMap(), [target.entry.id]: newDate };
+    writeSnoozeMap(newMap);
+    setSnoozeMap(newMap);
+    toast.success(`Cobrança adiada para ${new Date(newDate + "T00:00:00").toLocaleDateString("pt-BR")}`);
+    setReschedItem(null);
   };
 
-  const quickReschedule = async (item: RowItem, deltaDays: number) => {
+  const quickReschedule = (item: RowItem, deltaDays: number) => {
     // Base = HOJE (ou o vencimento, se ainda for futuro). Assim "Adiar +N dias"
     // sempre joga a cobrança para N dias à frente de hoje quando já está vencida,
     // tirando ela do estado "vencido" enquanto a locadora aguarda o cliente.
@@ -825,16 +817,11 @@ export default function CobrancasSemanaPage() {
     const base = item.due && item.due.getTime() > today.getTime() ? new Date(item.due) : today;
     const nd = new Date(base);
     nd.setDate(nd.getDate() + deltaDays);
-    try {
-      const iso = toISODate(nd);
-      const next = loadFinancial().map((e) =>
-        e.id === item.entry.id ? { ...e, dataPrevista: iso, dataOriginal: e.dataOriginal || e.dataPrevista || e.data } : e,
-      );
-      await saveFinancial(next);
-      toast.success(`Adiado para ${nd.toLocaleDateString("pt-BR")}`);
-    } catch {
-      toast.error("Erro ao adiar");
-    }
+    const iso = toISODate(nd);
+    const newMap = { ...readSnoozeMap(), [item.entry.id]: iso };
+    writeSnoozeMap(newMap);
+    setSnoozeMap(newMap);
+    toast.success(`Adiado para ${nd.toLocaleDateString("pt-BR")}`);
   };
 
   const handleIgnore = async (item: RowItem) => {
@@ -1874,7 +1861,7 @@ export default function CobrancasSemanaPage() {
       <Dialog open={!!debtDetailClientId} onOpenChange={(o) => !o && setDebtDetailClientId(null)}>
         <DialogContent className="sm:max-w-lg max-h-[90vh] flex flex-col p-0 gap-0 overflow-hidden rounded-2xl">
           {(() => {
-            const isOv = (e: FinancialEntry) => { const d = parseISO(e.dataPrevista || e.data); return !!(d && diffDays(today, d) > 0 && d >= firstDayOfCurrentMonth); };
+            const isOv = (e: FinancialEntry) => { const d = parseISO(e.dataPrevista || e.data); return !!(d && diffDays(today, d) > 0); };
             const atrasadas = debtDetailEntries.filter(e => !e.pago && isOv(e));
             const futuras   = debtDetailEntries.filter(e => !e.pago && !isOv(e));
             const pagas     = debtDetailEntries.filter(e => e.pago);
@@ -2611,15 +2598,6 @@ function RowItemView({
           </button>
         )}
 
-        {/* Boleto link */}
-        {boletoUrl && (
-          <a href={boletoUrl} target="_blank" rel="noopener noreferrer">
-            <button className="w-[30px] h-[30px] rounded-[7px] border border-amber-200 flex items-center justify-center text-amber-600 hover:bg-amber-50 dark:hover:bg-amber-950/20 transition-colors">
-              <Receipt className="h-3.5 w-3.5" />
-            </button>
-          </a>
-        )}
-
         {/* WhatsApp */}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
@@ -2655,6 +2633,17 @@ function RowItemView({
           Pago
         </button>
       </div>
+
+      {/* Boleto link — sempre visível mesmo quando pago */}
+      {boletoUrl && (
+        <div className="flex items-center pr-1 flex-shrink-0">
+          <a href={boletoUrl} target="_blank" rel="noopener noreferrer">
+            <button className="w-[30px] h-[30px] rounded-[7px] border border-amber-200 flex items-center justify-center text-amber-600 hover:bg-amber-50 dark:hover:bg-amber-950/20 transition-colors">
+              <Receipt className="h-3.5 w-3.5" />
+            </button>
+          </a>
+        </div>
+      )}
 
       {/* Mais ações — sempre visível */}
       <div className="flex items-center pr-1.5 flex-shrink-0">
