@@ -30,6 +30,7 @@ async function fetchTableRows(table: string, cid: string) {
       .eq("company_id", cid)
       .is("deleted_at", null)
       .order("created_at")
+      .order("id")
       .range(from, from + FETCH_PAGE_SIZE - 1);
 
     if (error) {
