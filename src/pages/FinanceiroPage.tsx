@@ -2491,10 +2491,13 @@ export default function FinanceiroPage() {
     // Filtra tanto por dataPrevista === payDate (caso mais comum) quanto por fixedOriginId
     // apontando para este aluguel — necessário quando o usuário retenta com data diferente.
     const aluguelOrigemId = confirmToggleEntry.id;
-    const entriesWithoutStaleFee = updatedEntries.filter(e =>
+    // Limpeza de juros obsoletos só faz sentido ao confirmar um aluguel —
+    // nunca ao confirmar um juros_atraso direto, pois o payDate coincidiria
+    // com o dataPrevista de outros juros legítimos do mesmo cliente.
+    const entriesWithoutStaleFee = isRentalPayment ? updatedEntries.filter(e =>
       !(e.categoria === "juros_atraso" && e.rentalId === confirmToggleEntry.rentalId && !e.pago &&
         (e.dataPrevista === payDate || e.fixedOriginId === aluguelOrigemId))
-    );
+    ) : updatedEntries;
     // Deduplicar por id para evitar conflito de upsert
     const deduped = entriesWithoutStaleFee.filter((e, i, arr) => arr.findIndex(x => x.id === e.id) === i);
     let finalEntries = deduped;
@@ -2541,6 +2544,47 @@ export default function FinanceiroPage() {
         createdAt: new Date().toISOString(),
       };
       finalEntries = [...deduped, feeEntry];
+    }
+
+    // ── Pagamento parcial: cria saldo devedor quando recebido < valor base ──
+    // Vale para qualquer receita (não só aluguel) — Caução, Venda de Moto,
+    // Manutenção, avulsos etc. Só não se aplica quando NÃO há atraso/acréscimo:
+    // nesse caso o shortfall já é representado por completo pelo "pendente" do
+    // bloco de juros/multa acima — criar os dois ao mesmo tempo contaria a
+    // mesma diferença duas vezes. (temAcrescimo só pode ser true no caminho de
+    // aluguel com locação, então essa checagem é inofensiva para as demais.)
+    const isPartialEligible = !confirmToggleEntry.pago && confirmToggleEntry.tipo === "receita";
+    const restanteBase = isPartialEligible && !temAcrescimo && finalValor < confirmToggleEntry.valor - 0.009
+      ? Math.round((confirmToggleEntry.valor - finalValor) * 100) / 100
+      : 0;
+    if (restanteBase > 0) {
+      const dueFmt = dueDateStr ? new Date(dueDateStr + "T12:00:00").toLocaleDateString("pt-BR") : "?";
+      const restanteEntry: FinancialEntry = {
+        id: crypto.randomUUID(),
+        tipo: "receita",
+        categoria: confirmToggleEntry.categoria,
+        subcategoria: confirmToggleEntry.subcategoria,
+        descricao: `Saldo restante — ${confirmToggleEntry.descricao}`,
+        valor: restanteBase,
+        data: payDate,
+        dataPrevista: payDate,
+        pago: false,
+        conta: "",
+        natureza: confirmToggleEntry.natureza || "operacional",
+        tags: confirmToggleEntry.tags || [],
+        rentalId: confirmToggleEntry.rentalId ?? null,
+        clienteId: confirmToggleEntry.clienteId ?? null,
+        clienteNome: confirmToggleEntry.clienteNome || "",
+        motoId: confirmToggleEntry.motoId ?? null,
+        placa: confirmToggleEntry.placa || "",
+        observacao: `Saldo devedor de pagamento parcial em ${new Date(payDate + "T12:00:00").toLocaleDateString("pt-BR")} (ref. venc. ${dueFmt})`,
+        fixedOriginId: confirmToggleEntry.id,
+        recorrente: false,
+        despesaFixa: false,
+        ignorada: false,
+        createdAt: new Date().toISOString(),
+      };
+      finalEntries = [...finalEntries, restanteEntry];
     }
 
     persist(finalEntries).catch(err => {
@@ -5269,6 +5313,56 @@ export default function FinanceiroPage() {
                       }
                       return null;
                     })()}
+                  </div>
+                );
+              })()}
+
+              {/* Aviso de pagamento parcial (valor < base, sem relação com juros) —
+                  vale para qualquer receita, não só aluguel. Só não aparece quando
+                  há atraso/acréscimo, senão duplica o bloco "PAGAMENTO VENCIDO"
+                  acima (que já mostra o pendente considerando multa/juros). */}
+              {!confirmToggleEntry.pago && confirmToggleEntry.tipo === "receita" && (() => {
+                // A checagem de multa/juros de atraso só faz sentido para o próprio
+                // aluguel — outras categorias (ex: multa de trânsito) podem estar
+                // vinculadas à mesma locação só como referência, sem que a
+                // configuração de atraso do aluguel se aplique a elas.
+                const rental = confirmToggleEntry.categoria === "aluguel" && confirmToggleEntry.rentalId
+                  ? rentals.find(r => r.id === confirmToggleEntry.rentalId)
+                  : undefined;
+                const dueDateStr = confirmToggleEntry.dataPrevista || confirmToggleEntry.data;
+                if (rental && dueDateStr && confirmDate) {
+                  const due = new Date(dueDateStr + "T00:00:00");
+                  const pay = new Date(confirmDate + "T00:00:00");
+                  const daysOverdue = Math.max(0, Math.floor((pay.getTime() - due.getTime()) / 86400000));
+                  if (daysOverdue > 0) {
+                    const cfg = activeCompany?.cobrancaConfig ?? DEFAULT_COBRANCA_CONFIG;
+                    const multa = rental.multaAtraso || cfg.multaAtraso || 0;
+                    const jurosMes = rental.jurosAtrasoMes || cfg.jurosMes || 0;
+                    const jurosCalc = (confirmToggleEntry.valor * (jurosMes / 100 / 30)) * daysOverdue;
+                    const jurosDiarioFix = (cfg.jurosDiario || 0) * daysOverdue;
+                    if (multa > 0 || (jurosCalc + jurosDiarioFix) > 0) return null;
+                  }
+                }
+                const entered = parseFloat(confirmValor.replace(/\./g, "").replace(",", "."));
+                const base = confirmToggleEntry.valor;
+                if (isNaN(entered) || entered <= 0 || entered >= base - 0.009) return null;
+                const restante = Math.round((base - entered) * 100) / 100;
+                const fmt = (v: number) => `R$ ${v.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+                return (
+                  <div className="rounded-lg border border-blue-300 bg-blue-50 dark:bg-blue-950/20 dark:border-blue-700 p-3 space-y-1.5 text-sm">
+                    <div className="font-semibold text-blue-700 dark:text-blue-400">Pagamento parcial</div>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Valor devido:</span>
+                      <span>{fmt(base)}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Recebido agora:</span>
+                      <span className="font-semibold text-green-600">{fmt(entered)}</span>
+                    </div>
+                    <div className="flex justify-between border-t pt-1.5 font-semibold text-orange-600 dark:text-orange-400">
+                      <span>Valor a ser gerado:</span>
+                      <span>{fmt(restante)}</span>
+                    </div>
                   </div>
                 );
               })()}
