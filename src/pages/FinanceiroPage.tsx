@@ -4092,20 +4092,29 @@ export default function FinanceiroPage() {
                         </td>
                         {/* Cobrança — boleto + WhatsApp */}
                         <td className="py-2 px-2" onClick={(ev) => ev.stopPropagation()}>
-                          {e.tipo === "receita" && !e.pago && e.clienteId ? (
+                          {(e.asaasInvoiceUrl || e.asaasBoletoUrl) ? (
+                            <div className="flex items-center gap-2">
+                              <TooltipProvider delayDuration={200}>
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <button
+                                      onClick={() => window.open(e.asaasInvoiceUrl || e.asaasBoletoUrl!, "_blank")}
+                                      className="text-blue-500 hover:text-blue-700 transition-colors"
+                                    >
+                                      <Link2 className="h-4 w-4" />
+                                    </button>
+                                  </TooltipTrigger>
+                                  <TooltipContent side="top" className="text-xs">Ver boleto</TooltipContent>
+                                </Tooltip>
+                              </TooltipProvider>
+                            </div>
+                          ) : e.tipo === "receita" && !e.pago && e.clienteId ? (
                             <div className="flex items-center gap-2">
                               {/* Ícone de boleto/link */}
                               <TooltipProvider delayDuration={200}>
                                 <Tooltip>
                                   <TooltipTrigger asChild>
-                                    {(e.asaasInvoiceUrl || e.asaasBoletoUrl) ? (
-                                      <button
-                                        onClick={() => window.open(e.asaasInvoiceUrl || e.asaasBoletoUrl!, "_blank")}
-                                        className="text-blue-500 hover:text-blue-700 transition-colors"
-                                      >
-                                        <Link2 className="h-4 w-4" />
-                                      </button>
-                                    ) : asaasLoadingId === e.id || (e.asaasPaymentId && !e.asaasBoletoUrl && !e.asaasInvoiceUrl) ? (
+                                    {asaasLoadingId === e.id || e.asaasPaymentId ? (
                                       <span className="text-muted-foreground/50">
                                         <Loader2 className="h-4 w-4 animate-spin" />
                                       </span>
@@ -4120,7 +4129,7 @@ export default function FinanceiroPage() {
                                     )}
                                   </TooltipTrigger>
                                   <TooltipContent side="top" className="text-xs">
-                                    {(e.asaasInvoiceUrl || e.asaasBoletoUrl) ? "Ver boleto" : e.asaasPaymentId ? "Aguardando URL..." : "Gerar boleto"}
+                                    {e.asaasPaymentId ? "Aguardando URL..." : "Gerar boleto"}
                                   </TooltipContent>
                                 </Tooltip>
                               </TooltipProvider>
