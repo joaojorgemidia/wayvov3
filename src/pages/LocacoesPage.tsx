@@ -5,7 +5,7 @@ import { Rental, Motorcycle, Client, FinancialEntry, OilChangeRecord } from "@/l
 import { saveRentals, saveMotos, loadFinancial, saveFinancial, loadMotos, loadClients, loadRentals, saveClients } from "@/lib/store";
 import { lastOilChange } from "@/lib/oil-kpis";
 import { useDataCacheSnapshot } from "@/lib/data-cache";
-import { resolveAssociations } from "@/lib/financial-associations";
+import { resolveAssociations, AssociationContext } from "@/lib/financial-associations";
 import { addWeeks, addDays, addMonths, isBefore, isEqual, parseISO, differenceInDays } from "date-fns";
 import { useCompany } from "@/contexts/CompanyContext";
 import { DEFAULT_COBRANCA_CONFIG } from "@/lib/companies";
@@ -17,7 +17,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Table, TableHeader, TableBody, TableHead, TableRow, TableCell } from "@/components/ui/table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Plus, Search, FileText, Eye, Trash2, Pencil, XCircle, History, CheckCircle2, MoreHorizontal, Wallet, AlertTriangle, Flag, CalendarClock } from "lucide-react";
+import { Plus, Search, FileText, Eye, Trash2, Pencil, XCircle, History, CheckCircle2, MoreHorizontal, Wallet, AlertTriangle, Flag, CalendarClock, Copy } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuLabel, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import RentalWizard from "@/components/locacoes/RentalWizard";
@@ -73,6 +73,95 @@ function computeContratoAlerta(
   }
 
   return null;
+}
+
+// Gera as cobranças de aluguel (semanal/quinzenal/mensal) + a parcela pro-rata final de um
+// intervalo [startDate, endDate]. Extraído para ser reaproveitado tanto na regeneração
+// completa (handleSaveRental) quanto na auto-renovação (useEffect de topUpAluguelCharges) —
+// uma única fórmula evita o tipo de divergência já visto nas edge functions do Asaas quando
+// a mesma conta era feita em dois lugares separados.
+function buildAluguelCharges(params: {
+  rental: Rental; client: Client; motoPlaca: string; numContrato: string; obsExtra: string;
+  ctx: AssociationContext; aluguelSerieId: string; aluguelGroupId: string;
+  startIdx: number; startDate: Date; endDate: Date;
+  existingByDate: Map<string, FinancialEntry>; deletedDates: Set<string>;
+  paidDates: Set<string>; isEditing: boolean; today: string;
+}): FinancialEntry[] {
+  const {
+    rental, client, motoPlaca, numContrato, obsExtra, ctx, aluguelSerieId, aluguelGroupId,
+    startDate, endDate, existingByDate, deletedDates, paidDates, isEditing, today,
+  } = params;
+  const out: FinancialEntry[] = [];
+  const freq = rental.frequenciaPagamento;
+  const prePaga = !!rental.cobrancaPrePaga;
+  const freqLabel = freq === "semanal" ? "semana" : freq === "quinzenal" ? "quinzena" : "mês";
+  const periodDays = freq === "semanal" ? 7 : freq === "quinzenal" ? 15 : 30;
+
+  const advanceDate = (d: Date): Date => {
+    if (freq === "semanal") return addWeeks(d, 1);
+    if (freq === "quinzenal") return addDays(d, 15);
+    return addMonths(d, 1);
+  };
+  const fmtBr = (d: Date) => d.toLocaleDateString("pt-BR");
+
+  let current = startDate;
+  let lastChargeDate = startDate;
+  let idx = params.startIdx;
+  while (isBefore(current, endDate) || isEqual(current, endDate)) {
+    const dataStr = current.toISOString().split("T")[0];
+    const periodStart = prePaga ? current : addDays(current, -periodDays);
+    const periodEnd = prePaga ? addDays(current, periodDays - 1) : addDays(current, -1);
+    const periodoTxt = `${fmtBr(periodStart)} a ${fmtBr(periodEnd)}`;
+    const shouldGenerate = !isEditing || (dataStr >= today && !paidDates.has(dataStr));
+    if (shouldGenerate) {
+      const existing = existingByDate.get(dataStr);
+      if (!deletedDates.has(dataStr)) {
+        out.push(resolveAssociations({
+          id: existing?.id ?? crypto.randomUUID(),
+          tipo: "receita", categoria: "aluguel",
+          serieId: existing?.serieId ?? aluguelSerieId,
+          recurringGroupId: existing?.recurringGroupId ?? aluguelGroupId,
+          descricao: `Aluguel ${idx}ª ${freqLabel} (${periodoTxt}) - ${numContrato} - ${motoPlaca}${obsExtra}`,
+          valor: rental.valorDiario, data: dataStr, pago: false,
+          dataPrevista: dataStr,
+          motoId: rental.motoId, rentalId: rental.id, clienteId: client.id,
+          placa: motoPlaca, clienteNome: client.nome, natureza: "operacional",
+        }, ctx));
+      }
+    }
+    lastChargeDate = current;
+    current = advanceDate(current);
+    idx++;
+  }
+
+  // Semana parcial: dias restantes entre a última cobrança e o fim do intervalo
+  const remainingDays = differenceInDays(endDate, lastChargeDate);
+  if (remainingDays > 0 && remainingDays < periodDays) {
+    const proratedValue = parseFloat(((rental.valorDiario / periodDays) * remainingDays).toFixed(2));
+    const dataStr = endDate.toISOString().split("T")[0];
+    const partialStart = prePaga ? addDays(lastChargeDate, periodDays) : addDays(lastChargeDate, 1);
+    const partialEnd = endDate;
+    const periodoTxt = `${fmtBr(partialStart)} a ${fmtBr(partialEnd)}`;
+    const shouldGenerate = !isEditing || (dataStr >= today && !paidDates.has(dataStr));
+    if (shouldGenerate) {
+      const existingPartial = existingByDate.get(dataStr);
+      if (!deletedDates.has(dataStr)) {
+        out.push(resolveAssociations({
+          id: existingPartial?.id ?? crypto.randomUUID(),
+          tipo: "receita", categoria: "aluguel",
+          serieId: existingPartial?.serieId ?? aluguelSerieId,
+          recurringGroupId: existingPartial?.recurringGroupId ?? aluguelGroupId,
+          descricao: `Aluguel ${idx}ª ${freqLabel} (${periodoTxt}, ${remainingDays}d) - ${numContrato} - ${motoPlaca}${obsExtra}`,
+          valor: proratedValue, data: dataStr, pago: false,
+          dataPrevista: dataStr,
+          motoId: rental.motoId, rentalId: rental.id, clienteId: client.id,
+          placa: motoPlaca, clienteNome: client.nome, natureza: "operacional",
+        }, ctx));
+      }
+    }
+  }
+
+  return out;
 }
 
 const MOTIVOS_ENCERRAMENTO = [
@@ -153,6 +242,70 @@ export default function LocacoesPage() {
 
   const getMotoPlaca = (id: string) => motos.find(m => m.id === id)?.placa || "—";
   const getMotoModelo = (id: string) => motos.find(m => m.id === id)?.modelo || "—";
+
+  // Auto-renovação: mantém um "estoque" de cobranças de aluguel geradas até 12 meses à
+  // frente para locações ativas, sem depender de alguém abrir/salvar o assistente de edição.
+  // Dispara quando só sobra 1 período (a "última parcela") de cobranças futuras já geradas.
+  useEffect(() => {
+    if (!cache.initialized || rentals.length === 0) return;
+    const today = localToday();
+    const novoHorizonte = addMonths(new Date(), 12);
+    const novasEntradas: FinancialEntry[] = [];
+
+    // Indexa uma vez só — evita filtrar o array inteiro de lançamentos para cada locação
+    const aluguelPorRental = new Map<string, FinancialEntry[]>();
+    for (const e of cache.financial) {
+      if (e.categoria !== "aluguel" || !e.rentalId) continue;
+      const arr = aluguelPorRental.get(e.rentalId);
+      if (arr) arr.push(e); else aluguelPorRental.set(e.rentalId, [e]);
+    }
+
+    for (const rental of rentals) {
+      if (rental.status !== "ativa" || !rental.gerarCobrancaPagamento || rental.valorDiario <= 0) continue;
+      if (rental.plano === "moto_no_final") continue; // fim natural pelo nº de parcelas
+
+      const aluguelDoRental = aluguelPorRental.get(rental.id) || [];
+      const futuras = aluguelDoRental.filter(e => !e.pago && e.data >= today);
+      if (futuras.length === 0) continue; // locação nova — handleSaveRental já cuida disso
+
+      const maxDate = futuras.reduce((max, e) => (e.data > max ? e.data : max), futuras[0].data);
+      const periodDays = rental.frequenciaPagamento === "quinzenal" ? 15 : rental.frequenciaPagamento === "mensal" ? 30 : 7;
+      const diasRestantes = differenceInDays(parseISO(maxDate), parseISO(today));
+      if (diasRestantes > periodDays) continue; // ainda sobra mais de um período — não precisa renovar ainda
+
+      const advance = (d: Date): Date => {
+        if (rental.frequenciaPagamento === "semanal") return addWeeks(d, 1);
+        if (rental.frequenciaPagamento === "quinzenal") return addDays(d, 15);
+        return addMonths(d, 1);
+      };
+      const startDate = advance(parseISO(maxDate));
+      if (isBefore(novoHorizonte, startDate)) continue; // nada de novo a gerar nesse horizonte
+
+      const client = clients.find(c => c.id === rental.clienteId);
+      if (!client) continue;
+      const motoPlaca = getMotoPlaca(rental.motoId);
+      const numContrato = !rental.numero
+        ? `#${rental.id.slice(0, 6).toUpperCase()}`
+        : rental.createdAt >= "2026-06-01" ? `L${String(rental.numero).padStart(5, "0")}MV` : `#${String(rental.numero).padStart(5, "0")}`;
+      const obsExtra = rental.observacoes ? ` - ${rental.observacoes}` : "";
+      const ctx: AssociationContext = { motos, clients, rentals };
+      const aluguelSerieId = `aluguel-${rental.id}`;
+      const aluguelGroupId = aluguelDoRental.find(e => e.recurringGroupId)?.recurringGroupId ?? crypto.randomUUID();
+
+      novasEntradas.push(...buildAluguelCharges({
+        rental, client, motoPlaca, numContrato, obsExtra, ctx,
+        aluguelSerieId, aluguelGroupId,
+        startIdx: aluguelDoRental.length + 1, startDate, endDate: novoHorizonte,
+        existingByDate: new Map(), deletedDates: new Set(),
+        paidDates: new Set(), isEditing: false, today,
+      }));
+    }
+
+    if (novasEntradas.length > 0) {
+      saveFinancial([...loadFinancial(), ...novasEntradas]);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cache.initialized, rentals, cache.financial, motos, clients]);
   const getClientName = (id: string) => {
     const all = loadClients();
     return all.find(c => c.id === id)?.nome || clients.find(c => c.id === id)?.nome || "—";
@@ -177,6 +330,36 @@ export default function LocacoesPage() {
 
   const ativas = useMemo(() => rentals.filter(r => r.status === "ativa" && matchSearch(r)), [rentals, search, motos, clients]);
   const finalizadas = useMemo(() => rentals.filter(r => (r.status === "finalizada" || r.status === "cancelada") && matchSearch(r)), [rentals, search, motos, clients]);
+
+  const [emailDrafts, setEmailDrafts] = useState<Record<string, string>>({});
+  const [emailSaving, setEmailSaving] = useState<Set<string>>(new Set());
+
+  const handleSaveEmail = async (clientId: string) => {
+    const email = (emailDrafts[clientId] || "").trim();
+    if (!email || !email.includes("@")) { toast.error("E-mail inválido"); return; }
+    setEmailSaving(prev => new Set(prev).add(clientId));
+    try {
+      const allClients = loadClients();
+      const updated = allClients.map(c => c.id === clientId ? { ...c, email } : c);
+      saveClients(updated);
+      await supabase.from("clients").update({ email }).eq("id", clientId);
+      setEmailDrafts(prev => { const n = { ...prev }; delete n[clientId]; return n; });
+      toast.success("E-mail salvo");
+    } catch {
+      toast.error("Erro ao salvar e-mail");
+    } finally {
+      setEmailSaving(prev => { const n = new Set(prev); n.delete(clientId); return n; });
+    }
+  };
+
+  const clientesSemEmail = useMemo(() => {
+    const clientsMap = new Map(clients.map(c => [c.id, c]));
+    const motosMap = new Map(motos.map(m => [m.id, m]));
+    return rentals
+      .filter(r => r.status === "ativa")
+      .map(r => ({ rental: r, client: clientsMap.get(r.clienteId), moto: motosMap.get(r.motoId) }))
+      .filter(({ client }) => !client?.email);
+  }, [rentals, clients, motos]);
 
   const handleSaveRental = async (rental: Rental, client: Client) => {
     const allClients = loadClients();
@@ -287,19 +470,14 @@ export default function LocacoesPage() {
     if (rental.gerarCobrancaPagamento && rental.valorDiario > 0 && rental.dataFimContrato) {
       const startDate = parseISO(rental.dataInicio);
       const contratoEnd = parseISO(rental.dataFimContrato);
-      // Locações "só aluguel" têm renovação automática: garante cobranças até pelo menos 12 meses à frente
+      // Locações continuam gerando cobrança além do fim do contrato enquanto ativas — só
+      // "Moto no Final" tem fim natural pelo nº de parcelas (mesmo critério de computeContratoAlerta).
       const horizonte12m = addMonths(new Date(), 12);
-      const endDate = (rental.plano === "aluguel" || !rental.plano || rental.plano === "")
-        && rental.status === "ativa"
+      const endDate = rental.plano !== "moto_no_final" && rental.status === "ativa"
         ? (contratoEnd > horizonte12m ? contratoEnd : horizonte12m)
         : contratoEnd;
-      const freq = rental.frequenciaPagamento;
-      const aluguelSerieId = `aluguel-${rental.id}`;
       const prePaga = !!rental.cobrancaPrePaga;
-      const freqLabel = freq === "semanal" ? "semana" : freq === "quinzenal" ? "quinzena" : "mês";
-
-      // Dias do período base (usado para pro-rata da última semana parcial)
-      const periodDays = freq === "semanal" ? 7 : freq === "quinzenal" ? 15 : 30;
+      const aluguelSerieId = `aluguel-${rental.id}`;
 
       // Datas com entrada paga já estão em baseEntries — não duplicar
       const paidAluguelDates = new Set(
@@ -308,78 +486,22 @@ export default function LocacoesPage() {
           .map(e => e.data),
       );
 
-      const advanceDate = (d: Date): Date => {
-        if (freq === "semanal") return addWeeks(d, 1);
-        if (freq === "quinzenal") return addDays(d, 15);
-        return addMonths(d, 1);
-      };
-
-      const fmtBr = (d: Date) => d.toLocaleDateString("pt-BR");
-
       // Pré-pago: 1ª cobrança vence na data de início (cobre [início, início+período-1]).
       // Pós-pago: 1ª cobrança vence em início+período (cobre [início, início+período-1]).
-      let current = prePaga ? startDate : advanceDate(startDate);
-      let lastChargeDate = prePaga ? startDate : startDate; // rastreia data da última cobrança gerada
-      let idx = 1;
-      while (isBefore(current, endDate) || isEqual(current, endDate)) {
-        const dataStr = current.toISOString().split("T")[0];
-        const periodStart = prePaga ? current : addDays(current, -periodDays);
-        const periodEnd = prePaga ? addDays(current, periodDays - 1) : addDays(current, -1);
-        const periodoTxt = `${fmtBr(periodStart)} a ${fmtBr(periodEnd)}`;
-        // Ao editar: só gera entradas futuras (preenche lacunas sem mexer no passado)
-        const shouldGenerate = !isEditing || (dataStr >= today && !paidAluguelDates.has(dataStr));
-        if (shouldGenerate) {
-          // Reutiliza ID, serieId e recurringGroupId da entrada existente para não quebrar a série
-          const existing = existingAluguelByDate.get(dataStr);
-          if (!deletedAluguelDates.has(dataStr)) {
-            newFinancialEntries.push(resolveAssociations({
-              id: existing?.id ?? crypto.randomUUID(),
-              tipo: "receita", categoria: "aluguel",
-              serieId: existing?.serieId ?? aluguelSerieId,
-              recurringGroupId: existing?.recurringGroupId ?? aluguelGroupId,
-              descricao: `Aluguel ${idx}ª ${freqLabel} (${periodoTxt}) - ${numContrato} - ${motoPlaca}${obsExtra}`,
-              valor: rental.valorDiario, data: dataStr, pago: false,
-              dataPrevista: dataStr,
-              motoId: rental.motoId, rentalId: rental.id, clienteId: client.id,
-              placa: motoPlaca, clienteNome: client.nome, natureza: "operacional",
-            }, ctx));
-          }
-        }
-        lastChargeDate = current;
-        current = advanceDate(current);
-        idx++;
-      }
+      const advanceFromStart = (d: Date): Date => {
+        if (rental.frequenciaPagamento === "semanal") return addWeeks(d, 1);
+        if (rental.frequenciaPagamento === "quinzenal") return addDays(d, 15);
+        return addMonths(d, 1);
+      };
+      const firstCharge = prePaga ? startDate : advanceFromStart(startDate);
 
-      // Semana parcial: dias restantes entre a última cobrança e o fim do contrato
-      const remainingDays = differenceInDays(endDate, lastChargeDate);
-      if (remainingDays > 0 && remainingDays < periodDays) {
-        const proratedValue = parseFloat(
-          ((rental.valorDiario / periodDays) * remainingDays).toFixed(2),
-        );
-        const dataStr = endDate.toISOString().split("T")[0];
-        // Pro-rata: vencimento no fim do contrato; período = [lastChargeDate+1, endDate]
-        // (em pré-pago a cobrança ainda ocorre na data de início do período parcial)
-        const partialStart = prePaga ? addDays(lastChargeDate, periodDays) : addDays(lastChargeDate, 1);
-        const partialEnd = endDate;
-        const periodoTxt = `${fmtBr(partialStart)} a ${fmtBr(partialEnd)}`;
-        const shouldGenerate = !isEditing || (dataStr >= today && !paidAluguelDates.has(dataStr));
-        if (shouldGenerate) {
-          const existingPartial = existingAluguelByDate.get(dataStr);
-          if (!deletedAluguelDates.has(dataStr)) {
-            newFinancialEntries.push(resolveAssociations({
-              id: existingPartial?.id ?? crypto.randomUUID(),
-              tipo: "receita", categoria: "aluguel",
-              serieId: existingPartial?.serieId ?? aluguelSerieId,
-              recurringGroupId: existingPartial?.recurringGroupId ?? aluguelGroupId,
-              descricao: `Aluguel ${idx}ª ${freqLabel} (${periodoTxt}, ${remainingDays}d) - ${numContrato} - ${motoPlaca}${obsExtra}`,
-              valor: proratedValue, data: dataStr, pago: false,
-              dataPrevista: dataStr,
-              motoId: rental.motoId, rentalId: rental.id, clienteId: client.id,
-              placa: motoPlaca, clienteNome: client.nome, natureza: "operacional",
-            }, ctx));
-          }
-        }
-      }
+      newFinancialEntries.push(...buildAluguelCharges({
+        rental, client, motoPlaca, numContrato, obsExtra, ctx,
+        aluguelSerieId, aluguelGroupId,
+        startIdx: 1, startDate: firstCharge, endDate,
+        existingByDate: existingAluguelByDate, deletedDates: deletedAluguelDates,
+        paidDates: paidAluguelDates, isEditing, today,
+      }));
     }
 
     // Single save — avoids version-gate skipping intermediate saves
@@ -817,6 +939,68 @@ export default function LocacoesPage() {
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
+          </div>
+        </div>
+      )}
+
+      {clientesSemEmail.length > 0 && (
+        <div className="rounded-lg border border-orange-200 dark:border-orange-800 bg-orange-50/60 dark:bg-orange-950/10 overflow-hidden">
+          <div className="flex items-center gap-2 px-4 py-2.5">
+            <AlertTriangle className="h-4 w-4 text-orange-600 dark:text-orange-400 flex-shrink-0" />
+            <span className="text-sm font-semibold text-orange-700 dark:text-orange-400 flex-1">
+              {clientesSemEmail.length} locatário{clientesSemEmail.length !== 1 ? "s" : ""} sem e-mail cadastrado
+            </span>
+            <span className="text-xs text-orange-600/80 dark:text-orange-500">Boleto Asaas bloqueado</span>
+          </div>
+          <div className="border-t border-orange-200 dark:border-orange-800 divide-y divide-orange-100 dark:divide-orange-900">
+            {clientesSemEmail.map(({ rental, client, moto }) => {
+              const clientId = client?.id || "";
+              const draft = emailDrafts[clientId] ?? "";
+              const saving = emailSaving.has(clientId);
+              return (
+                <div key={rental.id} className="flex items-center gap-3 px-4 py-2.5 bg-background/60">
+                  <div className="min-w-0 w-36 shrink-0">
+                    <span className="text-sm font-medium truncate block">{client?.nome || "—"}</span>
+                    {moto && (
+                      <span className="font-mono text-[10px] bg-muted border border-border/50 rounded px-1.5 py-px text-muted-foreground">
+                        {moto.placa}
+                      </span>
+                    )}
+                  </div>
+                  <Input
+                    type="email"
+                    placeholder="email@exemplo.com"
+                    value={draft}
+                    onChange={e => setEmailDrafts(prev => ({ ...prev, [clientId]: e.target.value }))}
+                    onKeyDown={e => e.key === "Enter" && handleSaveEmail(clientId)}
+                    className="h-8 text-sm flex-1"
+                    disabled={saving}
+                  />
+                  <Button
+                    size="sm"
+                    className="h-8 px-3 shrink-0"
+                    disabled={saving || !draft.includes("@")}
+                    onClick={() => handleSaveEmail(clientId)}
+                  >
+                    {saving ? "Salvando…" : "Salvar"}
+                  </Button>
+                  {client?.telefone && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-8 px-2 shrink-0 gap-1.5"
+                      title="Copiar telefone"
+                      onClick={() => {
+                        navigator.clipboard.writeText(client.telefone);
+                        toast.success("Telefone copiado");
+                      }}
+                    >
+                      <Copy className="h-3.5 w-3.5" /> Telefone
+                    </Button>
+                  )}
+                </div>
+              );
+            })}
           </div>
         </div>
       )}

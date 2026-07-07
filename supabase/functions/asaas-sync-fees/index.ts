@@ -104,15 +104,30 @@ function calcMultaAmount(payment: Record<string, any>): number {
   return Math.floor(value * 100) / 100;
 }
 
-function computePeriodoRef(dataInicio: string, frequencia: string, dueDateStr: string): string {
+// Espelha computeSemanaNumero/computeSemanaPeriodo (src/lib/cobranca-week-stats.ts):
+// pré-pago → vencimento é o INÍCIO do período; pós-pago → vencimento é o FIM do período.
+// Sem essa distinção, o período calculado aqui fica uma semana à frente do exibido no app
+// para locações pós-pagas (vencimento tratado como início em vez de fim do período).
+function computePeriodoRef(dataInicio: string, frequencia: string, dueDateStr: string, cobrancaPrePaga: boolean): string {
   const start = new Date(dataInicio + "T00:00:00");
   const dueDate = new Date(dueDateStr + "T00:00:00");
   const periodDays = frequencia === "quinzenal" ? 14 : frequencia === "mensal" ? 30 : 7;
   const diffDays = Math.round((dueDate.getTime() - start.getTime()) / (1000 * 60 * 60 * 24));
-  const periodoIdx = Math.max(0, Math.floor(diffDays / periodDays));
-  const periodoNum = periodoIdx + 1;
-  const periodoInicio = new Date(start.getTime() + periodoIdx * periodDays * 24 * 60 * 60 * 1000);
-  const periodoFim = new Date(periodoInicio.getTime() + (periodDays - 1) * 24 * 60 * 60 * 1000);
+  if (diffDays < 0) return "";
+
+  let periodoNum: number;
+  let periodoInicio: Date;
+  if (cobrancaPrePaga || diffDays < periodDays - 1) {
+    periodoNum = Math.round(diffDays / periodDays) + 1;
+    periodoInicio = new Date(dueDate);
+  } else {
+    periodoNum = Math.max(1, Math.round(diffDays / periodDays));
+    periodoInicio = new Date(dueDate);
+    periodoInicio.setDate(periodoInicio.getDate() - (periodDays - 1));
+  }
+  const periodoFim = new Date(periodoInicio);
+  periodoFim.setDate(periodoFim.getDate() + (periodDays - 1));
+
   const fmt = (d: Date) => `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}`;
   const labelTipo = frequencia === "quinzenal" ? "Quinzena" : frequencia === "mensal" ? "Mês" : "Semana";
   return `${labelTipo} ${String(periodoNum).padStart(2, "0")}: ${fmt(periodoInicio)} até ${fmt(periodoFim)}`;
@@ -226,6 +241,14 @@ async function syncFeesFromTransactions(
     } else {
       console.log(`[syncFeesFromTransactions] taxa já existia, ignorada: ${subcategoria} R$ ${feeAmount} (txId=${feeId})`);
     }
+  }
+
+  if (inserted > 0 || feeTxs.length > 0) {
+    const fallbackId = await deterministicUUID(`asaas-fee:${payment.id}`);
+    await supabase.from("financial_entries")
+      .update({ deleted_at: new Date().toISOString() })
+      .eq("id", fallbackId)
+      .is("deleted_at", null);
   }
 
   // Retorna -1 quando encontrou taxas mas todas já existiam no banco.
@@ -354,7 +377,26 @@ serve(async (req) => {
     const today = new Date().toISOString().split("T")[0];
     const creditDate = paymentData.creditDate || paymentData.paymentDate || entry?.data || today;
 
-    console.log(`[asaas-sync-fees] payment=${asaasPaymentId} value=${paymentData.value} netValue=${paymentData.netValue} billingType=${paymentData.billingType} creditDate=${creditDate} nossoNumero=${paymentData.nossoNumero}`);
+    console.log(`[asaas-sync-fees] payment=${asaasPaymentId} status=${paymentData.status} value=${paymentData.value} netValue=${paymentData.netValue} billingType=${paymentData.billingType} creditDate=${creditDate} nossoNumero=${paymentData.nossoNumero}`);
+
+    // Só registra taxa/juros quando o Asaas confirma que o dinheiro entrou de fato
+    // ATRAVÉS DA PLATAFORMA (boleto/PIX/cartão pagos normalmente). RECEIVED_IN_CASH
+    // fica de fora de propósito: é o status usado quando o próprio app marca um
+    // pagamento confirmado manualmente (fora do Asaas) como "recebido em dinheiro" —
+    // nesse caso não há taxa de processamento real, e o juros/multa já foi tratado
+    // pelo próprio fluxo de confirmação manual do app; sincronizar de novo aqui
+    // duplicava/errava o valor. value/netValue existem no boleto desde a criação (são
+    // apenas o valor teórico menos a taxa que SERIA cobrada se pago) — sem essa
+    // checagem, um boleto vencido, cancelado ou nunca pago gera uma "taxa" fantasma
+    // sem transação real por trás.
+    const RECEIVED_ASAAS_STATUSES = new Set(["RECEIVED", "CONFIRMED"]);
+    if (!RECEIVED_ASAAS_STATUSES.has(paymentData.status)) {
+      console.log(`[asaas-sync-fees] payment=${asaasPaymentId} status=${paymentData.status} — pagamento não confirmado no Asaas, nenhuma taxa/juros registrada`);
+      return new Response(
+        JSON.stringify({ registeredFees: 0, registeredJuros: 0, noFeesExpected: true, skipped: true, asaasStatus: paymentData.status }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
 
     // ── 1. Taxas de plataforma ───────────────────────────────────────────────
     // Primária: busca todas as taxas (boleto + mensageria) via financialTransactions.
@@ -388,11 +430,11 @@ serve(async (req) => {
       if (entry?.rental_id && dueDateStr) {
         const { data: rental } = await supabase
           .from("rentals")
-          .select("data_inicio, frequencia_pagamento")
+          .select("data_inicio, frequencia_pagamento, cobranca_pre_paga")
           .eq("id", entry.rental_id)
           .single();
         if (rental?.data_inicio && rental?.frequencia_pagamento) {
-          periodoRef = computePeriodoRef(rental.data_inicio, rental.frequencia_pagamento, dueDateStr);
+          periodoRef = computePeriodoRef(rental.data_inicio, rental.frequencia_pagamento, dueDateStr, !!rental.cobranca_pre_paga);
         }
       }
 

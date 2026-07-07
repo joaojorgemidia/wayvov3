@@ -4,6 +4,7 @@ import { InfoTooltip } from "@/components/InfoTooltip";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Search, Pencil, Trash2, Download } from "lucide-react";
 import { useState, useMemo } from "react";
 import { toast } from "sonner";
@@ -51,6 +52,7 @@ interface FrotaTabProps {
 export function FrotaTab({ motos, onEdit, onDelete, onSell }: FrotaTabProps) {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [infoMoto, setInfoMoto] = useState<Motorcycle | null>(null);
   const { canEdit, canDelete } = usePermissions();
   const cache = useDataCacheSnapshot();
   const rentals = cache.rentals;
@@ -171,7 +173,7 @@ export function FrotaTab({ motos, onEdit, onDelete, onSell }: FrotaTabProps) {
                 const mt = metricsByMoto[m.id] || { rentalsCount: 0, faturado: 0, despesas: 0 };
                 const liquido = mt.faturado - mt.despesas;
                 return (
-                  <tr key={m.id} className="border-b last:border-0 transition-colors hover:bg-primary/[0.03]">
+                  <tr key={m.id} className="border-b last:border-0 transition-colors hover:bg-primary/[0.03] cursor-pointer" onClick={() => setInfoMoto(m)}>
                     <td className="px-4 py-3.5">
                       <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide ring-1 ${statusStyles[m.status]}`}>
                         <span className={`h-1.5 w-1.5 rounded-full ${statusDot[m.status]}`} />
@@ -190,7 +192,7 @@ export function FrotaTab({ motos, onEdit, onDelete, onSell }: FrotaTabProps) {
                     <td className="px-4 py-3.5 text-right font-mono tabular-nums text-foreground/80">{fmtBRL(mt.faturado)}</td>
                     <td className="px-4 py-3.5 text-right font-mono tabular-nums text-foreground/80">{fmtBRL(mt.despesas)}</td>
                     <td className={`px-4 py-3.5 text-right font-mono tabular-nums font-semibold ${liquido >= 0 ? "text-emerald-600" : "text-destructive"}`}>{fmtBRL(liquido)}</td>
-                    <td className="px-4 py-3.5">
+                    <td className="px-4 py-3.5" onClick={e => e.stopPropagation()}>
                       <div className="flex justify-end gap-0.5">
                         {m.crlvStoragePath ? (
                           <Button variant="ghost" size="icon" className="h-8 w-8" title="Baixar CRLV" onClick={async () => {
@@ -259,6 +261,26 @@ export function FrotaTab({ motos, onEdit, onDelete, onSell }: FrotaTabProps) {
           </table>
         </div>
       </Card>
+
+      <Dialog open={!!infoMoto} onOpenChange={open => !open && setInfoMoto(null)}>
+        <DialogContent className="max-w-xs">
+          <DialogHeader>
+            <DialogTitle>{infoMoto?.modelo || infoMoto?.placa}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 pt-1">
+            {[
+              { label: "Placa",   value: infoMoto?.placa   || "—" },
+              { label: "RENAVAM", value: infoMoto?.renavam  || "—" },
+              { label: "Chassi",  value: infoMoto?.chassi  || "—" },
+            ].map(({ label, value }) => (
+              <div key={label} className="flex flex-col gap-0.5">
+                <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{label}</span>
+                <span className="font-mono text-sm font-medium text-foreground select-all">{value}</span>
+              </div>
+            ))}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

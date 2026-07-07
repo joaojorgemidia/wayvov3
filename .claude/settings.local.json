@@ -1,17 +1,4 @@
 {
-  "hooks": {
-    "SessionStart": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "git fetch origin main --quiet 2>$null; $behind = try { [int]((git rev-list HEAD..origin/main --count 2>$null).Trim()) } catch { 0 }; if ($behind -gt 0) { Write-Output ('{\"systemMessage\":\"[AVISO] Ha ' + $behind + ' commit(s) novo(s) no GitHub que voce nao baixou ainda. Execute: git pull origin main\"}') }",
-            "timeout": 30
-          }
-        ]
-      }
-    ]
-  },
   "permissions": {
     "allow": [
       "Bash(git add:*)",
@@ -66,7 +53,24 @@
       "Bash(python -c \"import PyPDF2; r=PyPDF2.PdfReader\\(r'c:\\\\Users\\\\joaoh\\\\Downloads\\\\wayvo_brandbook_2025 \\(3\\).pdf'\\); [print\\(r.pages[i].extract_text\\(\\)\\) for i in range\\(len\\(r.pages\\)\\)]\")",
       "Bash(pip install *)",
       "Bash(python -c ' *)",
-      "PowerShell(& python -m pip install pdfplumber --quiet 2>&1)"
+      "PowerShell(& python -m pip install pdfplumber --quiet 2>&1)",
+      "mcp__plugin_supabase_supabase__get_edge_function",
+      "Bash(node *)",
+      "Bash(Get-Content \"supabase\\\\functions\\\\asaas-sync-fees\\\\index.ts\" -Raw)",
+      "Bash(Get-Content \"supabase\\\\functions\\\\asaas-webhook\\\\index.ts\" -Raw)"
+    ]
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "git fetch origin main --quiet 2>$null; $behind = try { [int]((git rev-list HEAD..origin/main --count 2>$null).Trim()) } catch { 0 }; if ($behind -gt 0) { Write-Output ('{\"systemMessage\":\"[AVISO] Ha ' + $behind + ' commit(s) novo(s) no GitHub que voce nao baixou ainda. Execute: git pull origin main\"}') }",
+            "timeout": 30
+          }
+        ]
+      }
     ]
   }
 }

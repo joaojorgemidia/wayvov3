@@ -100,6 +100,7 @@ export const DEFAULT_SUBCATEGORIAS: Record<string, string[]> = {
   equipe: ["Pró Labore", "Transporte", "Alimentação", "Folha de Pagamento"],
   marketing: ["Tráfego Pago", "Brindes"],
   taxas: ["Administradora de Cobranças", "Taxa Asaas", "Taxa de boleto", "Taxa de mensageria", "Taxa de transferência", "Taxa de antecipação", "Taxa PIX"],
+  outro_receita: ["Parcelamento"],
 };
 
 export const DEFAULT_TAGS: Record<string, string[]> = {

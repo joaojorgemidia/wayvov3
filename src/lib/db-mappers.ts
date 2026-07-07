@@ -143,12 +143,17 @@ export function dbToFine(r: any): Fine {
   return {
     id: r.id, motoId: r.moto_id || "", clienteId: r.cliente_id || null,
     rentalId: r.rental_id || null, dataMulta: r.data_multa || "",
+    dataVencimento: r.data_vencimento || null,
     dataNotificacao: r.data_notificacao || null, valor: Number(r.valor) || 0,
     descricao: r.descricao || "", status: r.status || "pendente",
     responsavel: r.responsavel || "locadora",
     origem: r.origem || "manual",
     autoInfracao: r.auto_infracao || null,
     codigoInfracao: r.codigo_infracao || null,
+    numeroRenainf: r.numero_renainf || null,
+    orgaoCompetencia: r.orgao_competencia || null,
+    horaInfracao: r.hora_infracao || null,
+    localInfracao: r.local_infracao || null,
   };
 }
 
@@ -156,11 +161,16 @@ export function fineToDb(f: Fine): any {
   return {
     moto_id: f.motoId, cliente_id: f.clienteId || null,
     rental_id: f.rentalId || null, data_multa: f.dataMulta,
+    data_vencimento: f.dataVencimento || null,
     data_notificacao: f.dataNotificacao || null, valor: f.valor,
     descricao: f.descricao, status: f.status, responsavel: f.responsavel,
     origem: f.origem || "manual",
     auto_infracao: f.autoInfracao || null,
     codigo_infracao: f.codigoInfracao || null,
+    numero_renainf: f.numeroRenainf || null,
+    orgao_competencia: f.orgaoCompetencia || null,
+    hora_infracao: f.horaInfracao || null,
+    local_infracao: f.localInfracao || null,
   };
 }
 

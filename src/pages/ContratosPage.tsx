@@ -17,6 +17,12 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
+import { ChevronsUpDown, Check } from "lucide-react";
+import {
   AlertDialog, AlertDialogAction, AlertDialogCancel,
   AlertDialogContent, AlertDialogDescription, AlertDialogFooter,
   AlertDialogHeader, AlertDialogTitle,
@@ -25,8 +31,9 @@ import { toast } from "sonner";
 import {
   FileText, Upload, Download, ExternalLink, Plus, Trash2,
   FileSignature, Info, Loader2, RefreshCw, CloudDownload, Link2Off,
-  Pencil, CheckCircle2, XCircle, ScanSearch,
+  Pencil, CheckCircle2, XCircle, ScanSearch, FileType,
 } from "lucide-react";
+import { unzipSync, strFromU8 } from "fflate";
 
 // ─── tipos ───────────────────────────────────────────────────────────────────
 interface ContractTemplate {
@@ -87,43 +94,16 @@ const PLACEHOLDERS = [
   { key: "{NIVEL_COMBUSTIVEL}", desc: "Nível de combustível" },
 ];
 
-// ─── DOCX parser (ZIP local headers + DecompressionStream) ────────────────────
+// ─── DOCX parser via fflate ───────────────────────────────────────────────────
 async function extractDocxText(file: File): Promise<string> {
-  const buf = await file.arrayBuffer();
-  const bytes = new Uint8Array(buf);
-  const view = new DataView(buf);
-  let offset = 0;
-  while (offset < bytes.length - 30) {
-    if (view.getUint32(offset, true) !== 0x04034b50) { offset++; continue; }
-    const compression = view.getUint16(offset + 8, true);
-    const compressedSize = view.getUint32(offset + 18, true);
-    const fileNameLen = view.getUint16(offset + 26, true);
-    const extraLen = view.getUint16(offset + 28, true);
-    const fileName = new TextDecoder().decode(bytes.slice(offset + 30, offset + 30 + fileNameLen));
-    const dataStart = offset + 30 + fileNameLen + extraLen;
-    if (fileName === "word/document.xml") {
-      const data = bytes.slice(dataStart, dataStart + compressedSize);
-      if (compression === 0) return new TextDecoder().decode(data);
-      if (compression === 8) {
-        try {
-          const ds = new DecompressionStream("deflate-raw");
-          const writer = ds.writable.getWriter();
-          const reader = ds.readable.getReader();
-          writer.write(data);
-          writer.close();
-          const chunks: Uint8Array[] = [];
-          for (;;) { const r = await reader.read(); if (r.done) break; chunks.push(r.value); }
-          const total = chunks.reduce((n, c) => n + c.length, 0);
-          const merged = new Uint8Array(total);
-          let pos = 0;
-          for (const c of chunks) { merged.set(c, pos); pos += c.length; }
-          return new TextDecoder().decode(merged);
-        } catch { return ""; }
-      }
-    }
-    offset = dataStart + compressedSize;
+  try {
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const files = unzipSync(bytes);
+    const docXml = files["word/document.xml"];
+    return docXml ? strFromU8(docXml) : "";
+  } catch {
+    return "";
   }
-  return "";
 }
 
 async function analyzePlaceholders(file: File): Promise<Record<string, boolean>> {
@@ -161,9 +141,14 @@ export default function ContratosPage() {
   const [gerarTemplateId, setGerarTemplateId] = useState("");
   const [gerarEnviarAut, setGerarEnviarAut] = useState(false);
   const [gerando, setGerando] = useState(false);
+  const [rentalComboOpen, setRentalComboOpen] = useState(false);
 
   // Confirmação de exclusão de template
   const [deleteTmpl, setDeleteTmpl] = useState<ContractTemplate | null>(null);
+
+  // Confirmação de exclusão de contrato
+  const [deleteContract, setDeleteContract] = useState<Contract | null>(null);
+  const [deletingContract, setDeletingContract] = useState(false);
 
   // Edição de template
   const [editTmpl, setEditTmpl] = useState<ContractTemplate | null>(null);
@@ -362,11 +347,30 @@ export default function ContratosPage() {
       setGerarRentalId("");
       setGerarTemplateId("");
       setGerarEnviarAut(false);
+      setRentalComboOpen(false);
       fetchAll();
     } catch (e: unknown) {
       toast.error("Erro ao gerar contrato: " + (e instanceof Error ? e.message : "erro"));
     } finally {
       setGerando(false);
+    }
+  }
+
+  // ── Excluir contrato ──
+  async function handleDeleteContract(c: Contract) {
+    setDeletingContract(true);
+    try {
+      if (c.storage_path) {
+        await supabase.storage.from("contratos").remove([c.storage_path]);
+      }
+      await (supabase as any).from("contracts").delete().eq("id", c.id);
+      toast.success("Contrato excluído");
+      setDeleteContract(null);
+      fetchAll();
+    } catch (e: unknown) {
+      toast.error("Erro ao excluir contrato: " + (e instanceof Error ? e.message : "erro"));
+    } finally {
+      setDeletingContract(false);
     }
   }
 
@@ -376,6 +380,99 @@ export default function ContratosPage() {
     const { data, error } = await supabase.storage.from("contratos").createSignedUrl(c.storage_path, 3600);
     if (error || !data?.signedUrl) { toast.error("Erro ao gerar link"); return; }
     window.open(data.signedUrl, "_blank");
+  }
+
+  // ── Download como PDF (viewport A4 fixo + scroll por transform, captura página a página) ──
+  async function downloadAsPDF(c: Contract) {
+    if (!c.storage_path) { toast.error("Arquivo não encontrado"); return; }
+    const FRAME_ID = "__docx-frame__";
+    const OVERLAY_ID = "__docx-overlay__";
+    const toastId = toast.loading("Gerando PDF…");
+    const cleanup = () => {
+      document.getElementById(FRAME_ID)?.remove();
+      document.getElementById(OVERLAY_ID)?.remove();
+      toast.dismiss(toastId);
+    };
+
+    try {
+      const { data, error } = await supabase.storage
+        .from("contratos").createSignedUrl(c.storage_path, 3600);
+      if (error || !data?.signedUrl) throw new Error("Erro ao gerar link");
+
+      const arrayBuffer = await fetch(data.signedUrl).then(r => r.arrayBuffer());
+
+      const { renderAsync } = await import("docx-preview");
+      const html2canvas = (await import("html2canvas")).default;
+      const { jsPDF } = await import("jspdf");
+
+      const A4_W_PX = 794;   // A4 a 96 dpi
+      const A4_H_PX = 1123;
+
+      // Overlay branco: mostra "Gerando PDF" enquanto o frame está visível
+      const overlay = document.createElement("div");
+      overlay.id = OVERLAY_ID;
+      overlay.style.cssText =
+        "position:fixed;inset:0;background:rgba(255,255,255,0.92);z-index:100000;" +
+        "display:flex;align-items:center;justify-content:center;font-size:15px;color:#444;";
+      overlay.textContent = "Gerando PDF… aguarde";
+      document.body.appendChild(overlay);
+
+      // Frame = janela A4 exata no topo da tela, usada como viewport de captura
+      const frame = document.createElement("div");
+      frame.id = FRAME_ID;
+      frame.style.cssText =
+        `position:fixed;top:0;left:0;width:${A4_W_PX}px;height:${A4_H_PX}px;` +
+        "overflow:hidden;background:white;z-index:99999;";
+      document.body.appendChild(frame);
+
+      // Inner = conteúdo completo (rolado via transform a cada página)
+      const inner = document.createElement("div");
+      inner.style.cssText = "position:absolute;top:0;left:0;width:100%;background:white;";
+      frame.appendChild(inner);
+
+      await renderAsync(arrayBuffer, inner, undefined, {
+        injectStyleSheet: true,
+        renderHeaders: true,
+        renderFooters: true,
+        ignoreWidth: false,
+        ignoreHeight: false,
+      });
+
+      // Aguarda fontes e estilos
+      await new Promise(r => setTimeout(r, 800));
+
+      const totalH = inner.scrollHeight;
+      const numPages = Math.ceil(totalH / A4_H_PX);
+
+      const pdf = new jsPDF({ unit: "mm", format: "a4", orientation: "portrait" });
+
+      for (let i = 0; i < numPages; i++) {
+        if (i > 0) pdf.addPage();
+
+        // Desloca o conteúdo para mostrar a página i no frame
+        inner.style.transform = `translateY(-${i * A4_H_PX}px)`;
+        await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+
+        const canvas = await html2canvas(frame, {
+          scale: 2,
+          useCORS: true,
+          allowTaint: true,
+          backgroundColor: "#ffffff",
+          logging: false,
+          ignoreElements: (el: Element) => el === overlay,
+        });
+
+        pdf.addImage(canvas.toDataURL("image/jpeg", 0.92), "JPEG", 0, 0, 210, 297);
+      }
+
+      cleanup();
+      const fileName = c.nome?.replace(/\.docx$/i, ".pdf") ?? "contrato.pdf";
+      pdf.save(fileName);
+      toast.success("PDF gerado com sucesso!");
+    } catch (e: unknown) {
+      cleanup();
+      toast.error("Erro ao gerar PDF: " + (e instanceof Error ? e.message : "erro"));
+    }
   }
 
   // Mapa auxiliar
@@ -486,15 +583,30 @@ export default function ContratosPage() {
                         <TableCell className="text-right">
                           <div className="flex justify-end gap-1">
                             {c.storage_path && (
-                              <Button variant="ghost" size="icon" title="Baixar DOCX" onClick={() => downloadContract(c)}>
-                                <Download className="h-4 w-4" />
-                              </Button>
+                              <DropdownMenu>
+                                <DropdownMenuTrigger asChild>
+                                  <Button variant="ghost" size="icon" title="Baixar">
+                                    <Download className="h-4 w-4" />
+                                  </Button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="end">
+                                  <DropdownMenuItem onClick={() => downloadContract(c)}>
+                                    <Download className="h-4 w-4 mr-2" /> Baixar DOCX
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem onClick={() => downloadAsPDF(c)}>
+                                    <FileType className="h-4 w-4 mr-2 text-red-500" /> Baixar PDF
+                                  </DropdownMenuItem>
+                                </DropdownMenuContent>
+                              </DropdownMenu>
                             )}
                             {c.autentique_url && (
                               <Button variant="ghost" size="icon" title="Abrir no Autentique" onClick={() => window.open(c.autentique_url!, "_blank")}>
                                 <ExternalLink className="h-4 w-4" />
                               </Button>
                             )}
+                            <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive" title="Excluir contrato" onClick={() => setDeleteContract(c)}>
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
                           </div>
                         </TableCell>
                       </TableRow>
@@ -642,23 +754,57 @@ export default function ContratosPage() {
           <div className="space-y-4 py-2">
             <div className="space-y-1.5">
               <Label>Locação</Label>
-              <Select value={gerarRentalId} onValueChange={setGerarRentalId}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Selecione uma locação ativa" />
-                </SelectTrigger>
-                <SelectContent>
-                  {activeRentals.map(r => {
-                    const moto = motoMap[r.motoId];
-                    const client = clientMap[r.clienteId];
-                    const num = !r.numero ? r.id.slice(0, 6) : r.createdAt >= "2026-06-01" ? `L${String(r.numero).padStart(5, "0")}MV` : `#${String(r.numero).padStart(5, "0")}`;
-                    return (
-                      <SelectItem key={r.id} value={r.id}>
-                        {num} — {client?.nome || "?"} · {moto?.placa || "?"}
-                      </SelectItem>
-                    );
-                  })}
-                </SelectContent>
-              </Select>
+              <Popover open={rentalComboOpen} onOpenChange={setRentalComboOpen}>
+                <PopoverTrigger asChild>
+                  <Button
+                    variant="outline"
+                    role="combobox"
+                    aria-expanded={rentalComboOpen}
+                    className="w-full justify-between font-normal"
+                  >
+                    {gerarRentalId
+                      ? (() => {
+                          const r = activeRentals.find(r => r.id === gerarRentalId);
+                          if (!r) return "Selecione uma locação ativa";
+                          const moto = motoMap[r.motoId];
+                          const client = clientMap[r.clienteId];
+                          const num = !r.numero ? r.id.slice(0, 6) : r.createdAt >= "2026-06-01" ? `L${String(r.numero).padStart(5, "0")}MV` : `#${String(r.numero).padStart(5, "0")}`;
+                          return `${num} — ${client?.nome || "?"} · ${moto?.placa || "?"}`;
+                        })()
+                      : "Selecione uma locação ativa"}
+                    <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
+                  <Command>
+                    <CommandInput placeholder="Buscar por nome ou placa…" />
+                    <CommandList>
+                      <CommandEmpty>Nenhuma locação encontrada</CommandEmpty>
+                      <CommandGroup>
+                        {activeRentals.map(r => {
+                          const moto = motoMap[r.motoId];
+                          const client = clientMap[r.clienteId];
+                          const num = !r.numero ? r.id.slice(0, 6) : r.createdAt >= "2026-06-01" ? `L${String(r.numero).padStart(5, "0")}MV` : `#${String(r.numero).padStart(5, "0")}`;
+                          const label = `${num} — ${client?.nome || "?"} · ${moto?.placa || "?"}`;
+                          return (
+                            <CommandItem
+                              key={r.id}
+                              value={label}
+                              onSelect={() => {
+                                setGerarRentalId(r.id);
+                                setRentalComboOpen(false);
+                              }}
+                            >
+                              <Check className={`mr-2 h-4 w-4 ${gerarRentalId === r.id ? "opacity-100" : "opacity-0"}`} />
+                              {label}
+                            </CommandItem>
+                          );
+                        })}
+                      </CommandGroup>
+                    </CommandList>
+                  </Command>
+                </PopoverContent>
+              </Popover>
             </div>
             <div className="space-y-1.5">
               <Label>Template</Label>
@@ -700,6 +846,29 @@ export default function ContratosPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* ── CONFIRM: Excluir contrato ── */}
+      <AlertDialog open={!!deleteContract} onOpenChange={open => !open && setDeleteContract(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Excluir contrato?</AlertDialogTitle>
+            <AlertDialogDescription>
+              O contrato <strong>{deleteContract?.nome}</strong> será removido permanentemente,
+              incluindo o arquivo armazenado. Esta ação não pode ser desfeita.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deletingContract}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => deleteContract && handleDeleteContract(deleteContract)}
+              disabled={deletingContract}
+              className="bg-destructive hover:bg-destructive/90"
+            >
+              {deletingContract ? "Excluindo…" : "Excluir"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* ── CONFIRM: Excluir template ── */}
       <AlertDialog open={!!deleteTmpl} onOpenChange={open => !open && setDeleteTmpl(null)}>

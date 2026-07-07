@@ -8,6 +8,7 @@ const corsHeaders = {
 };
 
 const ASAAS_BASE = "https://www.asaas.com/api/v3";
+const MS_DAY = 86400000;
 
 async function asaas(path: string, method: string, apiKey: string, body?: object) {
   const res = await fetch(`${ASAAS_BASE}${path}`, {
@@ -31,6 +32,33 @@ function resolveApiKey(companyConfig: Record<string, any> | null): string {
   const key = companyConfig?.apiKey || Deno.env.get("ASAAS_API_KEY");
   if (!key) throw new Error("Chave de API Asaas não configurada para esta empresa");
   return key;
+}
+
+// Espelha src/lib/cobranca-week-stats.ts (computeSemanaNumero/computeSemanaPeriodo) para o
+// boleto mostrar a mesma referência de semana ("Semana NN: DD/MM até DD/MM") que o app.
+function computeSemanaNumero(dataInicio: string, cobrancaPrePaga: boolean, dueStr: string): number | null {
+  const ini = new Date(dataInicio + "T12:00:00");
+  const due = new Date(dueStr + "T12:00:00");
+  const diffDays = Math.round((due.getTime() - ini.getTime()) / MS_DAY);
+  if (diffDays < 0) return null;
+  if (cobrancaPrePaga || diffDays < 6) return Math.round(diffDays / 7) + 1;
+  return Math.max(1, Math.round(diffDays / 7));
+}
+
+function computeSemanaPeriodo(dataInicio: string, cobrancaPrePaga: boolean, dueStr: string): { inicio: Date; fim: Date } {
+  const ini = new Date(dataInicio + "T12:00:00");
+  const due = new Date(dueStr + "T12:00:00");
+  let inicioPeriodo: Date;
+  if (cobrancaPrePaga) {
+    inicioPeriodo = new Date(due);
+  } else {
+    inicioPeriodo = new Date(due);
+    inicioPeriodo.setDate(inicioPeriodo.getDate() - 6);
+    if (inicioPeriodo < ini) inicioPeriodo = new Date(due);
+  }
+  const fimPeriodo = new Date(inicioPeriodo);
+  fimPeriodo.setDate(fimPeriodo.getDate() + 6);
+  return { inicio: inicioPeriodo, fim: fimPeriodo };
 }
 
 serve(async (req) => {
@@ -95,67 +123,94 @@ serve(async (req) => {
       });
     }
 
-    // 2b. Busca a locação e a config Asaas da empresa
-    let multaAtraso = 0;
-    let multaDiaria = 0;
-    let jurosAtrasoMes = 0;
+    // 2b. Busca a locação e as configs da empresa
     let contratoNumero: number | null = null;
+    let rentalDataInicio: string | null = null;
+    let rentalCobrancaPrePaga = false;
+    let rentalMultaAtraso: number | null = null;
+    let rentalJurosAtrasoMes: number | null = null;
     let asaasConfig: Record<string, any> | null = null;
 
     if (entry.rental_id) {
       const { data: rental } = await supabase
         .from("rentals")
-        .select("multa_atraso, juros_atraso_mes, numero")
+        .select("multa_atraso, juros_atraso_mes, numero, data_inicio, cobranca_pre_paga")
         .eq("id", entry.rental_id)
         .single();
       if (rental) {
         contratoNumero = rental.numero != null ? Number(rental.numero) : null;
-        // Fallback para valores do contrato (usado se a empresa não configurou o Asaas)
-        multaAtraso = Number(rental.multa_atraso) || 0;
-        jurosAtrasoMes = Number(rental.juros_atraso_mes) || 0;
+        rentalDataInicio = rental.data_inicio || null;
+        rentalCobrancaPrePaga = !!rental.cobranca_pre_paga;
+        rentalMultaAtraso = rental.multa_atraso != null ? Number(rental.multa_atraso) : null;
+        rentalJurosAtrasoMes = rental.juros_atraso_mes != null ? Number(rental.juros_atraso_mes) : null;
       }
     }
 
-    // Config da empresa sobrepõe os valores do contrato
+    // cobranca_config é a MESMA config usada no resto do app para calcular o "valor
+    // atualizado" de uma cobrança em atraso (Financeiro/Cobranças). asaas_config só traz
+    // ajustes específicos do Asaas (chave de API, notificações, desconto) — nunca deve
+    // sobrescrever multa/juros, senão o boleto diverge do que o app mostra pro usuário.
+    let cobrancaConfig: Record<string, any> = { multaAtraso: 15, jurosDiario: 7, jurosMes: 0 };
     if (entry.company_id) {
       const { data: company } = await supabase
         .from("companies")
-        .select("asaas_config")
+        .select("asaas_config, cobranca_config")
         .eq("id", entry.company_id)
         .single();
-      if (company?.asaas_config) {
-        asaasConfig = company.asaas_config;
-        if (asaasConfig.enabled) {
-          multaAtraso = Number(asaasConfig.multaAtraso) || 0;
-          multaDiaria = Number(asaasConfig.multaDiaria) || 0;
-          jurosAtrasoMes = Number(asaasConfig.jurosAtrasoMes) || 0;
-        }
-      }
+      if (company?.asaas_config) asaasConfig = company.asaas_config;
+      if (company?.cobranca_config) cobrancaConfig = company.cobranca_config;
     }
+
+    const multaAtraso = rentalMultaAtraso ?? (Number(cobrancaConfig.multaAtraso) || 0);
+    const jurosAtrasoMes = rentalJurosAtrasoMes ?? (Number(cobrancaConfig.jurosMes) || 0);
+    const jurosDiario = Number(cobrancaConfig.jurosDiario) || 0;
 
     const apiKey = resolveApiKey(asaasConfig);
 
     // Placa: vem direto da entrada (já resolvida) ou fallback da moto
     const placa = entry.placa || null;
 
-    // Referência da semana: caução = semana anterior (já usada); aluguel = próxima semana (a ser usada)
     const normCat = (s: string) => s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
     const categoria = normCat(entry.categoria || "");
     const isCaucao = categoria === "caucao";
     const isAluguelOuCaucao = categoria === "aluguel" || isCaucao;
-    const dueRef = new Date((entry.data_prevista || entry.data) + "T00:00:00");
+
+    // Rótulo legível da categoria, para o boleto deixar claro do que se trata quando
+    // não é aluguel/caução (que já têm a referência de semana explicando sozinha).
+    const CATEGORIA_LABELS: Record<string, string> = {
+      aluguel: "Aluguel",
+      caucao: "Caução",
+      manutencao_receita: "Manutenção",
+      multa_transito_receita: "Multa de Trânsito",
+      venda_moto: "Venda de Moto",
+      pecas_receita: "Peças",
+      juros_atraso: "Juros por Atraso",
+      outro_receita: "Outros",
+    };
+    const categoriaLabel = CATEGORIA_LABELS[categoria] || null;
+
+    const dueStr = entry.data_prevista || entry.data;
     const fmt = (d: Date) =>
       `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}`;
-    const MS_DAY = 86400000;
-    const weekStart = isCaucao
-      ? new Date(dueRef.getTime() - 7 * MS_DAY)
-      : new Date(dueRef.getTime());
-    const weekEnd = isCaucao
-      ? new Date(dueRef.getTime() - 1 * MS_DAY)
-      : new Date(dueRef.getTime() + 6 * MS_DAY);
-    const semanaRef = isAluguelOuCaucao
-      ? `${fmt(weekStart)} a ${fmt(weekEnd)}/${weekEnd.getFullYear()}`
-      : null;
+
+    // Referência de período: usa a MESMA numeração de semana do app (computeSemanaNumero)
+    // quando a locação tem data de início — senão cai no formato genérico "Ref. DD/MM a DD/MM".
+    let semanaRef: string | null = null;
+    if (isAluguelOuCaucao && rentalDataInicio) {
+      const refDate = isCaucao ? new Date(new Date(dueStr + "T12:00:00").getTime() - 7 * MS_DAY) : new Date(dueStr + "T12:00:00");
+      const refDateStr = `${refDate.getFullYear()}-${String(refDate.getMonth() + 1).padStart(2, "0")}-${String(refDate.getDate()).padStart(2, "0")}`;
+      const num = computeSemanaNumero(rentalDataInicio, rentalCobrancaPrePaga, refDateStr);
+      if (num != null) {
+        const { inicio, fim } = computeSemanaPeriodo(rentalDataInicio, rentalCobrancaPrePaga, refDateStr);
+        semanaRef = `Semana ${String(num).padStart(2, "0")}: ${fmt(inicio)} até ${fmt(fim)}`;
+      }
+    }
+    if (!semanaRef && isAluguelOuCaucao) {
+      const dueRef = new Date(dueStr + "T00:00:00");
+      const weekStart = isCaucao ? new Date(dueRef.getTime() - 7 * MS_DAY) : new Date(dueRef.getTime());
+      const weekEnd = isCaucao ? new Date(dueRef.getTime() - 1 * MS_DAY) : new Date(dueRef.getTime() + 6 * MS_DAY);
+      semanaRef = `Ref. ${fmt(weekStart)} a ${fmt(weekEnd)}/${weekEnd.getFullYear()}`;
+    }
 
     // 3. Cria ou reutiliza cliente no Asaas
     let asaasCustomerId = client.asaas_customer_id;
@@ -184,38 +239,70 @@ serve(async (req) => {
     }
 
     // 4. Cria o boleto no Asaas
-    const dueDate = entry.data_prevista || entry.data;
     const today = new Date().toISOString().split("T")[0];
-    // Asaas não aceita vencimento no passado; usa amanhã como mínimo
-    const effectiveDueDate = dueDate >= today ? dueDate : today;
+    // Asaas não aceita vencimento no passado; usa hoje como mínimo
+    const effectiveDueDate = dueStr >= today ? dueStr : today;
+
+    // Dias de atraso reais (vencimento verdadeiro, não o "hoje" usado só pra satisfazer o
+    // Asaas) — usados pra decidir se o valor já deve vir com os acréscimos embutidos.
+    const dueDateObj = new Date(dueStr + "T00:00:00");
+    const todayObj = new Date(today + "T00:00:00");
+    const diasAtrasoReal = Math.max(0, Math.floor((todayObj.getTime() - dueDateObj.getTime()) / MS_DAY));
+
+    // Parcelamento (individual ou acordo de dívida agrupada): o texto do lançamento já é
+    // autoexplicativo ("Acordo de parcelamento de dívida – Parcela 2/6"), então o boleto
+    // usa ele em vez do resumo genérico Contrato/Placa/Semana.
+    const isParcelamento = entry.subcategoria === "Parcelamento";
+
+    const baseValor = Number(entry.valor) || 0;
+
+    // Multa/juros de atraso só se aplicam a aluguel e caução — mesma regra usada em todo o
+    // resto do app (ex: calcValorAtualizado no Financeiro/Cobranças). O app usa multa fixa +
+    // juros diário (R$/dia) + juros mensal (%) — o Asaas não tem um equivalente nativo para
+    // "R$/dia fixo" via fine/interest, então quando a cobrança JÁ está em atraso na hora de
+    // gerar o boleto, o valor com os acréscimos é calculado aqui (mesma fórmula do app) e
+    // embutido direto no valor do boleto, em vez de deixar o Asaas recalcular sozinho (o que
+    // gerava um total divergente do mostrado no app). Para cobranças ainda não vencidas,
+    // mantém o comportamento anterior: valor base + fine/interest como acréscimo futuro.
+    let valorBoleto = baseValor;
+    let fineToApply: { value: number; type: string } | null = null;
+    let interestToApply: { value: number } | null = null;
+
+    if (isAluguelOuCaucao) {
+      if (diasAtrasoReal > 0) {
+        const jurosCalc = baseValor * (jurosAtrasoMes / 100 / 30) * diasAtrasoReal + jurosDiario * diasAtrasoReal + multaAtraso;
+        valorBoleto = Math.round((baseValor + jurosCalc) * 100) / 100;
+      } else {
+        if (multaAtraso > 0 && multaAtraso < baseValor) {
+          fineToApply = { value: multaAtraso, type: "FIXED" };
+        }
+        if (jurosAtrasoMes > 0) {
+          interestToApply = { value: jurosAtrasoMes };
+        }
+      }
+    }
 
     const paymentPayload: Record<string, unknown> = {
       customer: asaasCustomerId,
       billingType: "BOLETO",
-      value: Number(entry.valor),
+      value: valorBoleto,
       dueDate: effectiveDueDate,
-      description: [
-        contratoNumero != null ? `Contrato #${contratoNumero}` : null,
-        placa ? `Placa ${placa}` : null,
-        semanaRef ? `Ref. ${semanaRef}` : null,
-      ].filter(Boolean).join(" · "),
+      description: isParcelamento
+        ? [entry.descricao, contratoNumero != null ? `Contrato #${contratoNumero}` : null]
+            .filter(Boolean).join(" · ")
+        : [
+            categoriaLabel,
+            contratoNumero != null ? `Contrato #${contratoNumero}` : null,
+            placa ? `Placa ${placa}` : null,
+            semanaRef,
+            entry.observacao ? String(entry.observacao) : null,
+          ].filter(Boolean).join(" · "),
       externalReference: entry.id,
       postalService: false,
     };
 
-    // Multa por atraso (fixa) + multa diária acumulada até hoje se o boleto já venceu
-    const dueDateObj = new Date(effectiveDueDate + "T00:00:00");
-    const todayObj = new Date(today + "T00:00:00");
-    const diasAtraso = Math.max(0, Math.floor((todayObj.getTime() - dueDateObj.getTime()) / 86400000));
-    const multaTotal = multaAtraso + multaDiaria * diasAtraso;
-    if (multaTotal > 0) {
-      paymentPayload.fine = { value: multaTotal, type: "FIXED" };
-    }
-
-    // Juros mensais
-    if (jurosAtrasoMes > 0) {
-      paymentPayload.interest = { value: jurosAtrasoMes };
-    }
+    if (fineToApply) paymentPayload.fine = fineToApply;
+    if (interestToApply) paymentPayload.interest = interestToApply;
 
     // Desconto para pagamento antecipado (somente via config da empresa)
     if (asaasConfig?.enabled && asaasConfig?.descontoEnabled && asaasConfig?.descontoValor > 0) {

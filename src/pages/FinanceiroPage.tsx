@@ -1720,6 +1720,36 @@ export default function FinanceiroPage() {
   const [editScopeTarget, setEditScopeTarget] = useState<FinancialEntry | null>(null);
   const [asaasLoadingId, setAsaasLoadingId] = useState<string | null>(null);
 
+  // Busca o link de um boleto já gerado (asaasPaymentId existe mas a URL ainda não foi
+  // salva localmente — o Asaas às vezes não retorna a URL na hora da criação). Sem isso,
+  // uma entrada nesse estado ficava travada para sempre (botão desabilitado "Aguardando URL...").
+  const fetchAndOpenBoletoLink = async (entry: FinancialEntry) => {
+    const url = entry.asaasInvoiceUrl || entry.asaasBoletoUrl;
+    if (url) { window.open(url, "_blank"); return; }
+    if (!entry.asaasPaymentId) return;
+    setAsaasLoadingId(entry.id);
+    try {
+      await supabase.functions.invoke("asaas-sync-status");
+      const { data } = await supabase.from("financial_entries")
+        .select("asaas_boleto_url, asaas_invoice_url")
+        .eq("id", entry.id)
+        .single();
+      const freshUrl = data?.asaas_invoice_url || data?.asaas_boleto_url;
+      if (freshUrl) {
+        window.open(freshUrl, "_blank");
+        setEntries(prev => prev.map(e => e.id === entry.id
+          ? { ...e, asaasBoletoUrl: data?.asaas_boleto_url || null, asaasInvoiceUrl: data?.asaas_invoice_url || null }
+          : e));
+      } else {
+        toast.error("Link do boleto ainda não disponível no Asaas");
+      }
+    } catch {
+      toast.error("Erro ao buscar link do boleto");
+    } finally {
+      setAsaasLoadingId(null);
+    }
+  };
+
   const handleGenerateAsaasBoleto = async (entry: FinancialEntry) => {
     setAsaasLoadingId(entry.id);
     try {
@@ -1735,7 +1765,16 @@ export default function FinanceiroPage() {
         } catch { /* ignore */ }
         throw new Error(msg);
       }
-      if (data?.error) throw new Error(data.error);
+      if (data?.error) {
+        if (data.paymentId) {
+          // Boleto já existia (cache local desatualizado) — busca o link em vez de só avisar.
+          const updated = entries.map(e => e.id === entry.id ? { ...e, asaasPaymentId: data.paymentId } : e);
+          await persist(updated);
+          await fetchAndOpenBoletoLink({ ...entry, asaasPaymentId: data.paymentId });
+          return;
+        }
+        throw new Error(data.error);
+      }
 
       const updated = entries.map(e =>
         e.id === entry.id
@@ -1743,6 +1782,8 @@ export default function FinanceiroPage() {
           : e
       );
       await persistWithFeedback(updated, { successMessage: "Boleto gerado e enviado para o cliente!" });
+      const url = data.invoiceUrl || data.boletoUrl;
+      if (url) window.open(url, "_blank");
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Erro ao gerar boleto";
       toast.error(msg);
@@ -2486,6 +2527,28 @@ export default function FinanceiroPage() {
       }
     });
 
+    // ── Desfazendo confirmação: remove juros/multa e saldo restante derivados ──
+    // Um pagamento confirmado pode ter gerado um lançamento de juros_atraso (atraso)
+    // ou um "Saldo restante" (pagamento parcial), ambos com fixedOriginId apontando
+    // para este lançamento. Ao desfazer, esses derivados perdem sentido — se ainda
+    // não foram pagos, são excluídos junto; se já foram pagos separadamente, ficam
+    // como estão (representam dinheiro que de fato entrou).
+    let removedRelatedUnpaid = 0;
+    let keptRelatedPaid = 0;
+    let entriesAfterUndo = updatedEntries;
+    if (confirmToggleEntry.pago) {
+      const related = updatedEntries.filter(e =>
+        e.fixedOriginId === confirmToggleEntry.id &&
+        (e.categoria === "juros_atraso" || (e.observacao || "").startsWith("Saldo devedor de pagamento parcial"))
+      );
+      const relatedUnpaidIds = new Set(related.filter(e => !e.pago).map(e => e.id));
+      removedRelatedUnpaid = relatedUnpaidIds.size;
+      keptRelatedPaid = related.length - removedRelatedUnpaid;
+      if (relatedUnpaidIds.size > 0) {
+        entriesAfterUndo = updatedEntries.filter(e => !relatedUnpaidIds.has(e.id));
+      }
+    }
+
     // ── Cria entrada pendente de juros/multa quando houver saldo devedor ────
     // Remove stale juros_atraso desta locação/período (tentativas anteriores que falharam).
     // Filtra tanto por dataPrevista === payDate (caso mais comum) quanto por fixedOriginId
@@ -2494,10 +2557,10 @@ export default function FinanceiroPage() {
     // Limpeza de juros obsoletos só faz sentido ao confirmar um aluguel —
     // nunca ao confirmar um juros_atraso direto, pois o payDate coincidiria
     // com o dataPrevista de outros juros legítimos do mesmo cliente.
-    const entriesWithoutStaleFee = isRentalPayment ? updatedEntries.filter(e =>
+    const entriesWithoutStaleFee = isRentalPayment ? entriesAfterUndo.filter(e =>
       !(e.categoria === "juros_atraso" && e.rentalId === confirmToggleEntry.rentalId && !e.pago &&
         (e.dataPrevista === payDate || e.fixedOriginId === aluguelOrigemId))
-    ) : updatedEntries;
+    ) : entriesAfterUndo;
     // Deduplicar por id para evitar conflito de upsert
     const deduped = entriesWithoutStaleFee.filter((e, i, arr) => arr.findIndex(x => x.id === e.id) === i);
     let finalEntries = deduped;
@@ -2598,8 +2661,18 @@ export default function FinanceiroPage() {
       toast.error(`Erro ao salvar pagamento: ${detail}`);
     });
 
+    if (confirmToggleEntry.pago) {
+      if (removedRelatedUnpaid > 0) {
+        toast.success(`Confirmação desfeita — ${removedRelatedUnpaid} lançamento${removedRelatedUnpaid !== 1 ? "s" : ""} de juros/saldo restante também removido${removedRelatedUnpaid !== 1 ? "s" : ""}.`);
+      }
+      if (keptRelatedPaid > 0) {
+        toast.info(`${keptRelatedPaid} lançamento${keptRelatedPaid !== 1 ? "s" : ""} derivado${keptRelatedPaid !== 1 ? "s" : ""} já pago${keptRelatedPaid !== 1 ? "s" : ""} foi${keptRelatedPaid !== 1 ? "ram" : ""} mantido${keptRelatedPaid !== 1 ? "s" : ""}.`);
+      }
+    }
+
     // Auto-sync taxas Asaas em background ao confirmar recebimento
-    if (!confirmToggleEntry.pago && confirmToggleEntry.asaasPaymentId && currentCompanyId) {
+    const jaRecebidoNoAsaas = ["RECEIVED", "CONFIRMED", "RECEIVED_IN_CASH"].includes(confirmToggleEntry.asaasStatus || "");
+    if (!confirmToggleEntry.pago && confirmToggleEntry.asaasPaymentId && currentCompanyId && jaRecebidoNoAsaas) {
       supabase.functions.invoke("asaas-sync-fees", {
         body: { asaasPaymentId: confirmToggleEntry.asaasPaymentId, entryId: confirmToggleEntry.id, companyId: currentCompanyId },
       }).then(({ data }) => {
@@ -2611,6 +2684,32 @@ export default function FinanceiroPage() {
         if (fees > 0) parts.push(`${fees} taxa(s) Asaas`);
         if ((data?.registeredJuros ?? 0) > 0) parts.push(`juros/multa`);
         if (parts.length > 0) toast.success(`Registrado automaticamente: ${parts.join(" e ")}.`);
+      }).catch(() => {});
+    } else if (!confirmToggleEntry.pago && confirmToggleEntry.asaasPaymentId && currentCompanyId && !jaRecebidoNoAsaas) {
+      // Confirmado manualmente (dinheiro/PIX fora do Asaas) mas o boleto ainda está
+      // pendente/vencido lá — marca como recebido em dinheiro para não ficar "vencido"
+      // na plataforma Asaas.
+      const entryId = confirmToggleEntry.id;
+      supabase.functions.invoke("asaas-receive-in-cash", {
+        body: { asaasPaymentId: confirmToggleEntry.asaasPaymentId, paymentDate: payDate, value: finalValor, companyId: currentCompanyId },
+      }).then(async ({ data, error }) => {
+        if (error || data?.error) { console.error("[asaas-receive-in-cash]", data?.error || error); return; }
+        const updated = loadFinancial().map(e => e.id === entryId ? { ...e, asaasStatus: data.status || "RECEIVED_IN_CASH" } : e);
+        setEntries(updated);
+        await saveFinancial(updated);
+      }).catch(() => {});
+    } else if (confirmToggleEntry.pago && confirmToggleEntry.asaasPaymentId && currentCompanyId && confirmToggleEntry.asaasStatus === "RECEIVED_IN_CASH") {
+      // Desfazendo uma confirmação que tinha marcado o boleto como recebido em dinheiro
+      // no Asaas — desfaz lá também, senão o boleto continua constando como pago (e com
+      // o valor daquela confirmação) na plataforma mesmo depois de desfeito no app.
+      const entryId = confirmToggleEntry.id;
+      supabase.functions.invoke("asaas-receive-in-cash", {
+        body: { asaasPaymentId: confirmToggleEntry.asaasPaymentId, companyId: currentCompanyId, action: "undo" },
+      }).then(async ({ data, error }) => {
+        if (error || data?.error) { console.error("[asaas-receive-in-cash undo]", data?.error || error); return; }
+        const updated = loadFinancial().map(e => e.id === entryId ? { ...e, asaasStatus: data.status || null } : e);
+        setEntries(updated);
+        await saveFinancial(updated);
       }).catch(() => {});
     }
 
@@ -4192,13 +4291,13 @@ export default function FinanceiroPage() {
                               <TooltipProvider delayDuration={200}>
                                 <Tooltip>
                                   <TooltipTrigger asChild>
-                                    {asaasLoadingId === e.id || e.asaasPaymentId ? (
+                                    {asaasLoadingId === e.id ? (
                                       <span className="text-muted-foreground/50">
                                         <Loader2 className="h-4 w-4 animate-spin" />
                                       </span>
                                     ) : (
                                       <button
-                                        onClick={() => handleGenerateAsaasBoleto(e)}
+                                        onClick={() => e.asaasPaymentId ? fetchAndOpenBoletoLink(e) : handleGenerateAsaasBoleto(e)}
                                         disabled={asaasLoadingId === e.id}
                                         className="text-muted-foreground/40 hover:text-blue-500 transition-colors"
                                       >
@@ -4207,7 +4306,7 @@ export default function FinanceiroPage() {
                                     )}
                                   </TooltipTrigger>
                                   <TooltipContent side="top" className="text-xs">
-                                    {e.asaasPaymentId ? "Aguardando URL..." : "Gerar boleto"}
+                                    {e.asaasPaymentId ? "Buscar link do boleto" : "Gerar boleto"}
                                   </TooltipContent>
                                 </Tooltip>
                               </TooltipProvider>
@@ -4272,10 +4371,11 @@ export default function FinanceiroPage() {
                                     : <><Banknote className="h-3.5 w-3.5" /> Gerar Boleto</>}
                                 </DropdownMenuItem>
                               )}
-                              {/* Asaas: ver boleto já gerado */}
-                              {e.asaasPaymentId && (e.asaasInvoiceUrl || e.asaasBoletoUrl) && (
+                              {/* Asaas: ver boleto já gerado (busca o link se ainda não tiver sido salvo) */}
+                              {e.asaasPaymentId && (
                                 <DropdownMenuItem
-                                  onClick={() => window.open(e.asaasInvoiceUrl || e.asaasBoletoUrl!, "_blank")}
+                                  onClick={() => fetchAndOpenBoletoLink(e)}
+                                  disabled={asaasLoadingId === e.id}
                                   className="gap-2 text-xs"
                                 >
                                   <ExternalLink className="h-3.5 w-3.5" /> Ver Boleto
@@ -5443,6 +5543,29 @@ export default function FinanceiroPage() {
                 <p className="text-sm text-muted-foreground">
                   Ao desfazer, o lançamento voltará para o status pendente com a data prevista.
                 </p>
+                {(() => {
+                  const related = entries.filter(e =>
+                    e.fixedOriginId === confirmToggleEntry.id &&
+                    (e.categoria === "juros_atraso" || (e.observacao || "").startsWith("Saldo devedor de pagamento parcial"))
+                  );
+                  const unpaid = related.filter(e => !e.pago);
+                  const paid = related.filter(e => e.pago);
+                  if (related.length === 0) return null;
+                  return (
+                    <div className="rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-950/20 dark:border-amber-700 p-3 text-xs space-y-1">
+                      {unpaid.length > 0 && (
+                        <p className="text-amber-700 dark:text-amber-400">
+                          {unpaid.length} lançamento{unpaid.length !== 1 ? "s" : ""} de juros/saldo restante gerado{unpaid.length !== 1 ? "s" : ""} por essa confirmação também será{unpaid.length !== 1 ? "ão" : ""} excluído{unpaid.length !== 1 ? "s" : ""}.
+                        </p>
+                      )}
+                      {paid.length > 0 && (
+                        <p className="text-muted-foreground">
+                          {paid.length} lançamento{paid.length !== 1 ? "s" : ""} derivado{paid.length !== 1 ? "s" : ""} já foi{paid.length !== 1 ? "ram" : ""} pago{paid.length !== 1 ? "s" : ""} e será{paid.length !== 1 ? "ão" : ""} mantido{paid.length !== 1 ? "s" : ""}.
+                        </p>
+                      )}
+                    </div>
+                  );
+                })()}
                 <div className="rounded-lg border bg-muted/30 p-3 space-y-1.5 text-sm">
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">Descrição:</span>
@@ -5660,7 +5783,7 @@ export default function FinanceiroPage() {
                 {/* Observação */}
                 <div className="py-1.5 border-b border-border/20">
                   <span className="text-sm text-muted-foreground block mb-1">Observação</span>
-                  <p className="text-sm font-medium text-foreground/80 italic">{de.observacao || "—"}</p>
+                  <p className="text-sm font-medium text-foreground/80 italic whitespace-pre-line">{de.observacao || "—"}</p>
                 </div>
 
                 {/* Tags */}

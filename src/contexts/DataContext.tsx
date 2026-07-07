@@ -67,6 +67,11 @@ async function fetchAll(cid: string) {
   }
 
   return {
+    // Marca de qual empresa este resultado veio — checada antes de aplicar ao cache
+    // global (ver efeito abaixo). Sem isso, uma troca rápida de empresa (ou duas abas
+    // com empresas diferentes) pode fazer uma resposta antiga "atrasada" de uma
+    // empresa sobrescrever o cache depois que o usuário já trocou para outra.
+    cid,
     motos: (motos.data || []).map(dbToMoto),
     clients: (clients.data || []).map(dbToClient),
     rentals: (rentals.data || []).map(dbToRental),
@@ -316,12 +321,33 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     }
   }, [authReady, cid, saveFn, bulkInsertFn]);
 
-  // Set cache in an effect (NOT during render — that triggers React warning + cascading re-renders)
+  // Set cache in an effect (NOT during render — that triggers React warning + cascading re-renders).
+  // Confere que o resultado é da empresa ATUALMENTE ativa antes de aplicar — protege contra
+  // uma resposta de fetch atrasada de uma troca de empresa anterior (ou de outra aba) vazar
+  // dados financeiros de uma locadora para o cache global enquanto outra está selecionada.
   useEffect(() => {
-    if (authReady && data) {
+    if (authReady && data && data.cid === cid) {
       setDataCache(data);
     }
-  }, [authReady, data]);
+  }, [authReady, data, cid]);
+
+  // ─── Refetch ao voltar para a aba ────────────────────────────
+  // Garante que ao alternar entre abas (ou confirmar um pagamento em outra
+  // parte do app e voltar), os dados sejam atualizados sem precisar de F5.
+  useEffect(() => {
+    if (!authReady || !cid) return;
+    let hiddenAt = 0;
+    const onVisibility = () => {
+      if (document.visibilityState === "hidden") {
+        hiddenAt = Date.now();
+      } else if (document.visibilityState === "visible" && hiddenAt > 0) {
+        hiddenAt = 0;
+        if (activeSavesRef.current === 0) qc.invalidateQueries({ queryKey });
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => document.removeEventListener("visibilitychange", onVisibility);
+  }, [authReady, cid, qc, queryKey]);
 
   // ─── Realtime subscriptions ───────────────────────────────────
   // Listen for changes made by OTHER users on the same company and refresh

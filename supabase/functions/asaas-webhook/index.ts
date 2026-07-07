@@ -415,13 +415,20 @@ serve(async (req) => {
       return new Response(JSON.stringify({ ok: true, notFound: true }), { status: 200 });
     }
 
+    // RECEIVED_IN_CASH é o status usado quando o próprio app marca manualmente um
+    // pagamento como recebido fora do Asaas (dinheiro/PIX direto). Nesse caso o app já
+    // é a fonte da verdade para pago/data/conta e já tratou juros/multa no momento da
+    // confirmação — o webhook só deve atualizar o asaas_status, sem sobrescrever nada
+    // nem gerar taxa/juros duplicados.
+    const isReceivedInCash = payment.status === "RECEIVED_IN_CASH";
+
     const updates: Record<string, unknown> = { asaas_status: newStatus };
     if (payment.bankSlipUrl) updates.asaas_boleto_url = payment.bankSlipUrl;
     if (payment.invoiceUrl) updates.asaas_invoice_url = payment.invoiceUrl;
 
     const paymentDate = payment.creditDate || payment.paymentDate || payment.confirmedDate || new Date().toISOString().split("T")[0];
 
-    if (newStatus === "RECEIVED") {
+    if (newStatus === "RECEIVED" && !isReceivedInCash) {
       updates.pago = true;
       updates.data = paymentDate;
       updates.conta = "Asaas";
@@ -430,7 +437,7 @@ serve(async (req) => {
     await supabase.from("financial_entries").update(updates).eq("id", entry.id);
     console.log(`[asaas-webhook] ${entry.id} → asaas_status=${newStatus}`);
 
-    if (newStatus === "RECEIVED" && entry.company_id) {
+    if (newStatus === "RECEIVED" && !isReceivedInCash && entry.company_id) {
       const { data: company } = await supabase
         .from("companies")
         .select("asaas_config")

@@ -140,6 +140,7 @@ export interface Fine {
   clienteId: string | null;
   rentalId: string | null;
   dataMulta: string; // ISO date
+  dataVencimento: string | null;
   dataNotificacao: string | null;
   valor: number;
   descricao: string;
@@ -148,6 +149,10 @@ export interface Fine {
   origem?: "manual" | "detran";
   autoInfracao?: string | null;
   codigoInfracao?: string | null;
+  numeroRenainf?: string | null;
+  orgaoCompetencia?: string | null;
+  horaInfracao?: string | null;
+  localInfracao?: string | null;
 }
 
 export interface MaintenanceItem {

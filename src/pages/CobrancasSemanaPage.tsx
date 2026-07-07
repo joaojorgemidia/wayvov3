@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useMemo, useState, useEffect } from "react";
 import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -14,13 +14,14 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   CalendarDays, AlertTriangle, CheckCircle2, User, Bike,
   Wallet, ShieldCheck, Receipt, Coins, Tag, MessageCircle,
   Bell, Wrench, MoreHorizontal, Phone, Copy,
   CalendarClock, ExternalLink, Search, TrendingUp,
   LayoutDashboard, SlidersHorizontal, Check, ChevronDown, ChevronUp, AlertCircle,
-  Scissors, X, Pencil, Loader2, FileText,
+  Scissors, X, Pencil, Loader2, FileText, Handshake,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useDataCacheSnapshot } from "@/lib/data-cache";
@@ -33,6 +34,7 @@ import { buildCobrancaEvent, computeSemanaPeriodo, computeSemanaNumero } from "@
 import { useCompany } from "@/contexts/CompanyContext";
 import { DEFAULT_COBRANCA_CONFIG } from "@/lib/companies";
 import { buildWhatsAppUrl } from "@/lib/whatsapp";
+import { localToday } from "@/lib/utils";
 
 const SNOOZE_LS_KEY = "wayvo-cobranca-snooze";
 function readSnoozeMap(): Record<string, string> {
@@ -187,7 +189,9 @@ export default function CobrancasSemanaPage() {
   const { activeCompany } = useCompany();
   const cache = useDataCacheSnapshot();
   const [confirmItem, setConfirmItem] = useState<RowItem | null>(null);
-  const [form, setForm] = useState({ data: "", valor: "", conta: "", observacao: "" });
+  const [confirmValor, setConfirmValor] = useState("");
+  const [confirmValorEditado, setConfirmValorEditado] = useState(false);
+  const [form, setForm] = useState({ data: localToday(), conta: "", observacao: "" });
   const [msgState, setMsgState] = useState<{ item: RowItem; type: MsgType } | null>(null);
   const [payConfirmPopup, setPayConfirmPopup] = useState<{
     mensagem: string; placa: string; cliente: string; telefone: string;
@@ -210,6 +214,10 @@ export default function CobrancasSemanaPage() {
   const [parcelandoEntry, setParcelandoEntry] = useState<FinancialEntry | null>(null);
   const [parcelForm, setParcelForm] = useState({ entrada: "", primeiraData: new Date().toISOString().slice(0, 10), nParcelas: "2" });
   const [parcelSalvando, setParcelSalvando] = useState(false);
+  const [parcelandoGrupo, setParcelandoGrupo] = useState<FinancialEntry[] | null>(null);
+  const [parcelGrupoSelected, setParcelGrupoSelected] = useState<Set<string>>(new Set());
+  const [parcelGrupoForm, setParcelGrupoForm] = useState({ entrada: "", valorParcela: "", primeiraData: "" });
+  const [parcelGrupoSalvando, setParcelGrupoSalvando] = useState(false);
   const [debtFuturasOpen, setDebtFuturasOpen] = useState(false);
   const [debtPagasOpen, setDebtPagasOpen] = useState(false);
   const [reschedClientItems, setReschedClientItems] = useState<RowItem[]>([]);
@@ -225,7 +233,17 @@ export default function CobrancasSemanaPage() {
       const { data, error } = await supabase.functions.invoke("asaas-charge", {
         body: { entryId: e.id },
       });
-      if (error || data?.error) throw new Error(data?.error || error?.message || "Erro ao gerar boleto");
+      if (error || data?.error) {
+        if (data?.paymentId) {
+          // Boleto já existia (cache local desatualizado) — busca o link em vez de só avisar.
+          const next = loadFinancial().map(f => f.id === e.id ? { ...f, asaasPaymentId: data.paymentId } : f);
+          await saveFinancial(next);
+          setGeneratingBoleto(null);
+          await fetchAndOpenBoleto({ ...e, asaasPaymentId: data.paymentId });
+          return;
+        }
+        throw new Error(data?.error || error?.message || "Erro ao gerar boleto");
+      }
       const next = loadFinancial().map(f =>
         f.id === e.id
           ? { ...f, asaasPaymentId: data.paymentId, asaasStatus: data.status, asaasBoletoUrl: data.boletoUrl || null, asaasInvoiceUrl: data.invoiceUrl || null }
@@ -314,6 +332,8 @@ export default function CobrancasSemanaPage() {
 
   const calcValorAtualizado = (e: FinancialEntry, days: number) => {
     if (days <= 0 || e.categoria === "juros_atraso") return e.valor || 0;
+    // encargos de atraso só se aplicam a aluguel e caução
+    if (!["aluguel", "caucao"].includes((e.categoria || "").toLowerCase())) return e.valor || 0;
     const cfg = activeCompany?.cobrancaConfig ?? { multaAtraso: 15, jurosDiario: 7, jurosMes: 0 };
     const rental = e.rentalId ? rentalsById.get(e.rentalId) : undefined;
     const valor = e.valor || 0;
@@ -322,6 +342,12 @@ export default function CobrancasSemanaPage() {
     const jurosDiario = cfg.jurosDiario ?? 0;
     const juros = valor * (jurosMes / 100 / 30) * days + jurosDiario * days + multa;
     return parseFloat((valor + juros).toFixed(2));
+  };
+
+  const valorAtualDe = (e: FinancialEntry) => {
+    const due = parseISO(e.dataPrevista || e.data);
+    const days = due ? diffDays(today, due) : 0;
+    return calcValorAtualizado(e, days);
   };
 
   const pending: RowItem[] = useMemo(() => {
@@ -354,13 +380,14 @@ export default function CobrancasSemanaPage() {
       const dueISO = snoozeDate || e.dataPrevista || e.data;
       const due = parseISO(dueISO);
       const daysLate = due ? diffDays(today, due) : 0;
-      let cli = e.clienteId || null;
+      const cli = e.clienteId || null;
+      if (!cli) continue; // só mostra entradas com locatário explicitamente vinculado
       let moto = e.motoId || null;
-      if (!cli && e.rentalId) {
+      if (!moto && e.rentalId) {
         const r = rentalsById.get(e.rentalId);
-        if (r) { cli = r.clienteId; moto = moto || r.motoId; }
+        if (r) { moto = r.motoId; }
       }
-      const cliente = cli ? clientsById.get(cli) : null;
+      const cliente = clientsById.get(cli);
       const m = moto ? motosById.get(moto) : null;
       const st = e.rentalId ? rentalStats.get(e.rentalId) : null;
       // Atraso real: sempre baseado na data original (e.data), independente de adiamento
@@ -402,7 +429,6 @@ export default function CobrancasSemanaPage() {
       .filter(e => {
         if (e.tipo !== "receita" || e.ignorada) return false;
         if (e.clienteId === debtDetailClientId) return true;
-        if (!e.clienteId && e.rentalId && clientRentalIds.has(e.rentalId)) return true;
         return false;
       })
       .sort((a, b) => {
@@ -439,8 +465,7 @@ export default function CobrancasSemanaPage() {
   );
   const todayItems = weekItems.filter(i => i.daysLate === 0);
   const upcomingItems = weekItems.filter(i => i.daysLate < 0);
-  const firstDayOfCurrentMonth = new Date(today.getFullYear(), today.getMonth(), 1);
-  const overdueItems = pending.filter((i) => i.originalDaysLate > 0 && i.due && i.due >= firstDayOfCurrentMonth);
+  const overdueItems = pending.filter((i) => i.originalDaysLate > 0);
   // Vencidos e não ocultados → aparecem por padrão
   const overdueVisible = overdueItems.filter((i) => i.daysLate > 0 && !isSnoozed(i.entry.id));
   // Adiados: data de ação no futuro OU snooze ativo
@@ -619,18 +644,36 @@ export default function CobrancasSemanaPage() {
   // ── Ações ──────────────────────────────────────────────────────────
   const openConfirm = (item: RowItem) => {
     setConfirmItem(item);
+    setConfirmValor(item.entry.valor
+      ? item.entry.valor.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+      : "");
+    setConfirmValorEditado(false);
     setForm({
-      data: new Date().toISOString().slice(0, 10),
-      valor: String(item.entry.valor ?? ""),
+      data: localToday(),
       conta: item.entry.conta || "",
       observacao: "",
     });
   };
 
+  // Recalcula confirmValor com multa+juros quando a data de pagamento muda
+  useEffect(() => {
+    if (!confirmItem || confirmValorEditado) return;
+    const entry = confirmItem.entry;
+    if (entry.categoria === "juros_atraso") return;
+    const dueDateStr = entry.dataPrevista || entry.data;
+    if (!dueDateStr || !form.data) return;
+    const due = new Date(dueDateStr + "T00:00:00");
+    const pay = new Date(form.data + "T00:00:00");
+    const daysOverdue = Math.max(0, Math.floor((pay.getTime() - due.getTime()) / 86400000));
+    const total = calcValorAtualizado(entry, daysOverdue);
+    setConfirmValor(total.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form.data, confirmItem, confirmValorEditado]);
+
   const handleConfirm = async () => {
     if (!confirmItem) return;
     const item = confirmItem;
-    const valor = parseFloat(form.valor.replace(",", ".")) || item.entry.valor || 0;
+    const valor = parseFloat(confirmValor.replace(/\./g, "").replace(",", ".")) || item.entry.valor || 0;
     try {
       const payDate = form.data || new Date().toISOString().slice(0, 10);
       const next = loadFinancial().map((e) =>
@@ -647,7 +690,63 @@ export default function CobrancasSemanaPage() {
             }
           : e,
       );
-      await saveFinancial(next);
+
+      // ── Pagamento parcial: cria saldo devedor quando recebido < valor base ──
+      // Só não se aplica quando o bloco de multa/juros de atraso (aluguel) já
+      // representa a diferença — senão contaria o mesmo shortfall duas vezes.
+      let temAcrescimo = false;
+      if (item.entry.categoria === "aluguel" && item.entry.rentalId) {
+        const dueDateStrAcr = item.entry.dataPrevista || item.entry.data;
+        const rentalAcr = rentalsById.get(item.entry.rentalId);
+        if (dueDateStrAcr && rentalAcr) {
+          const dueAcr = new Date(dueDateStrAcr + "T00:00:00");
+          const payAcr = new Date(payDate + "T00:00:00");
+          const daysOverdueAcr = Math.max(0, Math.floor((payAcr.getTime() - dueAcr.getTime()) / 86400000));
+          if (daysOverdueAcr > 0) {
+            const cfgAcr = activeCompany?.cobrancaConfig ?? DEFAULT_COBRANCA_CONFIG;
+            const multaAcr = rentalAcr.multaAtraso ?? cfgAcr.multaAtraso ?? 0;
+            const jurosMesAcr = rentalAcr.jurosAtrasoMes ?? cfgAcr.jurosMes ?? 0;
+            const jurosCalcAcr = (item.entry.valor || 0) * (jurosMesAcr / 100 / 30) * daysOverdueAcr;
+            const jurosDiarioAcr = (cfgAcr.jurosDiario ?? 0) * daysOverdueAcr;
+            temAcrescimo = multaAcr > 0 || (jurosCalcAcr + jurosDiarioAcr) > 0;
+          }
+        }
+      }
+      const restanteBase = !temAcrescimo && item.entry.tipo === "receita" && valor < (item.entry.valor || 0) - 0.009
+        ? Math.round(((item.entry.valor || 0) - valor) * 100) / 100
+        : 0;
+      let finalEntries = next;
+      if (restanteBase > 0) {
+        const dueDateStrRest = item.entry.dataPrevista || item.entry.data;
+        const dueFmt = dueDateStrRest ? new Date(dueDateStrRest + "T12:00:00").toLocaleDateString("pt-BR") : "?";
+        const restanteEntry: FinancialEntry = {
+          id: crypto.randomUUID(),
+          tipo: "receita",
+          categoria: item.entry.categoria,
+          subcategoria: item.entry.subcategoria,
+          descricao: `Saldo restante — ${item.entry.descricao}`,
+          valor: restanteBase,
+          data: payDate,
+          dataPrevista: payDate,
+          pago: false,
+          conta: "",
+          natureza: item.entry.natureza || "operacional",
+          tags: item.entry.tags || [],
+          rentalId: item.entry.rentalId ?? null,
+          clienteId: item.entry.clienteId ?? null,
+          clienteNome: item.entry.clienteNome || "",
+          motoId: item.entry.motoId ?? null,
+          placa: item.entry.placa || "",
+          observacao: `Saldo devedor de pagamento parcial em ${new Date(payDate + "T12:00:00").toLocaleDateString("pt-BR")} (ref. venc. ${dueFmt})`,
+          fixedOriginId: item.entry.id,
+          recorrente: false,
+          despesaFixa: false,
+          ignorada: false,
+          createdAt: new Date().toISOString(),
+        };
+        finalEntries = [...next, restanteEntry];
+      }
+      await saveFinancial(finalEntries);
       // Fecha o dialog e mostra o toast imediatamente, antes de montar o popup
       setConfirmItem(null);
       toast.success("Pagamento confirmado!");
@@ -665,6 +764,17 @@ export default function CobrancasSemanaPage() {
             toast.success(`Registrado automaticamente: ${parts.join(" e ")}.`);
           }
         }).catch(() => {});
+      } else if (item.entry.asaasPaymentId && item.entry.asaasStatus !== "RECEIVED" && activeCompany?.id) {
+        // Confirmado manualmente (dinheiro/PIX fora do Asaas) mas o boleto ainda está
+        // pendente/vencido lá — marca como recebido em dinheiro para não ficar "vencido"
+        // na plataforma Asaas.
+        supabase.functions.invoke("asaas-receive-in-cash", {
+          body: { asaasPaymentId: item.entry.asaasPaymentId, paymentDate: payDate, value: valor, companyId: activeCompany.id },
+        }).then(async ({ data, error }) => {
+          if (error || data?.error) { console.error("[asaas-receive-in-cash]", data?.error || error); return; }
+          const updated = loadFinancial().map(e => e.id === item.entry.id ? { ...e, asaasStatus: data.status || "RECEIVED_IN_CASH" } : e);
+          await saveFinancial(updated);
+        }).catch(() => {});
       }
 
       // Popup de confirmação para enviar ao cliente
@@ -678,11 +788,16 @@ export default function CobrancasSemanaPage() {
         `R$ ${n.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
       const valorOriginal = Number(item.entry.valor) || 0;
       const valorFmt = fmtBRL(valor);
-      const dueDate = item.due || (item.entry.data ? new Date(item.entry.data + "T12:00:00") : null);
+      // dataPrevista original para semana e cálculo de atraso (não usa snooze date)
+      const originalDueDateStr = item.entry.dataPrevista || item.entry.data;
+      const originalDueDate = originalDueDateStr
+        ? new Date(originalDueDateStr + "T12:00:00")
+        : null;
+      const dueDate = item.due || originalDueDate;
       const fmtDM = (d: Date) => `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}`;
-      let vencimento = dueDate ? dueDate.toLocaleDateString("pt-BR") : dataPagamento;
-      if (dueDate && rental) {
-        const { inicio, fim } = computeSemanaPeriodo(rental, dueDate);
+      let vencimento = originalDueDate ? originalDueDate.toLocaleDateString("pt-BR") : dataPagamento;
+      if (originalDueDate && rental) {
+        const { inicio, fim } = computeSemanaPeriodo(rental, originalDueDate);
         if (inicio && fim) {
           const ini = new Date(inicio + "T12:00:00");
           const f = new Date(fim + "T12:00:00");
@@ -693,15 +808,16 @@ export default function CobrancasSemanaPage() {
         ? `${item.placa}${item.modelo ? ` — ${item.modelo}` : ""}`
         : "—";
 
-      // Semana paga (relativa ao início da locação) — usa helper unificado
+      // Semana paga (relativa ao início da locação) — usa dataPrevista original
       let semanaTxt = "";
-      const semanaNum = computeSemanaNumero(rental ?? null, dueDate);
+      const semanaNum = computeSemanaNumero(rental ?? null, originalDueDate);
       if (semanaNum != null) semanaTxt = `${semanaNum}ª semana`;
 
-      // Juros / multa por atraso (regra padrão do sistema quando não configurado na locação)
+      // Juros / multa por atraso — só para aluguel e caução, usando dataPrevista original
       const cobrancaCfg = activeCompany?.cobrancaConfig ?? { multaAtraso: 15, jurosDiario: 7, jurosMes: 0 };
       const payTs = new Date(payDate + "T12:00:00").getTime();
-      const diasAtraso = dueDate ? Math.max(0, Math.floor((payTs - dueDate.getTime()) / 86400000)) : 0;
+      const aplicaEncargos = ["aluguel", "caucao"].includes((item.catKey || "").toLowerCase());
+      const diasAtraso = aplicaEncargos && originalDueDate ? Math.max(0, Math.floor((payTs - originalDueDate.getTime()) / 86400000)) : 0;
       const multa = diasAtraso > 0 ? (rental?.multaAtraso || cobrancaCfg.multaAtraso) : 0;
       const jurosMes = rental?.jurosAtrasoMes || cobrancaCfg.jurosMes || 0;
       const jurosCalc = diasAtraso > 0 ? valorOriginal * (jurosMes / 100 / 30) * diasAtraso : 0;
@@ -711,6 +827,14 @@ export default function CobrancasSemanaPage() {
       const jurosPago = Math.min(excedente, jurosDevido);
       const jurosPendente = Math.max(0, jurosDevido - jurosPago);
 
+      // Bloco de atraso inline para aparecer diretamente na mensagem (sem token oculto)
+      const blocoAtrasoLinhas: string[] = [];
+      if (diasAtraso > 0 && jurosDevido > 0) {
+        if (multa > 0) blocoAtrasoLinhas.push(`Multa: ${fmtBRL(multa)}`);
+        if (jurosCalc + jurosDiarioFix > 0) blocoAtrasoLinhas.push(`Juros (${diasAtraso}d): ${fmtBRL(jurosCalc + jurosDiarioFix)}`);
+      }
+      const blocoAtrasoTxt = blocoAtrasoLinhas.length > 0 ? "\n" + blocoAtrasoLinhas.join("\n") : "";
+
       const linhas = [
         `✅ *PAGAMENTO CONFIRMADO*`,
         ``,
@@ -719,7 +843,7 @@ export default function CobrancasSemanaPage() {
         `VENCIMENTO: ${vencimento}${semanaTxt ? ` (${semanaTxt})` : ""}`,
         ``,
         `💰 *VALORES*`,
-        `${descricao}: ${fmtBRL(valorOriginal)}{BLOCO_ATRASO}`,
+        `${descricao}: ${fmtBRL(valorOriginal)}${blocoAtrasoTxt}`,
         `─────────────`,
         `Total pago: *${valorFmt}*`,
         ``,
@@ -894,7 +1018,10 @@ export default function CobrancasSemanaPage() {
     };
     const newEntries: FinancialEntry[] = [];
     if (entrada > 0) {
-      newEntries.push({ ...base, id: crypto.randomUUID(), descricao: `${descBase} – Entrada (Parcela 0/${nParcelas})`, valor: entrada, data: primeiraData, dataPrevista: primeiraData });
+      // Entrada é cobrada hoje — "Data da 1ª parcela" é só da 1ª parcela semanal,
+      // para não cair no mesmo dia da entrada.
+      const hoje = localToday();
+      newEntries.push({ ...base, id: crypto.randomUUID(), descricao: `${descBase} – Entrada (Parcela 0/${nParcelas})`, valor: entrada, data: hoje, dataPrevista: hoje });
     }
     for (let i = 0; i < nParcelas; i++) {
       const data = addDaysLocal(primeiraData, i * 7);
@@ -904,12 +1031,78 @@ export default function CobrancasSemanaPage() {
     setParcelSalvando(true);
     try {
       const all = loadFinancial();
-      const updated = all.map(e => e.id === parcelandoEntry.id ? { ...e, ignorada: true } : e);
-      await saveFinancial([...updated, ...newEntries]);
+      const remaining = all.filter(e => e.id !== parcelandoEntry.id);
+      await saveFinancial([...remaining, ...newEntries]);
       toast.success(`Parcelamento criado: ${nParcelas} parcela${nParcelas !== 1 ? "s" : ""}${entrada > 0 ? " + entrada" : ""}`);
       setParcelandoEntry(null);
     } finally {
       setParcelSalvando(false);
+    }
+  };
+
+  const criarParcelamentoGrupo = async () => {
+    if (!parcelandoGrupo) return;
+    const selecionadas = parcelandoGrupo.filter(e => parcelGrupoSelected.has(e.id));
+    if (selecionadas.length === 0) { toast.error("Selecione ao menos uma cobrança"); return; }
+    const valorTotal = selecionadas.reduce((s, e) => s + valorAtualDe(e), 0);
+    const entrada = parseFloat(parcelGrupoForm.entrada.replace(",", ".")) || 0;
+    const valorParcela = parseFloat(parcelGrupoForm.valorParcela.replace(",", ".")) || 0;
+    const primeiraData = parcelGrupoForm.primeiraData;
+    if (entrada < 0 || entrada >= valorTotal) { toast.error("Valor de entrada inválido"); return; }
+    if (valorParcela <= 0) { toast.error("Informe o valor da parcela"); return; }
+    if (!primeiraData) { toast.error("Informe a data da 1ª parcela"); return; }
+    const restante = parseFloat((valorTotal - entrada).toFixed(2));
+    const nParcelas = Math.max(1, Math.ceil(restante / valorParcela));
+    const addDaysLocal = (iso: string, d: number) => {
+      const dt = new Date(iso + "T00:00:00");
+      dt.setDate(dt.getDate() + d);
+      return dt.toISOString().slice(0, 10);
+    };
+    const fmtDt = (iso: string) => new Date(iso + "T00:00:00").toLocaleDateString("pt-BR");
+    const groupId = crypto.randomUUID();
+    const primeira = selecionadas[0];
+    const resumoItens = selecionadas
+      .map(e => `• ${metaFor(e.categoria || "").label} — ${fmtBRL(valorAtualDe(e))} (venc. ${fmtDt(e.dataPrevista || e.data)})`)
+      .join("\n");
+    const observacaoBase = `Acordo de parcelamento de dívida — substitui ${selecionadas.length} cobrança${selecionadas.length !== 1 ? "s" : ""} em atraso, total ${fmtBRL(valorTotal)}:\n${resumoItens}`;
+    const base = {
+      tipo: "receita" as const,
+      categoria: "outro_receita",
+      subcategoria: "Parcelamento",
+      motoId: null,
+      rentalId: null,
+      clienteId: primeira.clienteId,
+      pago: false,
+      conta: "",
+      natureza: "operacional" as const,
+      placa: "",
+      clienteNome: primeira.clienteNome,
+      recurringGroupId: groupId,
+      tags: ["parcelamento", "acordo-divida"],
+      observacao: observacaoBase,
+    };
+    const newEntries: FinancialEntry[] = [];
+    if (entrada > 0) {
+      // Entrada é cobrada no dia do acordo (hoje) — "Data da 1ª parcela" é só da 1ª
+      // parcela semanal, para não cair no mesmo dia da entrada.
+      const hoje = localToday();
+      newEntries.push({ ...base, id: crypto.randomUUID(), descricao: "Acordo de parcelamento de dívida – Entrada", valor: entrada, data: hoje, dataPrevista: hoje });
+    }
+    for (let i = 0; i < nParcelas; i++) {
+      const data = addDaysLocal(primeiraData, i * 7);
+      const v = i === nParcelas - 1 ? parseFloat((restante - valorParcela * (nParcelas - 1)).toFixed(2)) : valorParcela;
+      newEntries.push({ ...base, id: crypto.randomUUID(), descricao: `Acordo de parcelamento de dívida – Parcela ${i + 1}/${nParcelas}`, valor: v, data, dataPrevista: data });
+    }
+    setParcelGrupoSalvando(true);
+    try {
+      const all = loadFinancial();
+      const idsSel = new Set(selecionadas.map(e => e.id));
+      const remaining = all.filter(e => !idsSel.has(e.id));
+      await saveFinancial([...remaining, ...newEntries]);
+      toast.success(`Acordo criado: ${nParcelas} parcela${nParcelas !== 1 ? "s" : ""}${entrada > 0 ? " + entrada" : ""}`);
+      setParcelandoGrupo(null);
+    } finally {
+      setParcelGrupoSalvando(false);
     }
   };
 
@@ -1582,7 +1775,8 @@ export default function CobrancasSemanaPage() {
               {filteredToday.map((it) => (
                 <RowItemView key={it.entry.id} item={it} onConfirm={openConfirm} onMessage={handleMessage}
                   onWhatsApp={openWhatsApp} onCopy={copyText} onRescheduleQuick={quickReschedule}
-                  onRescheduleCustom={openReschedule} onIgnore={handleIgnore} />
+                  onRescheduleCustom={openReschedule} onIgnore={handleIgnore}
+                  onClientClick={(id) => setDebtDetailClientId(id)} />
               ))}
             </div>
           </div>
@@ -1622,7 +1816,8 @@ export default function CobrancasSemanaPage() {
                     {g.items.map((it) => (
                       <RowItemView key={it.entry.id} item={it} onConfirm={openConfirm} onMessage={handleMessage}
                         onWhatsApp={openWhatsApp} onCopy={copyText} onRescheduleQuick={quickReschedule}
-                        onRescheduleCustom={openReschedule} onIgnore={handleIgnore} />
+                        onRescheduleCustom={openReschedule} onIgnore={handleIgnore}
+                        onClientClick={(id) => setDebtDetailClientId(id)} />
                     ))}
                   </div>
                 </div>
@@ -1689,88 +1884,217 @@ export default function CobrancasSemanaPage() {
         />
       )}
 
-      {/* ── Dialog: Confirmar pagamento ───────────────────────────── */}
+      {/* ── Dialog: Confirmar pagamento (mesmo fluxo do Financeiro) ── */}
       <Dialog open={!!confirmItem} onOpenChange={(o) => !o && setConfirmItem(null)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Confirmar pagamento</DialogTitle>
-            <DialogDescription>
-              {confirmItem ? `${confirmItem.clienteNome} • ${metaFor(confirmItem.catKey).label}` : ""}
-            </DialogDescription>
+        <DialogContent className="sm:max-w-md flex flex-col max-h-[90vh]">
+          <DialogHeader className="shrink-0">
+            <DialogTitle>
+              {confirmItem?.entry.tipo === "receita" ? "✅ Confirmar Recebimento" : "✅ Confirmar Pagamento"}
+            </DialogTitle>
           </DialogHeader>
           {confirmItem && (
-            <div className="space-y-3">
-              <div className="rounded-md border bg-muted/40 p-3 text-sm space-y-1">
-                <div><strong>Descrição:</strong> {confirmItem.entry.descricao || metaFor(confirmItem.catKey).label}</div>
-                {confirmItem.placa && (
-                  <div><strong>Moto:</strong> {confirmItem.placa} {confirmItem.modelo ? `• ${confirmItem.modelo}` : ""}</div>
-                )}
-                {confirmItem.due && (
-                  <div>
-                    <strong>Vencimento:</strong>{" "}
-                    {confirmItem.due.toLocaleDateString("pt-BR")}
-                    {confirmItem.daysLate > 0 && (
-                      <span className="text-destructive font-semibold"> ({confirmItem.daysLate}d em atraso)</span>
-                    )}
+            <div className="space-y-4 overflow-y-auto flex-1 pr-1">
+              {/* Resumo */}
+              <div className="rounded-md border bg-muted/30 p-3 space-y-1.5 text-sm">
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Descrição:</span>
+                  <span className="font-medium text-right max-w-[60%]">{confirmItem.entry.descricao || metaFor(confirmItem.catKey).label}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Categoria:</span>
+                  <span className="font-medium">{metaFor(confirmItem.catKey).label}</span>
+                </div>
+                {confirmItem.clienteNome && (
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Locatário:</span>
+                    <span className="font-medium">{confirmItem.clienteNome}</span>
                   </div>
                 )}
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1">
-                  <Label>Data do pagamento</Label>
+                {confirmItem.placa && (
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Moto:</span>
+                    <span className="font-medium">{confirmItem.placa}{confirmItem.modelo ? ` · ${confirmItem.modelo}` : ""}</span>
+                  </div>
+                )}
+                {confirmItem.due && (
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Vencimento:</span>
+                    <span className={`font-medium ${confirmItem.daysLate > 0 ? "text-destructive" : ""}`}>
+                      {confirmItem.due.toLocaleDateString("pt-BR")}
+                      {confirmItem.daysLate > 0 && ` (${confirmItem.daysLate}d atraso)`}
+                    </span>
+                  </div>
+                )}
+                {form.data && (
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Pagamento:</span>
+                    <span className="font-medium">{new Date(form.data + "T12:00:00").toLocaleDateString("pt-BR")}</span>
+                  </div>
+                )}
+                {/* Referência de semana/período */}
+                {(() => {
+                  const src = (confirmItem.entry.descricao || "") + " " + (confirmItem.entry.observacao || "");
+                  const m = src.match(/((?:Semana|Quinzena|M[eê]s)\s+\d+:\s*\d{2}\/\d{2}\s+até\s+\d{2}\/\d{2})/i);
+                  if (!m) return null;
+                  return (
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Referência:</span>
+                      <span className="font-semibold text-primary">{m[1]}</span>
+                    </div>
+                  );
+                })()}
+                {/* Valor editável */}
+                <div className="flex justify-between items-center pt-1 border-t mt-1">
+                  <span className="text-muted-foreground">Valor:</span>
                   <Input
-                    type="date"
-                    value={form.data}
-                    onChange={(e) => setForm((p) => ({ ...p, data: e.target.value }))}
-                  />
-                </div>
-                <div className="space-y-1">
-                  <Label>Valor recebido</Label>
-                  <Input
+                    className="w-32 h-8 text-right text-sm font-semibold"
+                    style={{ color: confirmItem.entry.tipo === "receita" ? "#16a34a" : "#dc2626" }}
                     inputMode="decimal"
-                    value={form.valor}
-                    onChange={(e) => setForm((p) => ({ ...p, valor: e.target.value }))}
+                    value={confirmValor}
+                    onChange={e => { setConfirmValor(e.target.value); setConfirmValorEditado(true); }}
                   />
                 </div>
               </div>
+
+              {/* Bloco de multa/juros — mesmo do Financeiro */}
+              {confirmItem.entry.categoria === "aluguel" && form.data && (() => {
+                const dueDateStr = confirmItem.entry.dataPrevista || confirmItem.entry.data;
+                if (!dueDateStr) return null;
+                const due = new Date(dueDateStr + "T00:00:00");
+                const pay = new Date(form.data + "T00:00:00");
+                const daysOverdue = Math.max(0, Math.floor((pay.getTime() - due.getTime()) / 86400000));
+                if (daysOverdue === 0) return null;
+                const cfg = activeCompany?.cobrancaConfig ?? { multaAtraso: 0, jurosDiario: 0, jurosMes: 0 };
+                const rental = confirmItem.entry.rentalId ? rentalsById.get(confirmItem.entry.rentalId) : undefined;
+                const multa = rental?.multaAtraso ?? cfg.multaAtraso ?? 0;
+                const jurosMes = rental?.jurosAtrasoMes ?? cfg.jurosMes ?? 0;
+                const jurosDiario = cfg.jurosDiario ?? 0;
+                const base = confirmItem.entry.valor || 0;
+                const jurosPct = base * (jurosMes / 100 / 30) * daysOverdue;
+                const jurosDiarioTotal = jurosDiario * daysOverdue;
+                const totalJuros = jurosPct + jurosDiarioTotal;
+                const total = base + multa + totalJuros;
+                const temAcrescimo = multa > 0 || totalJuros > 0;
+                if (!temAcrescimo) return null;
+                const fmt = (v: number) => `R$ ${v.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+                return (
+                  <div className="rounded-md border border-orange-200 bg-orange-50 dark:bg-orange-950/20 p-3 text-sm space-y-1.5">
+                    <p className="font-semibold text-orange-700 dark:text-orange-400">⚠️ Pagamento em atraso — {daysOverdue} dia(s)</p>
+                    <div className="space-y-1 text-xs text-muted-foreground">
+                      <div className="flex justify-between"><span>Valor original:</span><span>{fmt(base)}</span></div>
+                      {multa > 0 && <div className="flex justify-between"><span>Multa de atraso:</span><span className="text-orange-600">+ {fmt(multa)}</span></div>}
+                      {jurosDiarioTotal > 0 && <div className="flex justify-between"><span>Juros diários (R$ {jurosDiario}/dia × {daysOverdue}d):</span><span className="text-orange-600">+ {fmt(jurosDiarioTotal)}</span></div>}
+                      {jurosPct > 0 && <div className="flex justify-between"><span>Juros {jurosMes}%/mês ({daysOverdue}d):</span><span className="text-orange-600">+ {fmt(jurosPct)}</span></div>}
+                      <div className="flex justify-between font-semibold text-foreground border-t pt-1"><span>Total a receber:</span><span>{fmt(total)}</span></div>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Aviso de pagamento parcial (valor < base, sem relação com juros) —
+                  some quando há atraso/acréscimo, pois o bloco acima já cobre o pendente. */}
+              {!confirmItem.entry.pago && confirmItem.entry.tipo === "receita" && (() => {
+                const rental = confirmItem.entry.categoria === "aluguel" && confirmItem.entry.rentalId
+                  ? rentalsById.get(confirmItem.entry.rentalId)
+                  : undefined;
+                const dueDateStr = confirmItem.entry.dataPrevista || confirmItem.entry.data;
+                if (rental && dueDateStr && form.data) {
+                  const due = new Date(dueDateStr + "T00:00:00");
+                  const pay = new Date(form.data + "T00:00:00");
+                  const daysOverdue = Math.max(0, Math.floor((pay.getTime() - due.getTime()) / 86400000));
+                  if (daysOverdue > 0) {
+                    const cfg = activeCompany?.cobrancaConfig ?? DEFAULT_COBRANCA_CONFIG;
+                    const multa = rental.multaAtraso || cfg.multaAtraso || 0;
+                    const jurosMes = rental.jurosAtrasoMes || cfg.jurosMes || 0;
+                    const jurosCalc = (confirmItem.entry.valor * (jurosMes / 100 / 30)) * daysOverdue;
+                    const jurosDiarioFix = (cfg.jurosDiario || 0) * daysOverdue;
+                    if (multa > 0 || (jurosCalc + jurosDiarioFix) > 0) return null;
+                  }
+                }
+                const entered = parseFloat(confirmValor.replace(/\./g, "").replace(",", "."));
+                const base = confirmItem.entry.valor;
+                if (isNaN(entered) || entered <= 0 || entered >= base - 0.009) return null;
+                const restante = Math.round((base - entered) * 100) / 100;
+                const fmt = (v: number) => `R$ ${v.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+                return (
+                  <div className="rounded-lg border border-blue-300 bg-blue-50 dark:bg-blue-950/20 dark:border-blue-700 p-3 space-y-1.5 text-sm">
+                    <div className="font-semibold text-blue-700 dark:text-blue-400">Pagamento parcial</div>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Valor devido:</span>
+                      <span>{fmt(base)}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Recebido agora:</span>
+                      <span className="font-semibold text-green-600">{fmt(entered)}</span>
+                    </div>
+                    <div className="flex justify-between border-t pt-1.5 font-semibold text-orange-600 dark:text-orange-400">
+                      <span>Valor a ser gerado:</span>
+                      <span>{fmt(restante)}</span>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Data */}
+              <div className="space-y-1.5">
+                <Label className="text-sm">Data do {confirmItem.entry.tipo === "receita" ? "recebimento" : "pagamento"}</Label>
+                <div className="flex items-center gap-2">
+                  <Button type="button" size="sm"
+                    variant={form.data === localToday() ? "default" : "outline"}
+                    onClick={() => setForm(p => ({ ...p, data: localToday() }))}>
+                    Hoje
+                  </Button>
+                  <Button type="button" size="sm"
+                    variant={form.data === new Date(Date.now() - 86400000).toISOString().split("T")[0] ? "default" : "outline"}
+                    onClick={() => setForm(p => ({ ...p, data: new Date(Date.now() - 86400000).toISOString().split("T")[0] }))}>
+                    Ontem
+                  </Button>
+                  <Input type="date" className="h-9 w-[150px]" value={form.data}
+                    onChange={e => setForm(p => ({ ...p, data: e.target.value }))} />
+                </div>
+              </div>
+
+              {/* Conta — obrigatória */}
               <div className="space-y-1">
-                <Label>Conta</Label>
-                {contas.length > 0 ? (
-                  <Select value={form.conta || undefined} onValueChange={(v) => setForm((p) => ({ ...p, conta: v }))}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Selecione a conta" />
+                <div className="flex items-center gap-3">
+                  <Wallet className={`h-5 w-5 shrink-0 ${!form.conta ? "text-destructive" : "text-muted-foreground"}`} />
+                  <Select value={form.conta || undefined} onValueChange={v => setForm(p => ({ ...p, conta: v }))}>
+                    <SelectTrigger className={`h-9 ${!form.conta ? "border-destructive ring-1 ring-destructive" : ""}`}>
+                      <SelectValue placeholder="Selecione a conta *" />
                     </SelectTrigger>
                     <SelectContent>
-                      {contas.map((c) => (
-                        <SelectItem key={c} value={c}>{c}</SelectItem>
-                      ))}
+                      {contas.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
                     </SelectContent>
                   </Select>
-                ) : (
-                  <Input
-                    value={form.conta}
-                    onChange={(e) => setForm((p) => ({ ...p, conta: e.target.value }))}
-                    placeholder="Caixa / Banco / Pix"
-                  />
+                </div>
+                {!form.conta && (
+                  <p className="text-xs text-destructive pl-8">Obrigatório: selecione a conta para confirmar.</p>
                 )}
               </div>
+
+              {/* Observação */}
               <div className="space-y-1">
-                <Label>Observação (opcional)</Label>
-                <Textarea
-                  rows={2}
-                  value={form.observacao}
-                  onChange={(e) => setForm((p) => ({ ...p, observacao: e.target.value }))}
-                />
+                <Label className="text-sm">Observação (opcional)</Label>
+                <Textarea rows={2} value={form.observacao}
+                  onChange={e => setForm(p => ({ ...p, observacao: e.target.value }))} />
               </div>
             </div>
           )}
-          <DialogFooter>
-            <Button variant="ghost" onClick={() => setConfirmItem(null)}>Cancelar</Button>
-            <Button onClick={handleConfirm}>
-              <CheckCircle2 className="h-4 w-4 mr-1" />
-              Confirmar pagamento
-            </Button>
-          </DialogFooter>
+          {confirmItem && (
+            <div className="flex justify-between pt-3 shrink-0 border-t">
+              <Button variant="outline" onClick={() => setConfirmItem(null)}>Cancelar</Button>
+              <Button
+                style={form.data && form.conta
+                  ? { backgroundColor: confirmItem.entry.tipo === "receita" ? "#16a34a" : "#dc2626", color: "white" }
+                  : undefined}
+                onClick={handleConfirm}
+                disabled={!form.data || !form.conta}
+              >
+                <CheckCircle2 className="h-4 w-4 mr-1" />
+                {confirmItem.entry.tipo === "receita" ? "Receber" : "Pagar"}
+              </Button>
+            </div>
+          )}
         </DialogContent>
       </Dialog>
 
@@ -1822,36 +2146,76 @@ export default function CobrancasSemanaPage() {
 
       {/* ── Dialog: Adiar cobranças em atraso ─────────────────────── */}
       <Dialog open={!!adiarEntry} onOpenChange={(o) => { if (!o) { setAdiarEntry(null); setAdiarAtrasadas([]); } }}>
-        <DialogContent className="sm:max-w-xs">
+        <DialogContent className="max-w-xs w-full">
           <DialogHeader>
-            <DialogTitle>Adiar cobranças</DialogTitle>
+            <DialogTitle className="flex items-center gap-2">
+              <CalendarClock className="h-4 w-4 text-amber-500" />
+              Adiar cobranças
+            </DialogTitle>
+            {adiarEntry?.clienteNome && (
+              <DialogDescription className="font-medium text-foreground/80">
+                {adiarEntry.clienteNome}{adiarEntry.placa ? <span className="ml-1.5 text-xs bg-muted px-1.5 py-0.5 rounded font-mono">{adiarEntry.placa}</span> : ""}
+              </DialogDescription>
+            )}
           </DialogHeader>
+
           <div className="space-y-3">
-            <p className="text-sm text-muted-foreground">
-              As <span className="font-semibold text-foreground">{adiarAtrasadas.length} cobrança{adiarAtrasadas.length !== 1 ? "s" : ""}</span> em atraso passarão a aparecer no dia escolhido junto com as demais cobranças. O valor nas finanças não é alterado.
-            </p>
+            {/* Atalhos rápidos */}
             <div className="flex gap-2">
-              {[7, 14, 30].map(d => {
+              {[1, 2, 4].map(d => {
                 const b = new Date(today.getTime()); b.setDate(b.getDate() + d);
                 const iso = toISODate(b);
+                const label = b.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" });
+                const selected = adiarDate === iso;
                 return (
                   <button key={d} onClick={() => setAdiarDate(iso)}
-                    className={`flex-1 rounded-lg border px-2 py-1.5 text-xs font-medium transition-colors ${adiarDate === iso ? "border-primary bg-primary/10 text-primary" : "border-border hover:bg-muted"}`}>
-                    +{d}d
+                    className={`flex-1 flex flex-col items-center rounded-lg border py-2.5 transition-colors ${selected
+                      ? "border-amber-500 bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-400"
+                      : "border-border hover:bg-muted/60 text-foreground"}`}>
+                    <span className="text-sm font-bold">+{d}d</span>
+                    <span className={`text-[10px] mt-0.5 ${selected ? "text-amber-600 dark:text-amber-500" : "text-muted-foreground"}`}>{label}</span>
                   </button>
                 );
               })}
             </div>
-            <div>
-              <Label className="text-xs">Nova data de vencimento</Label>
-              <Input type="date" value={adiarDate} onChange={e => setAdiarDate(e.target.value)} className="mt-1" />
+
+            {/* Data manual */}
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-muted-foreground whitespace-nowrap">Outra data:</span>
+              <Input type="date" value={adiarDate} onChange={e => setAdiarDate(e.target.value)} className="h-8 text-sm flex-1" />
             </div>
+
+            {/* Lista resumida das cobranças */}
+            {adiarAtrasadas.length > 0 && (
+              <div className="rounded-lg border bg-muted/30 overflow-hidden">
+                <div className="px-3 py-1.5 border-b bg-muted/50">
+                  <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">
+                    {adiarAtrasadas.length} cobrança{adiarAtrasadas.length !== 1 ? "s" : ""} afetada{adiarAtrasadas.length !== 1 ? "s" : ""}
+                  </span>
+                </div>
+                <div className={`divide-y divide-border/50 ${adiarAtrasadas.length > 3 ? "max-h-[90px] overflow-y-auto" : ""}`}>
+                  {adiarAtrasadas.map(e => (
+                    <div key={e.id} className="flex items-center justify-between px-3 py-1.5 gap-2">
+                      <span className="text-xs text-muted-foreground truncate flex-1">{metaFor(e.categoria || "").label}</span>
+                      <span className="text-xs font-semibold text-foreground shrink-0">{fmtBRL(e.valor)}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <p className="text-[11px] text-muted-foreground leading-snug">
+              Valor não alterado — só oculta desta tela até a data escolhida.
+            </p>
           </div>
-          <DialogFooter>
-            <Button variant="ghost" onClick={() => { setAdiarEntry(null); setAdiarAtrasadas([]); }}>Cancelar</Button>
-            <Button disabled={!adiarDate} onClick={applyAdiarAtrasadas}>
-              <CalendarClock className="h-4 w-4 mr-1.5" />
-              Adiar para {adiarDate ? new Date(adiarDate + "T00:00:00").toLocaleDateString("pt-BR") : "..."}
+
+          <DialogFooter className="gap-2">
+            <Button variant="outline" size="sm" onClick={() => { setAdiarEntry(null); setAdiarAtrasadas([]); }}>Cancelar</Button>
+            <Button disabled={!adiarDate} size="sm"
+              className="bg-amber-500 hover:bg-amber-600 text-white flex-1"
+              onClick={applyAdiarAtrasadas}>
+              <CalendarClock className="h-3.5 w-3.5 mr-1.5" />
+              {adiarDate ? `Adiar para ${new Date(adiarDate + "T00:00:00").toLocaleDateString("pt-BR")}` : "Adiar"}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1939,18 +2303,20 @@ export default function CobrancasSemanaPage() {
                 return null;
               }
               // Aluguel regular: descricao primeiro (preserva semana original)
-              const fromDesc = extractFromDesc(e.descricao);
-              if (fromDesc) return fromDesc;
-              // Fallback: calcula pela dataOriginal (preserva semana mesmo após reagendamentos)
-              if (e.categoria === "aluguel" && rental) {
-                const due = parseISO(e.dataOriginal || e.dataPrevista || e.data);
-                return calcLabel(due);
+              if (e.categoria === "aluguel") {
+                const fromDesc = extractFromDesc(e.descricao);
+                if (fromDesc) return fromDesc;
+                // Fallback: calcula pela dataOriginal (preserva semana mesmo após reagendamentos)
+                if (rental) {
+                  const due = parseISO(e.dataOriginal || e.dataPrevista || e.data);
+                  return calcLabel(due);
+                }
               }
               return null;
             };
 
             const getCatLabel = (e: FinancialEntry) => {
-              const base = e.categoria === "aluguel" ? "Aluguel" : e.categoria === "caucao" ? "Caução" : (e.categoria || "—");
+              const base = metaFor(e.categoria || "").label;
               return e.subcategoria && e.subcategoria !== "Parcelamento" ? `${base} · ${e.subcategoria}` : base;
             };
 
@@ -2141,15 +2507,32 @@ export default function CobrancasSemanaPage() {
                         title="Ocultar cobranças em atraso até uma data"
                         onClick={() => {
                           const base = new Date(today.getTime());
-                          base.setDate(base.getDate() + 7);
+                          base.setDate(base.getDate() + 1);
                           setAdiarAtrasadas(atrasadas);
                           setAdiarEntry(atrasadas[0]);
                           setAdiarDate(toISODate(base));
+                          setDebtDetailClientId(null);
                         }}
                         className="flex items-center gap-1.5 text-[11px] font-semibold text-amber-700 dark:text-amber-400 bg-amber-100 dark:bg-amber-950/40 hover:bg-amber-200 dark:hover:bg-amber-900/50 border border-amber-300 dark:border-amber-700 rounded-lg px-2.5 py-1.5 transition-colors"
                       >
                         <CalendarClock className="h-3.5 w-3.5" />
                         Adiar atraso
+                      </button>
+                    )}
+                    {atrasadas.length > 0 && (
+                      <button
+                        title="Parcelar dívida em atraso"
+                        onClick={() => {
+                          setParcelandoGrupo(atrasadas);
+                          setParcelGrupoSelected(new Set(atrasadas.map(e => e.id)));
+                          const amanha = new Date(today.getTime());
+                          amanha.setDate(amanha.getDate() + 1);
+                          setParcelGrupoForm({ entrada: "", valorParcela: "", primeiraData: toISODate(amanha) });
+                        }}
+                        className="flex items-center gap-1.5 text-[11px] font-semibold text-indigo-700 dark:text-indigo-400 bg-indigo-100 dark:bg-indigo-950/40 hover:bg-indigo-200 dark:hover:bg-indigo-900/50 border border-indigo-300 dark:border-indigo-700 rounded-lg px-2.5 py-1.5 transition-colors"
+                      >
+                        <Handshake className="h-3.5 w-3.5" />
+                        Parcelar dívida
                       </button>
                     )}
                   </div>
@@ -2357,7 +2740,7 @@ export default function CobrancasSemanaPage() {
                     <div className="border rounded-md divide-y text-sm max-h-40 overflow-y-auto">
                       {entradaNum > 0 && (
                         <div className="flex justify-between px-3 py-1.5 text-xs bg-muted/20">
-                          <span className="text-muted-foreground">Entrada · {fmtDt(parcelForm.primeiraData)}</span>
+                          <span className="text-muted-foreground">Entrada · {fmtDt(localToday())} (hoje)</span>
                           <span className="font-semibold">{fmtBRL(entradaNum)}</span>
                         </div>
                       )}
@@ -2392,6 +2775,170 @@ export default function CobrancasSemanaPage() {
             </DialogContent>
           </Dialog>
           </>
+        );
+      })()}
+
+      {/* ── Dialog: Parcelar dívida agrupada (acordo) ─────────────── */}
+      {(() => {
+        if (!parcelandoGrupo) return null;
+        const selecionadas = parcelandoGrupo.filter(e => parcelGrupoSelected.has(e.id));
+        const valorTotal = selecionadas.reduce((s, e) => s + valorAtualDe(e), 0);
+        const entradaNum = parseFloat(parcelGrupoForm.entrada.replace(",", ".")) || 0;
+        const valorParcelaNum = parseFloat(parcelGrupoForm.valorParcela.replace(",", ".")) || 0;
+        const restante = Math.max(0, parseFloat((valorTotal - entradaNum).toFixed(2)));
+        const nParcelas = valorParcelaNum > 0 ? Math.max(1, Math.ceil(restante / valorParcelaNum)) : 0;
+        const entradaValida = entradaNum >= 0 && entradaNum < valorTotal;
+        const podeSalvar = selecionadas.length > 0 && entradaValida && valorParcelaNum > 0 && !!parcelGrupoForm.primeiraData && nParcelas > 0 && nParcelas <= 104;
+
+        const addDaysLocal = (iso: string, d: number) => {
+          const dt = new Date(iso + "T00:00:00");
+          dt.setDate(dt.getDate() + d);
+          return dt.toISOString().slice(0, 10);
+        };
+        const fmtDt = (iso: string) => new Date(iso + "T00:00:00").toLocaleDateString("pt-BR");
+
+        const previewParcelas = nParcelas > 0 && nParcelas <= 104 && parcelGrupoForm.primeiraData
+          ? Array.from({ length: nParcelas }, (_, i) => {
+              const data = addDaysLocal(parcelGrupoForm.primeiraData, i * 7);
+              const v = i === nParcelas - 1 ? parseFloat((restante - valorParcelaNum * (nParcelas - 1)).toFixed(2)) : valorParcelaNum;
+              return { index: i + 1, data, v };
+            })
+          : [];
+        const clienteNomeGrupo = parcelandoGrupo[0]?.clienteNome || "";
+
+        return (
+          <Dialog open={!!parcelandoGrupo} onOpenChange={(o) => !o && setParcelandoGrupo(null)}>
+            <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-2">
+                  <Handshake className="h-4 w-4 text-indigo-500" /> Parcelar dívida
+                </DialogTitle>
+              </DialogHeader>
+
+              {/* Lista de cobranças selecionáveis */}
+              <div className="space-y-1.5">
+                <Label className="text-xs text-muted-foreground">Cobranças em atraso incluídas no acordo</Label>
+                <div className="border rounded-md divide-y max-h-48 overflow-y-auto">
+                  {parcelandoGrupo.map(e => {
+                    const checked = parcelGrupoSelected.has(e.id);
+                    return (
+                      <label key={e.id} className="flex items-center gap-2 px-3 py-1.5 text-xs cursor-pointer hover:bg-muted/30">
+                        <Checkbox
+                          checked={checked}
+                          onCheckedChange={(v) => setParcelGrupoSelected(prev => {
+                            const next = new Set(prev);
+                            if (v) next.add(e.id); else next.delete(e.id);
+                            return next;
+                          })}
+                        />
+                        <span className="flex-1 min-w-0">
+                          <span className="block font-medium truncate">{metaFor(e.categoria || "").label}</span>
+                          <span className="text-muted-foreground">venc. {fmtDt(e.dataPrevista || e.data)}</span>
+                        </span>
+                        <span className="font-semibold shrink-0">{fmtBRL(valorAtualDe(e))}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+                <div className="flex justify-between text-sm font-semibold px-1">
+                  <span>Total selecionado</span>
+                  <span className="text-indigo-600 dark:text-indigo-400">{fmtBRL(valorTotal)}</span>
+                </div>
+              </div>
+
+              <div className="space-y-4 py-1">
+                {/* Entrada */}
+                <div className="space-y-1.5">
+                  <Label>Entrada (opcional)</Label>
+                  <Input
+                    type="number"
+                    placeholder="0,00"
+                    value={parcelGrupoForm.entrada}
+                    onChange={e => setParcelGrupoForm(f => ({ ...f, entrada: e.target.value }))}
+                    min={0}
+                    max={Math.max(0, valorTotal - 0.01)}
+                    step={0.01}
+                  />
+                  {entradaNum > 0 && (
+                    <p className="text-xs text-muted-foreground">Restante a parcelar: {fmtBRL(restante)}</p>
+                  )}
+                </div>
+
+                {/* Grade: valor da parcela + data */}
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <Label>Valor da parcela</Label>
+                    <Input
+                      type="number"
+                      placeholder="0,00"
+                      value={parcelGrupoForm.valorParcela}
+                      onChange={e => setParcelGrupoForm(f => ({ ...f, valorParcela: e.target.value }))}
+                      min={0.01}
+                      step={0.01}
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Data da 1ª parcela</Label>
+                    <Input
+                      type="date"
+                      value={parcelGrupoForm.primeiraData}
+                      onChange={e => setParcelGrupoForm(f => ({ ...f, primeiraData: e.target.value }))}
+                    />
+                  </div>
+                </div>
+
+                {nParcelas > 104 && (
+                  <p className="text-xs text-destructive font-medium">Isso resultaria em {nParcelas} parcelas — aumente o valor da parcela.</p>
+                )}
+
+                {/* Preview — pensado para print/screenshot enviar ao cliente: sem rolagem interna, tudo visível de uma vez */}
+                {previewParcelas.length > 0 && (
+                  <div className="rounded-xl border-2 border-indigo-200 dark:border-indigo-800 bg-background overflow-hidden">
+                    <div className="bg-indigo-50 dark:bg-indigo-950/30 px-4 py-3 border-b border-indigo-200 dark:border-indigo-800">
+                      <p className="text-[10px] font-bold uppercase tracking-wide text-indigo-600 dark:text-indigo-400">Acordo de Parcelamento</p>
+                      {clienteNomeGrupo && <p className="text-sm font-bold text-foreground">{clienteNomeGrupo}</p>}
+                      <p className="text-xs text-muted-foreground mt-1">
+                        Dívida total: <span className="font-semibold text-foreground">{fmtBRL(valorTotal)}</span>
+                        {entradaNum > 0 && <> · Entrada: <span className="font-semibold text-foreground">{fmtBRL(entradaNum)}</span></>}
+                        {" · "}{nParcelas}x {nParcelas > 1 && previewParcelas[previewParcelas.length - 1]?.v !== valorParcelaNum ? "de até" : "de"} <span className="font-semibold text-foreground">{fmtBRL(valorParcelaNum)}</span> {nParcelas !== 1 ? "semanais" : "semanal"}
+                        {nParcelas > 1 && previewParcelas[previewParcelas.length - 1]?.v !== valorParcelaNum && " (última ajustada para fechar o total)"}
+                      </p>
+                    </div>
+                    <div className="divide-y text-sm">
+                      {entradaNum > 0 && (
+                        <div className="flex justify-between px-4 py-2 text-xs bg-muted/20">
+                          <span className="text-muted-foreground">Entrada · {fmtDt(localToday())} (hoje)</span>
+                          <span className="font-semibold">{fmtBRL(entradaNum)}</span>
+                        </div>
+                      )}
+                      {previewParcelas.map(p => (
+                        <div key={p.index} className="flex justify-between px-4 py-2 text-xs">
+                          <span className="text-muted-foreground">Parcela {p.index}/{nParcelas} · {fmtDt(p.data)}</span>
+                          <span className="font-semibold">{fmtBRL(p.v)}</span>
+                        </div>
+                      ))}
+                      <div className="flex justify-between px-4 py-2.5 text-sm font-bold bg-indigo-50 dark:bg-indigo-950/30">
+                        <span>Total do acordo</span>
+                        <span>{fmtBRL(entradaNum + previewParcelas.reduce((s, p) => s + p.v, 0))}</span>
+                      </div>
+                    </div>
+                    <p className="text-center text-[10px] text-muted-foreground py-1.5 border-t">— wayvo · dado · decisão · destino</p>
+                  </div>
+                )}
+              </div>
+
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setParcelandoGrupo(null)} disabled={parcelGrupoSalvando}>Cancelar</Button>
+                <Button
+                  onClick={criarParcelamentoGrupo}
+                  disabled={!podeSalvar || parcelGrupoSalvando}
+                  className="bg-indigo-600 hover:bg-indigo-700 text-white"
+                >
+                  {parcelGrupoSalvando ? "Salvando…" : `Confirmar acordo (${nParcelas} parcela${nParcelas !== 1 ? "s" : ""})`}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
         );
       })()}
 
@@ -2567,6 +3114,16 @@ function RowItemView({
             </span>
           )}
         </div>
+
+        {/* Linha 2b: referência de semana/período */}
+        {(() => {
+          const src = (item.entry.descricao || "") + " " + (item.entry.observacao || "");
+          const m = src.match(/((?:Semana|Quinzena|M[eê]s)\s+\d+:\s*\d{2}\/\d{2}\s+até\s+\d{2}\/\d{2})/i);
+          if (!m) return null;
+          return (
+            <p className="text-[10px] text-muted-foreground mt-1">{m[1]}</p>
+          );
+        })()}
 
         {/* Linha 3: dívida total / último pagamento (somente em atraso) */}
         {isOverdue && item.pendingCount > 1 && (

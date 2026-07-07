@@ -1,7 +1,7 @@
-import { useState, useMemo, useEffect, useCallback } from "react";
+import { useState, useMemo, useEffect, useCallback, useRef, type DragEvent, type ChangeEvent } from "react";
 import { localToday } from "@/lib/utils";
-import { Fine, Rental } from "@/lib/types";
-import { saveFines } from "@/lib/store";
+import { Fine, Rental, FinancialEntry } from "@/lib/types";
+import { saveFines, saveFinancial, loadFinancial } from "@/lib/store";
 import { useDataCacheSnapshot } from "@/lib/data-cache";
 import { useCompany } from "@/contexts/CompanyContext";
 import { supabase } from "@/integrations/supabase/client";
@@ -14,11 +14,18 @@ import { Label } from "@/components/ui/label";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Plus, Search, AlertTriangle, Pencil, Trash2, RefreshCw, Car, Loader2, CheckCircle2, XCircle, Info, Settings, ShieldCheck } from "lucide-react";
+import { Plus, Search, AlertTriangle, Pencil, Trash2, RefreshCw, Car, Loader2, CheckCircle2, XCircle, Info, Settings, ShieldCheck, Upload, ScanLine } from "lucide-react";
 import { usePermissions } from "@/hooks/usePermissions";
 import { toast } from "sonner";
 import DetranConfigDialog from "@/components/DetranConfigDialog";
 import { DetranConfig } from "@/lib/companies";
+
+function arrayBufferToBase64(buffer: ArrayBuffer): string {
+  let binary = "";
+  const bytes = new Uint8Array(buffer);
+  for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]);
+  return btoa(binary);
+}
 
 const statusLabel: Record<string, string> = { pendente: "Pendente", paga: "Paga", contestada: "Contestada", transferida: "Transferida" };
 const statusColor: Record<string, string> = { pendente: "bg-warning/10 text-warning", paga: "bg-success/10 text-success", contestada: "bg-primary/10 text-primary", transferida: "bg-muted text-muted-foreground" };
@@ -35,9 +42,10 @@ const categoriaLabel: Record<string, string> = {
 
 const emptyFine = (): Fine => ({
   id: crypto.randomUUID(), motoId: "", clienteId: null, rentalId: null,
-  dataMulta: localToday(), dataNotificacao: null,
+  dataMulta: localToday(), dataVencimento: null, dataNotificacao: null,
   valor: 0, descricao: "", status: "pendente", responsavel: "cliente",
-  origem: "manual", autoInfracao: null, codigoInfracao: null,
+  origem: "manual", autoInfracao: null, codigoInfracao: null, numeroRenainf: null,
+  orgaoCompetencia: null, horaInfracao: null, localInfracao: null,
 });
 
 // ─── Types for DETRAN results ──────────────────────────────────────────────────
@@ -100,7 +108,13 @@ export default function MultasPage() {
   const [search, setSearch] = useState("");
   const [dialogOpen, setDialogOpen] = useState(false);
   const [form, setForm] = useState<Fine>(emptyFine());
+  const [valorStr, setValorStr] = useState("");
   const [mode, setMode] = useState<"add" | "edit">("add");
+  const [extracting, setExtracting] = useState(false);
+  const [isDragActive, setIsDragActive] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [gerarEntrada, setGerarEntrada] = useState(true);
+  const [naoGerarSaida, setNaoGerarSaida] = useState(false);
 
   // DETRAN sheet state
   const [detranOpen, setDetranOpen] = useState(false);
@@ -120,16 +134,140 @@ export default function MultasPage() {
     f.descricao.toLowerCase().includes(search.toLowerCase())
   ), [fines, search, motos]);
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!form.motoId) return;
-    const exists = fines.find(f => f.id === form.id);
-    if (exists) persist(fines.map(f => f.id === form.id ? form : f));
-    else persist([...fines, form]);
+    const valor = parseFloat(valorStr.replace(/\./g, "").replace(",", ".")) || 0;
+    const responsavel: Fine["responsavel"] = gerarEntrada ? "cliente" : "locadora";
+    const finalForm = { ...form, valor, responsavel };
+    const isNew = !fines.find(f => f.id === form.id);
+
+    if (isNew) persist([...fines, finalForm]);
+    else persist(fines.map(f => f.id === form.id ? finalForm : f));
+
+    const gerarSaida = !naoGerarSaida;
+    const deveGerarFinanceiro = isNew && valor > 0 && finalForm.dataVencimento && (gerarEntrada || gerarSaida);
+
+    if (deveGerarFinanceiro) {
+      const moto = motos.find(m => m.id === finalForm.motoId);
+      const client = finalForm.clienteId ? clients.find(c => c.id === finalForm.clienteId) : null;
+      const placa = moto?.placa || finalForm.motoId;
+      const dataMultaFmt = finalForm.dataMulta
+        ? finalForm.dataMulta.split("-").reverse().join("/")
+        : null;
+      const partes = [
+        dataMultaFmt ? `Cometimento: ${dataMultaFmt}` : null,
+        finalForm.autoInfracao ? `Auto: ${finalForm.autoInfracao}` : null,
+        finalForm.descricao || null,
+        finalForm.codigoInfracao ? `Cód: ${finalForm.codigoInfracao}` : null,
+        finalForm.numeroRenainf ? `RENAINF: ${finalForm.numeroRenainf}` : null,
+        finalForm.orgaoCompetencia ? `Órgão: ${finalForm.orgaoCompetencia}` : null,
+      ].filter(Boolean).join(" | ");
+      const descricao = `Multa — ${placa}${partes ? ` | ${partes}` : ""}`;
+
+      const hoje = localToday();
+      const baseComum: Partial<FinancialEntry> = {
+        motoId: finalForm.motoId, rentalId: finalForm.rentalId,
+        clienteId: finalForm.clienteId, clienteNome: client?.nome || "",
+        placa, natureza: "operacional", conta: "", tags: ["multa"],
+        recorrente: false, fixedOriginId: finalForm.id,
+        descricao, observacao: partes || undefined,
+      };
+
+      const newEntries: FinancialEntry[] = [];
+
+      if (gerarEntrada) {
+        newEntries.push({
+          ...(baseComum as FinancialEntry),
+          id: crypto.randomUUID(), tipo: "receita",
+          categoria: "multa_transito_receita", subcategoria: "Repasse de multa",
+          data: hoje, dataPrevista: hoje,
+          valor, pago: false,
+        });
+      }
+
+      if (gerarSaida) {
+        newEntries.push({
+          ...(baseComum as FinancialEntry),
+          id: crypto.randomUUID(), tipo: "despesa",
+          categoria: "multa_transito",
+          subcategoria: gerarEntrada ? "Repasse cliente" : "Locadora",
+          data: finalForm.dataVencimento!, dataPrevista: finalForm.dataVencimento!,
+          valor, pago: false,
+        });
+      }
+
+      try {
+        await saveFinancial([...loadFinancial(), ...newEntries]);
+        const partes_msg = [gerarEntrada && "entrada", gerarSaida && "saída"].filter(Boolean).join(" e ");
+        toast.success(`Multa salva. ${partes_msg ? `Gerado no financeiro: ${partes_msg}.` : ""}`);
+      } catch {
+        toast.error("Multa salva, mas erro ao gerar lançamentos financeiros.");
+      }
+    } else {
+      toast.success("Multa salva!");
+    }
+
     setDialogOpen(false);
   };
 
   const handleDelete = (id: string) => {
     if (confirm("Remover esta multa?")) persist(fines.filter(f => f.id !== id));
+  };
+
+  const handleMultaUpload = async (file: File) => {
+    if (!file.type.startsWith("image/") && file.type !== "application/pdf") {
+      toast.error("Envie uma imagem (JPG, PNG, WEBP) ou PDF da multa.");
+      return;
+    }
+    setExtracting(true);
+    try {
+      const base64 = arrayBufferToBase64(await file.arrayBuffer());
+      const { data, error } = await supabase.functions.invoke("extract-multa", {
+        body: { fileBase64: base64, mimeType: file.type },
+      });
+      if (error) throw error;
+      if (!data?.success) throw new Error(data?.error || "Falha na leitura");
+      const d = data.data;
+
+      // Resolve moto pela placa extraída
+      let motoId = form.motoId;
+      let clienteId = form.clienteId;
+      let rentalId = form.rentalId;
+      if (d.placa) {
+        const placa = String(d.placa).replace(/[-\s]/g, "").toUpperCase();
+        const moto = motos.find(m => m.placa.replace(/[-\s]/g, "").toUpperCase() === placa);
+        if (moto) {
+          motoId = moto.id;
+          const dataRef = d.dataMulta ? String(d.dataMulta) : form.dataMulta;
+          const rental = findRentalAtDate(moto.id, dataRef, rentals);
+          if (rental) { clienteId = rental.clienteId; rentalId = rental.id; }
+        }
+      }
+
+      const novoValor = typeof d.valor === "number" ? d.valor : form.valor;
+      setValorStr(novoValor > 0 ? String(novoValor).replace(".", ",") : valorStr);
+      setForm(prev => ({
+        ...prev,
+        motoId: motoId || prev.motoId,
+        clienteId: clienteId ?? prev.clienteId,
+        rentalId: rentalId ?? prev.rentalId,
+        dataMulta: d.dataMulta ? String(d.dataMulta) : prev.dataMulta,
+        dataVencimento: d.dataVencimento ? String(d.dataVencimento) : prev.dataVencimento,
+        valor: novoValor || prev.valor,
+        autoInfracao: d.autoInfracao ? String(d.autoInfracao) : prev.autoInfracao,
+        codigoInfracao: d.codigoInfracao ? String(d.codigoInfracao) : prev.codigoInfracao,
+        numeroRenainf: d.numeroRenainf ? String(d.numeroRenainf) : prev.numeroRenainf,
+        descricao: d.descricao ? String(d.descricao) : prev.descricao,
+        orgaoCompetencia: d.orgaoCompetencia ? String(d.orgaoCompetencia) : prev.orgaoCompetencia,
+        horaInfracao: d.horaInfracao ? String(d.horaInfracao) : prev.horaInfracao,
+        localInfracao: d.localInfracao ? String(d.localInfracao) : prev.localInfracao,
+      }));
+      toast.success("Dados da multa extraídos com sucesso!");
+    } catch (err: any) {
+      toast.error(err.message || "Erro ao ler a multa");
+    } finally {
+      setExtracting(false);
+    }
   };
 
   const totalPendente = fines.filter(f => f.status === "pendente").reduce((s, f) => s + f.valor, 0);
@@ -302,7 +440,7 @@ export default function MultasPage() {
             </div>
           )}
           {canCreate && (
-            <Button onClick={() => { setForm(emptyFine()); setMode("add"); setDialogOpen(true); }} className="gap-2">
+            <Button onClick={() => { setForm(emptyFine()); setValorStr(""); setGerarEntrada(true); setNaoGerarSaida(false); setMode("add"); setDialogOpen(true); }} className="gap-2">
               <Plus className="h-4 w-4" /> Nova Multa
             </Button>
           )}
@@ -358,7 +496,7 @@ export default function MultasPage() {
                     </td>
                     <td className="px-3 py-3">
                       <div className="flex justify-end gap-1">
-                        {canEdit && <Button variant="ghost" size="icon" onClick={() => { setForm({ ...f }); setMode("edit"); setDialogOpen(true); }}><Pencil className="h-4 w-4" /></Button>}
+                        {canEdit && <Button variant="ghost" size="icon" onClick={() => { setForm({ ...f }); setValorStr(f.valor ? String(f.valor).replace(".", ",") : ""); setGerarEntrada(f.responsavel === "cliente"); setNaoGerarSaida(false); setMode("edit"); setDialogOpen(true); }}><Pencil className="h-4 w-4" /></Button>}
                         {canDelete && <Button variant="ghost" size="icon" onClick={() => handleDelete(f.id)}><Trash2 className="h-4 w-4 text-destructive" /></Button>}
                       </div>
                     </td>
@@ -377,46 +515,135 @@ export default function MultasPage() {
             <DialogTitle>{mode === "add" ? "Nova Multa" : "Editar Multa"}</DialogTitle>
           </DialogHeader>
           <div className="grid gap-4 py-2">
+            {/* 0. Zona de upload OCR */}
+            <div
+              className={`relative border-2 border-dashed rounded-lg p-4 text-center cursor-pointer transition-colors ${
+                isDragActive
+                  ? "border-primary bg-primary/5"
+                  : "border-border hover:border-primary/50 hover:bg-muted/30"
+              } ${extracting ? "pointer-events-none opacity-60" : ""}`}
+              onClick={() => fileInputRef.current?.click()}
+              onDragOver={e => { e.preventDefault(); setIsDragActive(true); }}
+              onDragLeave={() => setIsDragActive(false)}
+              onDrop={(e: DragEvent<HTMLDivElement>) => {
+                e.preventDefault();
+                setIsDragActive(false);
+                const file = e.dataTransfer.files?.[0];
+                if (file) void handleMultaUpload(file);
+              }}
+            >
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*,application/pdf"
+                className="hidden"
+                onChange={(e: ChangeEvent<HTMLInputElement>) => {
+                  const file = e.target.files?.[0];
+                  e.target.value = "";
+                  if (file) void handleMultaUpload(file);
+                }}
+              />
+              {extracting ? (
+                <div className="flex flex-col items-center gap-1.5 py-1">
+                  <Loader2 className="h-5 w-5 animate-spin text-primary" />
+                  <p className="text-[12px] text-muted-foreground">Lendo multa...</p>
+                </div>
+              ) : (
+                <div className="flex flex-col items-center gap-1.5 py-1">
+                  <ScanLine className="h-5 w-5 text-muted-foreground/60" />
+                  <p className="text-[12px] font-medium text-foreground">Anexar print ou PDF da multa</p>
+                  <p className="text-[10px] text-muted-foreground">O sistema preenche os campos automaticamente · JPG, PNG, PDF</p>
+                </div>
+              )}
+            </div>
+
+            {/* 1. Placa + Data — preenchidos primeiro para identificar o locatário */}
             <div className="grid grid-cols-2 gap-3">
               <div className="grid gap-2">
-                <Label>Moto</Label>
+                <Label>Moto (placa)</Label>
                 <SearchableSelect
                   options={motos.map(m => ({ value: m.id, label: m.placa }))}
                   value={form.motoId}
-                  onValueChange={v => setForm({ ...form, motoId: v })}
+                  onValueChange={v => {
+                    const rental = form.dataMulta ? findRentalAtDate(v, form.dataMulta, rentals) : null;
+                    setForm({ ...form, motoId: v, clienteId: rental?.clienteId ?? null, rentalId: rental?.id ?? null });
+                  }}
                   placeholder="Selecione..."
                   searchPlaceholder="Buscar placa..."
                 />
               </div>
               <div className="grid gap-2">
-                <Label>Cliente (opcional)</Label>
-                <SearchableSelect
-                  options={[{ value: "none", label: "Nenhum" }, ...clients.map(c => ({ value: c.id, label: c.nome }))]}
-                  value={form.clienteId || "none"}
-                  onValueChange={v => setForm({ ...form, clienteId: v === "none" ? null : v })}
-                  placeholder="Nenhum"
-                  searchPlaceholder="Buscar cliente..."
-                />
-              </div>
-            </div>
-            <div className="grid grid-cols-3 gap-3">
-              <div className="grid gap-2">
                 <Label>Data da Multa</Label>
-                <Input type="date" value={form.dataMulta} onChange={e => setForm({ ...form, dataMulta: e.target.value })} />
-              </div>
-              <div className="grid gap-2">
-                <Label>Valor (R$)</Label>
-                <Input type="number" step="0.01" value={form.valor} onChange={e => setForm({ ...form, valor: Number(e.target.value) })} />
-              </div>
-              <div className="grid gap-2">
-                <Label>Responsável</Label>
-                <SearchableSelect
-                  options={[{ value: "cliente", label: "Cliente" }, { value: "locadora", label: "Locadora" }]}
-                  value={form.responsavel}
-                  onValueChange={v => setForm({ ...form, responsavel: v as "locadora" | "cliente" })}
+                <Input
+                  type="date"
+                  value={form.dataMulta}
+                  onChange={e => {
+                    const d = e.target.value;
+                    const rental = form.motoId ? findRentalAtDate(form.motoId, d, rentals) : null;
+                    setForm({ ...form, dataMulta: d, clienteId: rental?.clienteId ?? null, rentalId: rental?.id ?? null });
+                  }}
                 />
               </div>
             </div>
+            {/* 2. Cliente — auto-identificado pela placa + data, mas editável */}
+            <div className="grid gap-2">
+              <Label className="flex items-center gap-1.5">
+                Locatário na data
+                {form.motoId && form.dataMulta && (
+                  <span className="text-[10px] font-normal text-muted-foreground">
+                    {form.clienteId ? "· identificado automaticamente" : "· nenhuma locação ativa nessa data"}
+                  </span>
+                )}
+              </Label>
+              <SearchableSelect
+                options={[{ value: "none", label: "Nenhum" }, ...clients.map(c => ({ value: c.id, label: c.nome }))]}
+                value={form.clienteId || "none"}
+                onValueChange={v => setForm({ ...form, clienteId: v === "none" ? null : v })}
+                placeholder="Nenhum"
+                searchPlaceholder="Buscar cliente..."
+              />
+            </div>
+            {/* 3. Valor */}
+            <div className="grid gap-2">
+              <Label>Valor</Label>
+              <div className="relative">
+                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground pointer-events-none">R$</span>
+                <Input
+                  className="pl-8"
+                  inputMode="decimal"
+                  placeholder="0,00"
+                  value={valorStr}
+                  onChange={e => {
+                    const raw = e.target.value;
+                    setValorStr(raw);
+                    const n = parseFloat(raw.replace(/\./g, "").replace(",", "."));
+                    setForm({ ...form, valor: isNaN(n) ? 0 : n });
+                  }}
+                />
+              </div>
+            </div>
+            {/* 3b. Checkboxes financeiro */}
+            <div className="flex flex-col gap-2">
+              <label className="flex items-center gap-2.5 cursor-pointer select-none">
+                <Checkbox
+                  checked={naoGerarSaida}
+                  onCheckedChange={v => setNaoGerarSaida(!!v)}
+                />
+                <span className="text-sm">Não gerar saída no financeiro.</span>
+              </label>
+              <label className="flex items-start gap-2.5 cursor-pointer select-none">
+                <Checkbox
+                  checked={gerarEntrada}
+                  onCheckedChange={v => setGerarEntrada(!!v)}
+                  className="mt-0.5"
+                />
+                <span className="text-sm leading-tight">
+                  Gerar entrada no financeiro
+                  <span className="block text-[11px] text-muted-foreground">(será pago pelo locatário)</span>
+                </span>
+              </label>
+            </div>
+            {/* 4. Status + Data Vencimento */}
             <div className="grid grid-cols-2 gap-3">
               <div className="grid gap-2">
                 <Label>Status</Label>
@@ -427,14 +654,80 @@ export default function MultasPage() {
                 />
               </div>
               <div className="grid gap-2">
-                <Label>Data Notificação</Label>
-                <Input type="date" value={form.dataNotificacao || ""} onChange={e => setForm({ ...form, dataNotificacao: e.target.value || null })} />
+                <Label>Data de Vencimento</Label>
+                <Input type="date" value={form.dataVencimento || ""} onChange={e => setForm({ ...form, dataVencimento: e.target.value || null })} />
               </div>
             </div>
-            <div className="grid gap-2">
-              <Label>Descrição</Label>
-              <Input value={form.descricao} onChange={e => setForm({ ...form, descricao: e.target.value })} placeholder="Ex: Avanço de sinal, velocidade..." />
+            {/* 5. Nº RENAINF + Código da Infração + Auto da Infração */}
+            <div className="grid grid-cols-3 gap-3">
+              <div className="grid gap-2">
+                <Label>Nº RENAINF</Label>
+                <Input
+                  value={form.numeroRenainf || ""}
+                  onChange={e => setForm({ ...form, numeroRenainf: e.target.value || null })}
+                  placeholder="000000000"
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label>Código da infração</Label>
+                <Input
+                  value={form.codigoInfracao || ""}
+                  onChange={e => setForm({ ...form, codigoInfracao: e.target.value || null })}
+                  placeholder="Ex: 74550"
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label>Auto da infração</Label>
+                <Input
+                  value={form.autoInfracao || ""}
+                  onChange={e => setForm({ ...form, autoInfracao: e.target.value || null })}
+                  placeholder="Ex: AA123456"
+                />
+              </div>
             </div>
+            {/* 6. Descrição da infração */}
+            <div className="grid gap-2">
+              <Label>Descrição da infração</Label>
+              <Input value={form.descricao} onChange={e => setForm({ ...form, descricao: e.target.value })} placeholder="Ex: Transitar velocidade superior máx permitida" />
+            </div>
+            {/* 7. Órgão competência + Hora */}
+            <div className="grid grid-cols-3 gap-3">
+              <div className="grid gap-2 col-span-2">
+                <Label>Órgão competência</Label>
+                <Input
+                  value={form.orgaoCompetencia || ""}
+                  onChange={e => setForm({ ...form, orgaoCompetencia: e.target.value || null })}
+                  placeholder="Ex: PREF. DE: GO – SENADOR CANEDO"
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label>Hora da infração</Label>
+                <Input
+                  value={form.horaInfracao || ""}
+                  onChange={e => setForm({ ...form, horaInfracao: e.target.value || null })}
+                  placeholder="12:33"
+                />
+              </div>
+            </div>
+            {/* 8. Local da infração */}
+            <div className="grid gap-2">
+              <Label>Local da infração</Label>
+              <Input
+                value={form.localInfracao || ""}
+                onChange={e => setForm({ ...form, localInfracao: e.target.value || null })}
+                placeholder="Ex: Av. Anuar Auad x Rua 36, Sentido bairro residencial..."
+              />
+            </div>
+            {/* Info sobre lançamentos automáticos */}
+            {mode === "add" && form.dataVencimento && (gerarEntrada || !naoGerarSaida) && (
+              <p className="text-[11px] text-muted-foreground bg-muted/50 rounded-md px-3 py-2 leading-snug">
+                {gerarEntrada && !naoGerarSaida
+                  ? "Ao salvar: será gerada uma entrada (cobrança ao locatário) e uma saída (despesa no vencimento)."
+                  : gerarEntrada
+                  ? "Ao salvar: será gerada apenas uma entrada (cobrança ao locatário)."
+                  : "Ao salvar: será gerada apenas uma saída (despesa no vencimento)."}
+              </p>
+            )}
           </div>
           <div className="flex justify-end gap-2">
             <Button variant="outline" onClick={() => setDialogOpen(false)}>Cancelar</Button>

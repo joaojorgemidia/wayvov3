@@ -64,45 +64,63 @@ function buildReplacementMap(
   };
 }
 
-// Aplica substituições no XML do documento.
-// Tenta resolver placeholders divididos entre <w:t> adjacentes dentro do mesmo parágrafo.
+// Aplica substituições no XML do documento preservando formatação (negrito, itálico, etc.).
 function applyReplacements(xml: string, map: Record<string, string>): string {
-  // 1. Mescla texto de runs adjacentes dentro de cada parágrafo para capturar placeholders divididos
-  let result = xml.replace(/<w:p[ >][\s\S]*?<\/w:p>/g, (para) => {
-    // Concatena todos os textos do parágrafo
-    const texts: string[] = [];
+  // Passo 1: substituição direta no XML.
+  // Placeholders inteiramente dentro de um único <w:t> são trocados aqui,
+  // mantendo o <w:r> e seu <w:rPr> (negrito, itálico…) intactos.
+  let result = xml;
+  for (const [ph, val] of Object.entries(map)) {
+    result = result.split(ph).join(xmlEscape(val));
+  }
+
+  // Passo 2: placeholders divididos entre runs adjacentes dentro do mesmo parágrafo.
+  // Localiza o run que contém o '{' de abertura do placeholder e coloca o texto ali,
+  // preservando a formatação desse run. Os demais runs envolvidos ficam vazios.
+  result = result.replace(/<w:p[ >][\s\S]*?<\/w:p>/g, (para) => {
     const tRegex = /<w:t(?:[^>]*)>([\s\S]*?)<\/w:t>/g;
+    const texts: string[] = [];
     let m;
     while ((m = tRegex.exec(para)) !== null) texts.push(m[1]);
     const full = texts.join("");
 
-    // Se algum placeholder está presente no texto completo, faz substituição simples
     let hasPh = false;
     for (const ph of Object.keys(map)) {
       if (full.includes(ph)) { hasPh = true; break; }
     }
     if (!hasPh) return para;
 
-    // Coloca todo o texto do parágrafo no primeiro <w:t> e zera os demais
-    let first = true;
-    return para.replace(/<w:t(?:[^>]*)>[\s\S]*?<\/w:t>/g, (tag, _offset) => {
-      if (first) {
-        first = false;
-        // Substituição no texto completo
-        let replaced = full;
-        for (const [ph, val] of Object.entries(map)) {
-          replaced = replaced.split(ph).join(xmlEscape(val));
-        }
+    // Encontra a posição do '{' do primeiro placeholder no texto concatenado
+    let phStart = full.length;
+    for (const ph of Object.keys(map)) {
+      const i = full.indexOf(ph);
+      if (i !== -1 && i < phStart) phStart = i;
+    }
+
+    // Determina em qual run esse caractere está
+    let acc = 0;
+    let targetIdx = 0;
+    for (let i = 0; i < texts.length; i++) {
+      acc += texts[i].length;
+      if (acc > phStart) { targetIdx = i; break; }
+    }
+
+    let replaced = full;
+    for (const [ph, val] of Object.entries(map)) {
+      replaced = replaced.split(ph).join(xmlEscape(val));
+    }
+
+    let tIdx = 0;
+    let placed = false;
+    return para.replace(/<w:t(?:[^>]*)>[\s\S]*?<\/w:t>/g, (tag) => {
+      const cur = tIdx++;
+      if (cur === targetIdx && !placed) {
+        placed = true;
         return tag.replace(/>([\s\S]*?)<\/w:t>/, `>${replaced}</w:t>`);
       }
       return tag.replace(/>([\s\S]*?)<\/w:t>/, "></w:t>");
     });
   });
-
-  // 2. Substituição direta para qualquer placeholder que tenha ficado fora de <w:p>
-  for (const [ph, val] of Object.entries(map)) {
-    result = result.split(ph).join(xmlEscape(val));
-  }
 
   return result;
 }

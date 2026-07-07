@@ -38,7 +38,7 @@ serve(async (req) => {
   );
 
   try {
-    const { asaasPaymentId, dueDate, value, companyId } = await req.json();
+    const { asaasPaymentId, dueDate, value, fine, interest, companyId } = await req.json();
 
     if (!asaasPaymentId) {
       return new Response(JSON.stringify({ error: "asaasPaymentId é obrigatório" }), {
@@ -46,8 +46,8 @@ serve(async (req) => {
       });
     }
 
-    if (!dueDate && value === undefined) {
-      return new Response(JSON.stringify({ error: "Informe dueDate e/ou value para atualizar" }), {
+    if (!dueDate && value === undefined && fine === undefined && interest === undefined) {
+      return new Response(JSON.stringify({ error: "Informe dueDate, value, fine e/ou interest para atualizar" }), {
         status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
@@ -69,6 +69,8 @@ serve(async (req) => {
     const updatePayload: Record<string, unknown> = {};
     if (dueDate) updatePayload.dueDate = dueDate;
     if (value !== undefined) updatePayload.value = Number(value);
+    if (fine !== undefined) updatePayload.fine = fine;
+    if (interest !== undefined) updatePayload.interest = interest;
 
     const updated = await asaas(`/payments/${asaasPaymentId}`, "PUT", apiKey, updatePayload);
 
