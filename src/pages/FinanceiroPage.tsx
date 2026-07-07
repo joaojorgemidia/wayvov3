@@ -3978,7 +3978,7 @@ export default function FinanceiroPage() {
                                 <span className="inline-flex items-center rounded-full border border-violet-400/30 bg-violet-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-violet-600">OS</span>
                               )}
                             </div>
-                            {e.categoria !== "aluguel" && fmtClientName && (
+                            {fmtClientName && (
                               <span className="text-xs text-muted-foreground mt-0.5 block">{fmtClientName}</span>
                             )}
                           </div>
@@ -4042,7 +4042,7 @@ export default function FinanceiroPage() {
                         {/* Observação */}
                         <td className="py-2 px-2 max-w-[200px]">
                           {(() => {
-                            const obsText = e.categoria === "aluguel" && fmtClientName ? fmtClientName : (e.observacao || "");
+                            const obsText = e.observacao || "";
                             let refSemanal: string | null = null;
                             const calcRefFromRental = (due: Date | null, rentalId: string | null | undefined) => {
                               const rental = rentalId ? rentals.find(r => r.id === rentalId) : undefined;
@@ -4062,13 +4062,13 @@ export default function FinanceiroPage() {
                                 const due = e.dataPrevista ? parseISO(e.dataPrevista) : parseISO(e.data);
                                 refSemanal = calcRefFromRental(due, e.rentalId);
                               }
-                            } else if (e.categoria === "juros_atraso") {
+                            } else if (e.categoria === "juros_atraso" || e.categoria === "taxas") {
                               const src = (e.descricao || "") + " " + (e.observacao || "");
                               const m = src.match(/((?:Semana|Quinzena|M[eê]s)\s+\d+:\s*\d{2}\/\d{2}\s+até\s+\d{2}\/\d{2})/i);
                               if (m) {
                                 refSemanal = m[1];
                               } else {
-                                // dataOriginal = vencimento da cobrança que gerou o juros.
+                                // dataOriginal = vencimento da cobrança que gerou o juros/taxa.
                                 // NUNCA usar dataPrevista/data aqui: é a data em que o
                                 // pagamento foi confirmado, não a semana em atraso.
                                 const due = e.dataOriginal ? parseISO(e.dataOriginal) : (e.dataPrevista ? parseISO(e.dataPrevista) : parseISO(e.data));
