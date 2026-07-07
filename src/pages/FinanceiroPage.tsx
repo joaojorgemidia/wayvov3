@@ -1107,6 +1107,8 @@ export default function FinanceiroPage() {
 
   // Tags da categoria selecionada: união das tags do nível categoria
   // + tags de TODAS as subcategorias daquela categoria (sem duplicar).
+  // Cada tag só pode existir numa única chave (categoria ou categoria:subcategoria) —
+  // ver addTag/renameTag — então essa união nunca mistura o mesmo nome vindo de dois lugares.
   const activeTags = useMemo(() => {
     if (!form.categoria) return [];
     const merged: string[] = [];
@@ -2761,8 +2763,18 @@ export default function FinanceiroPage() {
   const addTag = (tag: string) => {
     const key = getTagKey();
     if (!key) return;
+    const trimmed = tag.trim();
+    if (!trimmed) return;
+    // Uma mesma tag não pode existir em mais de uma categoria/subcategoria —
+    // senão a mesma etiqueta some/aparece de forma inconsistente entre elas.
+    const existsElsewhere = Object.entries(TAGS).some(([k, list]) => k !== key && (list || []).includes(trimmed));
+    if (existsElsewhere) {
+      toast.error(`A tag "${trimmed}" já existe em outra categoria.`);
+      return;
+    }
     const existing = finConfig.customTags[key] || [];
-    const c = { ...finConfig, customTags: { ...finConfig.customTags, [key]: [...existing, tag] } };
+    if (existing.includes(trimmed)) return;
+    const c = { ...finConfig, customTags: { ...finConfig.customTags, [key]: [...existing, trimmed] } };
     persistConfig(c);
   };
   const removeTag = (tag: string) => {
@@ -2782,9 +2794,18 @@ export default function FinanceiroPage() {
     persist(entries.map(e => e.tags?.includes(tag) ? { ...e, tags: (e.tags || []).filter(t => t !== tag) } : e)).catch(err => { console.error("[FinanceiroPage] persist error:", err); toast.error("Erro ao salvar. Verifique sua conexão."); });
   };
   const renameTag = (old: string, next: string) => {
-    if (!next) return;
+    const trimmedNext = next.trim();
+    if (!trimmedNext) return;
     const key = getTagKey();
     if (!key) return;
+    if (trimmedNext !== old) {
+      const existsElsewhere = Object.entries(TAGS).some(([k, list]) => k !== key && (list || []).includes(trimmedNext));
+      if (existsElsewhere) {
+        toast.error(`A tag "${trimmedNext}" já existe em outra categoria.`);
+        return;
+      }
+    }
+    next = trimmedNext;
     const isDefault = (DEFAULT_TAGS[key] || []).includes(old);
     const isCustom = (finConfig.customTags[key] || []).includes(old);
     const c = { ...finConfig };
@@ -4017,25 +4038,38 @@ export default function FinanceiroPage() {
                             ))}
                             {e.recorrente && <span className="inline-flex" aria-label="Recorrente"><Repeat className="h-3.5 w-3.5 text-muted-foreground/60" /></span>}
                             {e.despesaFixa && <span className="inline-flex" aria-label="Fixa"><Pin className="h-3.5 w-3.5 text-muted-foreground/60" /></span>}
-                            {e.asaasPaymentId && (
-                              <TooltipProvider delayDuration={200}>
-                                <Tooltip>
-                                  <TooltipTrigger asChild>
-                                    <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium whitespace-nowrap ${
-                                      (e.asaasStatus === "RECEIVED" || (e.pago && e.asaasStatus !== "DELETED")) ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400" :
-                                      e.asaasStatus === "OVERDUE"  ? "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400" :
-                                      "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400"
-                                    }`}>
-                                      {(e.asaasStatus === "RECEIVED" || (e.pago && e.asaasStatus !== "DELETED")) ? "Pago Asaas" :
-                                       e.asaasStatus === "OVERDUE"  ? "Vencido Asaas" : "Asaas"}
-                                    </span>
-                                  </TooltipTrigger>
-                                  <TooltipContent side="top" className="text-xs">
-                                    {e.pago && e.asaasStatus !== "RECEIVED" ? "Boleto Asaas · Pago manualmente" : `Boleto Asaas · ${e.asaasStatus}`}
-                                  </TooltipContent>
-                                </Tooltip>
-                              </TooltipProvider>
-                            )}
+                            {e.asaasPaymentId && (() => {
+                              // A etiqueta reflete o status REAL do Asaas, não o "pago" local —
+                              // um lançamento confirmado manualmente (ex: recebido por fora do
+                              // Asaas) não pode exibir "Pago Asaas" se o Asaas nunca recebeu.
+                              const asaasReceived = e.asaasStatus === "RECEIVED";
+                              const manualPago = e.pago && !asaasReceived;
+                              const label = asaasReceived ? "Pago Asaas"
+                                : manualPago ? "Pago manual"
+                                : e.asaasStatus === "OVERDUE" ? "Vencido Asaas"
+                                : "Asaas";
+                              const colorClass = asaasReceived
+                                ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400"
+                                : manualPago
+                                ? "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400"
+                                : e.asaasStatus === "OVERDUE"
+                                ? "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400"
+                                : "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400";
+                              return (
+                                <TooltipProvider delayDuration={200}>
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium whitespace-nowrap ${colorClass}`}>
+                                        {label}
+                                      </span>
+                                    </TooltipTrigger>
+                                    <TooltipContent side="top" className="text-xs">
+                                      {manualPago ? "Boleto Asaas · confirmado manualmente, sem registro de recebimento no Asaas" : `Boleto Asaas · ${e.asaasStatus}`}
+                                    </TooltipContent>
+                                  </Tooltip>
+                                </TooltipProvider>
+                              );
+                            })()}
                             {!(e.tags || []).length && !e.recorrente && !e.despesaFixa && !e.asaasPaymentId && <span className="text-xs text-muted-foreground/40">—</span>}
                           </div>
                         </td>
