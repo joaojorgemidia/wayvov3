@@ -1201,6 +1201,18 @@ function OilTable({
                           <Send className="h-4 w-4" />
                         </button>
                       )}
+                      {status.situation === "vencida" && cliente?.telefone && (
+                        <button
+                          onClick={() => {
+                            navigator.clipboard.writeText(cliente.telefone);
+                            toast.success("Telefone copiado");
+                          }}
+                          className="p-1.5 rounded-md text-muted-foreground hover:bg-muted transition-colors"
+                          title="Copiar telefone do locatário"
+                        >
+                          <Copy className="h-4 w-4" />
+                        </button>
+                      )}
                       {status.situation === "vencida" && (
                         <SnoozeButton motoId={m.id} placa={m.placa} />
                       )}
