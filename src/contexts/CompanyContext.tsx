@@ -1,5 +1,4 @@
 import { createContext, useContext, useState, useCallback, ReactNode, useEffect, useMemo } from "react";
-import { useQueryClient } from "@tanstack/react-query";
 import { Company, AsaasConfig, DetranConfig, CobrancaConfig, AutentiqueConfig, loadCompanies, saveCompanies, getActiveCompanyId, setActiveCompanyId } from "@/lib/companies";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
@@ -22,7 +21,6 @@ const CompanyContext = createContext<CompanyContextType | null>(null);
 
 export function CompanyProvider({ children }: { children: ReactNode }) {
   const { allowedCompanies, user, isAdmin, refreshAccess } = useAuth();
-  const qc = useQueryClient();
   const [companies, setCompanies] = useState<Company[]>(loadCompanies);
   const [activeId, setActiveId] = useState<string>(getActiveCompanyId);
   // Impede fallbacks com UUID como nome antes de o banco responder
@@ -132,22 +130,14 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
   const activeCompany = visibleCompanies.find(c => c.id === activeId) || visibleCompanies[0] || resolvedCompanies[0];
 
   const switchCompany = useCallback((id: string) => {
-    // Descarta qualquer resultado de "all-data" já em cache do React Query (de
-    // qualquer empresa) ANTES de trocar o id ativo — síncrono, no mesmo tick.
-    // Se isso rodasse só depois (num useEffect do DataContext reagindo à troca),
-    // o primeiro render já teria mostrado o snapshot antigo em cache (inclusive
-    // de uma visita anterior a esta mesma empresa, dentro do gcTime) antes que a
-    // limpeza tivesse chance de rodar — exatamente a falha relatada.
-    qc.removeQueries({ queryKey: ["all-data"] });
     setActiveId(id);
     setActiveCompanyId(id);
-  }, [qc]);
+  }, []);
 
   // Sincroniza a empresa ativa com outras abas abertas
   useEffect(() => {
     const handler = (e: StorageEvent) => {
       if (e.key === "moto-fleet-active-company" && e.newValue && e.newValue !== activeId) {
-        qc.removeQueries({ queryKey: ["all-data"] });
         setActiveId(e.newValue);
       }
     };

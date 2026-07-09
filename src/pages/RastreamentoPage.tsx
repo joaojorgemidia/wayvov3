@@ -444,6 +444,7 @@ export default function RastreamentoPage() {
           anySynced = true;
         } catch (e: any) {
           console.warn("syncKm:", e.message);
+          toast.error(`Falha ao sincronizar KM do rastreador ${getDisplayName(track.imei)}: ${e.message}`);
         }
       } else {
         // Rastreador igual ou maior: marca targetKm como visto para evitar re-checagem

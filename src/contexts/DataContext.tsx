@@ -128,20 +128,18 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     }
   }, [user]);
 
-  // Limpa o cache imediatamente ao trocar de empresa para evitar dados
+  // Limpa o cache visível imediatamente ao trocar de empresa para evitar dados
   // da empresa anterior aparecerem em qualquer página durante o carregamento.
-  // Também descarta qualquer resultado de "all-data" já em cache do React Query
-  // (de QUALQUER empresa, inclusive a que está prestes a virar ativa de novo) —
-  // com staleTime/gcTime altos e refetchOnMount desligado, voltar para uma empresa
-  // visitada há pouco tempo reaproveitava o snapshot antigo em vez de buscar de
-  // novo, podendo reexibir dados de outra empresa se aquele snapshot antigo tiver
-  // sido contaminado por qualquer race já corrigida. Forçar busca nova a cada
-  // troca é a única forma de garantir que isso nunca aconteça.
+  // NÃO descarta o cache do React Query: cada resultado já é marcado com o cid
+  // de origem (ver efeito abaixo, `data.cid === cid`) e só é aplicado ao cache
+  // global se ainda corresponder à empresa ativa — isso já impede uma resposta
+  // atrasada de vazar dados entre empresas. Descartar a query aqui forçava um
+  // fetch completo a CADA troca, mesmo voltando para uma empresa visitada há
+  // poucos segundos, tornando a troca de locadora extremamente lenta.
   useEffect(() => {
     if (!cid) return;
     clearDataCache();
-    qc.removeQueries({ queryKey: ["all-data"] });
-  }, [cid, qc]);
+  }, [cid]);
 
   // Set up the save callback
   const runQueuedMutation = useCallback((table: string, mutation: () => Promise<void>): Promise<void> => {

@@ -130,6 +130,8 @@ type EntryContext = {
   placa?: string | null;
   rental_id?: string | null;
   data_prevista?: string | null;
+  valor?: number | null;
+  observacao?: string | null;
 };
 
 type LinkFields = {
@@ -139,6 +141,7 @@ type LinkFields = {
   moto_id: string | null;
   placa: string | null;
   rental_id: string | null;
+  data_original: string | null;
 };
 
 function dateAddDays(dateStr: string, days: number): string {
@@ -298,12 +301,25 @@ async function registerJurosMulta(
 ) {
   const interestValue = calcJurosAmount(payment);
   const fineValue = calcMultaAmount(payment);
-  const total = interestValue + fineValue;
-  if (total <= 0) return;
+  let total = interestValue + fineValue;
 
   const parts: string[] = [];
   if (interestValue > 0) parts.push(`Juros R$ ${interestValue.toFixed(2)}`);
   if (fineValue > 0) parts.push(`Multa R$ ${fineValue.toFixed(2)}`);
+
+  // Fallback: quando a cobrança venceu, o asaas-update-fines já embutiu multa/juros
+  // diretamente no "value" do boleto e zerou as regras de fine/interest do Asaas (pra
+  // não cobrar em dobro) — nesse caso o Asaas não reporta interestValue/fineValue e os
+  // cálculos acima dão 0, mesmo o cliente tendo pago o valor com acréscimo. Detecta essa
+  // diferença comparando o valor efetivamente pago com o valor original do lançamento.
+  if (total <= 0) {
+    const baseValor = Number(entry.valor) || 0;
+    const paidValue = Number(payment.value) || 0;
+    const diff = Math.round((paidValue - baseValor) * 100) / 100;
+    if (diff <= 0.01 || baseValor <= 0) return;
+    total = diff;
+    parts.push(entry.observacao || `Acréscimo por atraso R$ ${diff.toFixed(2)}`);
+  }
 
   let periodoRef = "";
   const dueDateStr = payment.dueDate || entry.data_prevista || "";
@@ -344,6 +360,7 @@ async function registerJurosMulta(
     moto_id: entry.moto_id || null,
     placa: entry.placa || null,
     rental_id: entry.rental_id || null,
+    data_original: entry.data_prevista || null,
     tags: ["Asaas", "Pago Asaas"],
     recorrente: false,
     despesa_fixa: false,
@@ -406,7 +423,7 @@ serve(async (req) => {
 
     const { data: entry, error } = await supabase
       .from("financial_entries")
-      .select("id, pago, asaas_status, asaas_payment_id, company_id, cliente_id, cliente_nome, moto_id, placa, rental_id, data_prevista")
+      .select("id, pago, asaas_status, asaas_payment_id, company_id, cliente_id, cliente_nome, moto_id, placa, rental_id, data_prevista, valor, observacao")
       .eq("asaas_payment_id", payment.id)
       .single();
 
@@ -456,6 +473,9 @@ serve(async (req) => {
           moto_id: entry.moto_id || null,
           placa: entry.placa || null,
           rental_id: entry.rental_id || null,
+          // Vencimento original da cobrança que gerou a taxa/juros — usado pelo Financeiro
+          // para calcular a semana correta (nunca a data do crédito/pagamento).
+          data_original: entry.data_prevista || null,
         };
 
         const creditDate = fullPayment.creditDate || paymentDate;

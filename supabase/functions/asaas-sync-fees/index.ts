@@ -140,6 +140,7 @@ type LinkFields = {
   moto_id: string | null;
   placa: string | null;
   rental_id: string | null;
+  data_original: string | null;
 };
 
 function dateAddDays(dateStr: string, days: number): string {
@@ -339,14 +340,14 @@ serve(async (req) => {
     if (entryId) {
       const { data } = await supabase
         .from("financial_entries")
-        .select("id, asaas_payment_id, company_id, cliente_id, cliente_nome, moto_id, placa, rental_id, data, data_prevista")
+        .select("id, asaas_payment_id, company_id, cliente_id, cliente_nome, moto_id, placa, rental_id, data, data_prevista, valor, observacao")
         .eq("id", entryId)
         .single();
       entry = data;
     } else {
       const { data } = await supabase
         .from("financial_entries")
-        .select("id, asaas_payment_id, company_id, cliente_id, cliente_nome, moto_id, placa, rental_id, data, data_prevista")
+        .select("id, asaas_payment_id, company_id, cliente_id, cliente_nome, moto_id, placa, rental_id, data, data_prevista, valor, observacao")
         .eq("asaas_payment_id", asaasPaymentId)
         .single();
       entry = data;
@@ -359,6 +360,9 @@ serve(async (req) => {
       moto_id: entry?.moto_id || null,
       placa: entry?.placa || null,
       rental_id: entry?.rental_id || null,
+      // Vencimento original da cobrança que gerou a taxa/juros — usado pelo Financeiro
+      // para calcular a semana correta (nunca a data do crédito/pagamento).
+      data_original: entry?.data_prevista || null,
     };
 
     // Busca dados completos do pagamento no Asaas
@@ -418,13 +422,28 @@ serve(async (req) => {
     };
     const interestValue = calcJurosAmount(enrichedPayment);
     const fineValue = calcMultaAmount(enrichedPayment);
-    const jurosTotal = interestValue + fineValue;
+    let jurosTotal = interestValue + fineValue;
+
+    const parts: string[] = [];
+    if (interestValue > 0) parts.push(`Juros R$ ${interestValue.toFixed(2)}`);
+    if (fineValue > 0) parts.push(`Multa R$ ${fineValue.toFixed(2)}`);
+
+    // Fallback: quando a cobrança venceu, o asaas-update-fines já embutiu multa/juros
+    // diretamente no "value" do boleto e zerou as regras de fine/interest do Asaas (pra
+    // não cobrar em dobro) — nesse caso o Asaas não reporta interestValue/fineValue e os
+    // cálculos acima dão 0, mesmo o cliente tendo pago o valor com acréscimo. Detecta essa
+    // diferença comparando o valor efetivamente pago com o valor original do lançamento.
+    if (jurosTotal <= 0) {
+      const baseValor = Number(entry?.valor) || 0;
+      const paidValue = Number(paymentData.value) || 0;
+      const diff = Math.round((paidValue - baseValor) * 100) / 100;
+      if (diff > 0.01 && baseValor > 0) {
+        jurosTotal = diff;
+        parts.push(entry?.observacao || `Acréscimo por atraso R$ ${diff.toFixed(2)}`);
+      }
+    }
 
     if (jurosTotal > 0) {
-      const parts: string[] = [];
-      if (interestValue > 0) parts.push(`Juros R$ ${interestValue.toFixed(2)}`);
-      if (fineValue > 0) parts.push(`Multa R$ ${fineValue.toFixed(2)}`);
-
       let periodoRef = "";
       const dueDateStr = entry?.data_prevista || paymentData.dueDate || "";
       if (entry?.rental_id && dueDateStr) {
