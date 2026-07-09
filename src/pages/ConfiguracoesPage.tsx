@@ -9,10 +9,12 @@ import { Settings, CreditCard, CheckCircle2, XCircle, ShieldCheck, Car, Receipt,
 import AsaasConfigDialog from "@/components/AsaasConfigDialog";
 import DetranConfigDialog from "@/components/DetranConfigDialog";
 import { AsaasConfig, DetranConfig, CobrancaConfig, DEFAULT_COBRANCA_CONFIG } from "@/lib/companies";
+import { useBankAccounts } from "@/hooks/useSupabaseData";
 import { toast } from "sonner";
 
 export default function ConfiguracoesPage() {
   const { activeCompany, updateAsaasConfig, updateDetranConfig, updateCobrancaConfig, updateAutentiqueConfig } = useCompany();
+  const { data: bankAccounts, save: saveBankAccount } = useBankAccounts();
   const [asaasOpen, setAsaasOpen] = useState(false);
   const [detranOpen, setDetranOpen] = useState(false);
   const [showAutToken, setShowAutToken] = useState(false);
@@ -27,6 +29,22 @@ export default function ConfiguracoesPage() {
 
   const handleSaveAsaas = async (config: AsaasConfig) => {
     await updateAsaasConfig(activeCompany.id, config);
+    // Cria a conta "Asaas" automaticamente ao associar a API, se ainda não existir —
+    // sem ela, o dinheiro recebido via Asaas não tem onde ser lançado em Contas.
+    const jaTemContaAsaas = bankAccounts.some(a => a.nome === "Asaas" || a.banco === "Asaas");
+    if (config.enabled && config.apiKey && !jaTemContaAsaas) {
+      await saveBankAccount({
+        id: crypto.randomUUID(),
+        nome: "Asaas",
+        banco: "Asaas",
+        saldoInicial: 0,
+        tipo: "banco",
+        diaFechamento: null,
+        diaVencimento: null,
+        limite: 0,
+      });
+      toast.success("Conta \"Asaas\" criada automaticamente em Contas.");
+    }
   };
 
   const handleSaveDetran = async (config: DetranConfig | null) => {
@@ -93,14 +111,17 @@ export default function ConfiguracoesPage() {
               {asaasCfg.descontoEnabled && asaasCfg.descontoValor > 0 && (
                 <p>Desconto antecipado: <span className="text-foreground font-medium">{asaasCfg.descontoValor}% até {asaasCfg.descontoDias}d antes</span></p>
               )}
+              {asaasCfg.gerarBoletoXDiasAntes > 0 && (
+                <p>Gerar boleto: <span className="text-foreground font-medium">{asaasCfg.gerarBoletoXDiasAntes} dia(s) antes do vencimento</span></p>
+              )}
               {asaasCfg.notifyDaysBefore > 0 && (
-                <p>Notificação: <span className="text-foreground font-medium">{asaasCfg.notifyDaysBefore} dia(s) antes do vencimento</span></p>
+                <p>Lembrete e-mail/SMS: <span className="text-foreground font-medium">{asaasCfg.notifyDaysBefore} dia(s) antes do vencimento</span></p>
               )}
               {asaasCfg.notifyOnDueDate && (
-                <p>Notificação: <span className="text-foreground font-medium">no dia do vencimento</span></p>
+                <p>Lembrete e-mail/SMS: <span className="text-foreground font-medium">no dia do vencimento</span></p>
               )}
               {asaasCfg.notifyDaysAfterDelay > 0 && (
-                <p>Notificação: <span className="text-foreground font-medium">a cada {asaasCfg.notifyDaysAfterDelay} dia(s) de atraso</span></p>
+                <p>Lembrete e-mail/SMS: <span className="text-foreground font-medium">a cada {asaasCfg.notifyDaysAfterDelay} dia(s) de atraso</span></p>
               )}
             </div>
           )}

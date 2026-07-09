@@ -460,37 +460,23 @@ export function buildAtrasoMessage(opts: {
 export function buildReincidenciaMessage(opts: {
   clienteNome: string;
   placa: string;
-  modelo: string;
-  kmAtual: number;
   proxOleoKm: number;
-  kmAtraso: number;
   diasSemTroca?: number | null;
-  mediaAtrasoKm?: number | null;
-  amostrasAtraso?: number;
 }): string {
-  const {
-    clienteNome, placa, modelo, kmAtual, proxOleoKm, kmAtraso, diasSemTroca,
-    mediaAtrasoKm, amostrasAtraso,
-  } = opts;
+  const { clienteNome, placa, proxOleoKm, diasSemTroca } = opts;
+  const primeiroNome = clienteNome ? clienteNome.split(" ")[0] : "[NOME]";
+  const diasTxt = diasSemTroca != null ? ` (há ${diasSemTroca} dias sem registro)` : "";
   const linhas = [
-    `Olá, ${clienteNome || "[NOME]"}! ⚠️`,
+    `Oi, ${primeiroNome}!`,
     "",
-    `A moto *${placa}*${modelo ? ` (${modelo})` : ""} está com a *troca de óleo vencida*.`,
+    `A troca de óleo da sua moto *${placa}* já venceu — o limite era *${proxOleoKm.toLocaleString("pt-BR")} Km*${diasTxt}.`,
     "",
-    `📍 *Limite era:* ${proxOleoKm.toLocaleString("pt-BR")} Km`,
-    `🔴 *Km atual:* ${kmAtual.toLocaleString("pt-BR")} Km (+${kmAtraso.toLocaleString("pt-BR")} Km além do limite)`,
-    ...(diasSemTroca != null
-      ? [`⏱️ *Sem registro de troca há:* ${diasSemTroca} dias`]
-      : []),
-    ...(mediaAtrasoKm != null && (amostrasAtraso ?? 0) > 0
-      ? [`📊 *Média de atraso (últimas ${amostrasAtraso} trocas):* +${Math.round(mediaAtrasoKm).toLocaleString("pt-BR")} Km acima do limite`]
-      : []),
+    `Se já trocou, nos confirma:`,
+    `- Dia da troca`,
+    `- Km no momento da troca`,
+    `- Foto do painel`,
     "",
-    `Se já trocou, nos envie:`,
-    `📸 Foto do painel (com o km) no dia da troca`,
-    `🧾 Comprovante de pagamento ou nota da oficina`,
-    "",
-    `Em caso de não envio, a locação poderá ser suspensa conforme contrato.`,
+    `Se ainda não trocou, corre pra fazer o quanto antes — é importante pra sua moto.`,
   ];
   return linhas.join("\n");
 }

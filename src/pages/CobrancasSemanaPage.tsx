@@ -330,8 +330,15 @@ export default function CobrancasSemanaPage() {
     [cache.financial],
   );
 
+  // Lançamento de saldo restante de um pagamento parcial anterior: a multa/juros
+  // do atraso original já foi somada uma vez ao calcular esse saldo — não pode
+  // ganhar multa/juros de novo a cada rodada, senão o encargo dobra a cada
+  // pagamento parcial subsequente do mesmo débito.
+  const isSaldoRestanteEntry = (e: FinancialEntry) =>
+    (e.observacao || "").startsWith("Saldo devedor de pagamento parcial");
+
   const calcValorAtualizado = (e: FinancialEntry, days: number) => {
-    if (days <= 0 || e.categoria === "juros_atraso") return e.valor || 0;
+    if (days <= 0 || e.categoria === "juros_atraso" || isSaldoRestanteEntry(e)) return e.valor || 0;
     // encargos de atraso só se aplicam a aluguel e caução
     if (!["aluguel", "caucao"].includes((e.categoria || "").toLowerCase())) return e.valor || 0;
     const cfg = activeCompany?.cobrancaConfig ?? { multaAtraso: 15, jurosDiario: 7, jurosMes: 0 };
@@ -691,11 +698,12 @@ export default function CobrancasSemanaPage() {
           : e,
       );
 
-      // ── Pagamento parcial: cria saldo devedor quando recebido < valor base ──
-      // Só não se aplica quando o bloco de multa/juros de atraso (aluguel) já
-      // representa a diferença — senão contaria o mesmo shortfall duas vezes.
-      let temAcrescimo = false;
-      if (item.entry.categoria === "aluguel" && item.entry.rentalId) {
+      // ── Pagamento parcial: cria saldo devedor quando recebido < total devido ──
+      // O total devido já inclui multa/juros de atraso (aluguel) quando aplicável,
+      // pra não perder o saldo restante quando o recebimento parcial é sobre uma
+      // cobrança já em atraso.
+      let totalDevido = item.entry.valor || 0;
+      if (item.entry.categoria === "aluguel" && item.entry.rentalId && !isSaldoRestanteEntry(item.entry)) {
         const dueDateStrAcr = item.entry.dataPrevista || item.entry.data;
         const rentalAcr = rentalsById.get(item.entry.rentalId);
         if (dueDateStrAcr && rentalAcr) {
@@ -708,12 +716,12 @@ export default function CobrancasSemanaPage() {
             const jurosMesAcr = rentalAcr.jurosAtrasoMes ?? cfgAcr.jurosMes ?? 0;
             const jurosCalcAcr = (item.entry.valor || 0) * (jurosMesAcr / 100 / 30) * daysOverdueAcr;
             const jurosDiarioAcr = (cfgAcr.jurosDiario ?? 0) * daysOverdueAcr;
-            temAcrescimo = multaAcr > 0 || (jurosCalcAcr + jurosDiarioAcr) > 0;
+            totalDevido += multaAcr + jurosCalcAcr + jurosDiarioAcr;
           }
         }
       }
-      const restanteBase = !temAcrescimo && item.entry.tipo === "receita" && valor < (item.entry.valor || 0) - 0.009
-        ? Math.round(((item.entry.valor || 0) - valor) * 100) / 100
+      const restanteBase = item.entry.tipo === "receita" && valor < totalDevido - 0.009
+        ? Math.round((totalDevido - valor) * 100) / 100
         : 0;
       let finalEntries = next;
       if (restanteBase > 0) {
@@ -726,8 +734,11 @@ export default function CobrancasSemanaPage() {
           subcategoria: item.entry.subcategoria,
           descricao: `Saldo restante — ${item.entry.descricao}`,
           valor: restanteBase,
-          data: payDate,
-          dataPrevista: payDate,
+          // Mantém a referência da semana/período do débito original (não a data do
+          // pagamento) — senão o saldo de uma cobrança atrasada aparece associado à
+          // semana seguinte em vez da semana que de fato gerou o débito.
+          data: dueDateStrRest || payDate,
+          dataPrevista: dueDateStrRest || payDate,
           pago: false,
           conta: "",
           natureza: item.entry.natureza || "operacional",
@@ -1957,7 +1968,7 @@ export default function CobrancasSemanaPage() {
               </div>
 
               {/* Bloco de multa/juros — mesmo do Financeiro */}
-              {confirmItem.entry.categoria === "aluguel" && form.data && (() => {
+              {confirmItem.entry.categoria === "aluguel" && form.data && !isSaldoRestanteEntry(confirmItem.entry) && (() => {
                 const dueDateStr = confirmItem.entry.dataPrevista || confirmItem.entry.data;
                 if (!dueDateStr) return null;
                 const due = new Date(dueDateStr + "T00:00:00");
@@ -1991,14 +2002,17 @@ export default function CobrancasSemanaPage() {
                 );
               })()}
 
-              {/* Aviso de pagamento parcial (valor < base, sem relação com juros) —
-                  some quando há atraso/acréscimo, pois o bloco acima já cobre o pendente. */}
+              {/* Aviso de pagamento parcial (valor recebido < total devido) — o total
+                  devido já inclui multa/juros de atraso quando aplicável, pra não
+                  perder o saldo restante quando o recebimento parcial é sobre uma
+                  cobrança em atraso. */}
               {!confirmItem.entry.pago && confirmItem.entry.tipo === "receita" && (() => {
+                let base = confirmItem.entry.valor || 0;
                 const rental = confirmItem.entry.categoria === "aluguel" && confirmItem.entry.rentalId
                   ? rentalsById.get(confirmItem.entry.rentalId)
                   : undefined;
                 const dueDateStr = confirmItem.entry.dataPrevista || confirmItem.entry.data;
-                if (rental && dueDateStr && form.data) {
+                if (rental && dueDateStr && form.data && !isSaldoRestanteEntry(confirmItem.entry)) {
                   const due = new Date(dueDateStr + "T00:00:00");
                   const pay = new Date(form.data + "T00:00:00");
                   const daysOverdue = Math.max(0, Math.floor((pay.getTime() - due.getTime()) / 86400000));
@@ -2008,11 +2022,10 @@ export default function CobrancasSemanaPage() {
                     const jurosMes = rental.jurosAtrasoMes || cfg.jurosMes || 0;
                     const jurosCalc = (confirmItem.entry.valor * (jurosMes / 100 / 30)) * daysOverdue;
                     const jurosDiarioFix = (cfg.jurosDiario || 0) * daysOverdue;
-                    if (multa > 0 || (jurosCalc + jurosDiarioFix) > 0) return null;
+                    base += multa + jurosCalc + jurosDiarioFix;
                   }
                 }
                 const entered = parseFloat(confirmValor.replace(/\./g, "").replace(",", "."));
-                const base = confirmItem.entry.valor;
                 if (isNaN(entered) || entered <= 0 || entered >= base - 0.009) return null;
                 const restante = Math.round((base - entered) * 100) / 100;
                 const fmt = (v: number) => `R$ ${v.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;

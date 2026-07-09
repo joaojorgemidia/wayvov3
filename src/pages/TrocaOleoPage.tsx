@@ -513,30 +513,27 @@ export default function TrocaOleoPage() {
     const limiteKm = ultimaTroca != null ? ultimaTroca.km + cfg.oilKm : null;
     const excesoKm = limiteKm != null && km > limiteKm ? km - limiteKm : 0;
 
+    const primeiroNome = cliente ? cliente.split(" ")[0] : "[NOME]";
     const linhas: string[] = [];
-    linhas.push(`Olá, ${cliente || "[NOME]"}! 👋`);
+    linhas.push(`Oi, ${primeiroNome}!`);
     linhas.push("");
-    linhas.push(`Sua moto *${moto.placa}*${moto.modelo ? ` (${moto.modelo})` : ""} está com o óleo novo. ✅`);
+    linhas.push(`Sua moto *${moto.placa}*${moto.modelo ? ` (${moto.modelo})` : ""} está com o óleo novo.`);
     linhas.push("");
     if (excesoKm > 0) {
-      linhas.push(`⚠️ _Troca realizada com *${excesoKm.toLocaleString("pt-BR")} km* além do limite recomendado_`);
+      linhas.push(`Troca realizada com *${excesoKm.toLocaleString("pt-BR")} km* além do limite recomendado.`);
       linhas.push("");
     }
+    linhas.push(`Realizada em ${km.toLocaleString("pt-BR")} Km · ${dataFmt}.`);
+    linhas.push("");
     if (cfg.filterKm && trocouFiltro) {
       const proxFiltroKm = km + cfg.filterKm;
-      linhas.push(`_(realizada em ${km.toLocaleString("pt-BR")} Km · ${dataFmt})_`);
-      linhas.push("");
-      linhas.push("📍 *PRÓXIMAS MANUTENÇÕES:*");
-      linhas.push(`🔧 Troca de óleo → *${proxOleoKm.toLocaleString("pt-BR")} Km*`);
-      linhas.push(`🔴 Troca de filtro → *${proxFiltroKm.toLocaleString("pt-BR")} Km*`);
+      linhas.push(`Próxima troca de óleo: *${proxOleoKm.toLocaleString("pt-BR")} Km*`);
+      linhas.push(`Próxima troca de filtro: *${proxFiltroKm.toLocaleString("pt-BR")} Km*`);
     } else {
-      linhas.push(`_(realizada em ${km.toLocaleString("pt-BR")} Km · ${dataFmt})_`);
-      linhas.push("");
-      linhas.push("📍 *PRÓXIMA MANUTENÇÃO:*");
-      linhas.push(`🔧 Troca de óleo → *${proxOleoKm.toLocaleString("pt-BR")} Km*`);
+      linhas.push(`Próxima troca de óleo: *${proxOleoKm.toLocaleString("pt-BR")} Km*`);
     }
     linhas.push("");
-    linhas.push("Qualquer dúvida, estamos à disposição. 🏍️");
+    linhas.push("Qualquer dúvida, estamos à disposição.");
     const mensagem = linhas.join("\n");
 
     const highlights: { label: string; value: string; tone: "primary" | "warning" | "danger" }[] = [
@@ -589,9 +586,8 @@ export default function TrocaOleoPage() {
     const telefone = clienteInfo?.telefone ?? "";
     const clienteId = clienteInfo?.id ?? null;
     const lateCount = clientLateCount(clienteId, motos, rentals, brandConfig, globalConfig.windowKm);
-    const kmAtual = moto.kmAtual ?? 0;
 
-    // Sempre que VENCIDA: enviar mensagem completa (vistoria em vídeo + palavra-chave + média de atraso).
+    // Sempre que VENCIDA: mensagem curta + palavra-chave/média de atraso disponíveis via tokens.
     const palavra = keywordOfTheDay(
         globalConfig.keywords,
         new Date(),
@@ -602,11 +598,9 @@ export default function TrocaOleoPage() {
       clienteId, motos, rentals, brandConfig, globalConfig.windowKm, 3,
     );
     const mensagem = buildReincidenciaMessage({
-        clienteNome, placa: moto.placa, modelo: moto.modelo,
-        kmAtual, proxOleoKm: status.proxOleoKm, kmAtraso: status.kmAtraso,
+        clienteNome, placa: moto.placa,
+        proxOleoKm: status.proxOleoKm,
         diasSemTroca: status.diasDesdeUltima,
-        mediaAtrasoKm: mediaKm,
-        amostrasAtraso: amostras,
       });
     const reincidenteHL = lateCount >= 1
       ? [{ label: "Reincidência", value: `${lateCount + 1}ª ocorrência`, tone: "danger" as const }]

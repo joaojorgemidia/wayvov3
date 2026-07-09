@@ -213,11 +213,12 @@ export default function AsaasConfigDialog({ open, onClose, onSave, initial, comp
                 </div>
               </div>
 
-              {/* Notificações */}
+              {/* Lembretes automáticos da Asaas (diferente da geração do boleto acima) */}
               <div className="space-y-3 rounded-md border p-3">
+                <Label className="text-sm font-medium">Lembretes de vencimento (Asaas)</Label>
                 <div className="flex gap-2 text-xs text-muted-foreground">
                   <Info className="h-3.5 w-3.5 shrink-0 mt-0.5" />
-                  <span>Frequência de notificações — custo de R$0,55 por envio.<br />As cobranças serão enviadas para o whatsapp e email do locatário.</span>
+                  <span>Diferente da geração do boleto acima: isso só manda um lembrete por e-mail/SMS pro locatário — custo de R$0,55 por envio.</span>
                 </div>
 
                 {/* Antes do vencimento */}
@@ -228,7 +229,7 @@ export default function AsaasConfigDialog({ open, onClose, onSave, initial, comp
                     id="notify-before"
                   />
                   <Label htmlFor="notify-before" className="text-sm cursor-pointer flex items-center gap-2 flex-wrap">
-                    Enviar cobrança
+                    Avisar por e-mail/SMS
                     <Select
                       value={String(cfg.notifyDaysBefore || 2)}
                       onValueChange={v => set("notifyDaysBefore", Number(v))}
@@ -255,7 +256,7 @@ export default function AsaasConfigDialog({ open, onClose, onSave, initial, comp
                     id="notify-due"
                   />
                   <Label htmlFor="notify-due" className="text-sm cursor-pointer">
-                    Enviar cobrança no dia do vencimento
+                    Avisar por e-mail/SMS no dia do vencimento
                   </Label>
                 </div>
 
@@ -267,7 +268,7 @@ export default function AsaasConfigDialog({ open, onClose, onSave, initial, comp
                     id="notify-after"
                   />
                   <Label htmlFor="notify-after" className="text-sm cursor-pointer flex items-center gap-2 flex-wrap">
-                    Enviar cobrança a cada
+                    Avisar por e-mail/SMS a cada
                     <Select
                       value={String(cfg.notifyDaysAfterDelay || 1)}
                       onValueChange={v => set("notifyDaysAfterDelay", Number(v))}
