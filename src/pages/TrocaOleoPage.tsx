@@ -604,7 +604,6 @@ export default function TrocaOleoPage() {
     const mensagem = buildReincidenciaMessage({
         clienteNome, placa: moto.placa, modelo: moto.modelo,
         kmAtual, proxOleoKm: status.proxOleoKm, kmAtraso: status.kmAtraso,
-        palavraChave: palavra, dataHoje,
         diasSemTroca: status.diasDesdeUltima,
         mediaAtrasoKm: mediaKm,
         amostrasAtraso: amostras,

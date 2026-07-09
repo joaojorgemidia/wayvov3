@@ -464,21 +464,18 @@ export function buildReincidenciaMessage(opts: {
   kmAtual: number;
   proxOleoKm: number;
   kmAtraso: number;
-  palavraChave: string;
-  dataHoje: string; // dd/mm/aaaa
   diasSemTroca?: number | null;
   mediaAtrasoKm?: number | null;
   amostrasAtraso?: number;
 }): string {
   const {
-    clienteNome, placa, modelo, kmAtual, proxOleoKm, kmAtraso, palavraChave, dataHoje, diasSemTroca,
+    clienteNome, placa, modelo, kmAtual, proxOleoKm, kmAtraso, diasSemTroca,
     mediaAtrasoKm, amostrasAtraso,
   } = opts;
   const linhas = [
     `Olá, ${clienteNome || "[NOME]"}! ⚠️`,
     "",
     `A moto *${placa}*${modelo ? ` (${modelo})` : ""} está com a *troca de óleo vencida*.`,
-    `Para revalidar a quilometragem no sistema, será necessária uma *vistoria em vídeo* obrigatória.`,
     "",
     `📍 *Limite era:* ${proxOleoKm.toLocaleString("pt-BR")} Km`,
     `🔴 *Km atual:* ${kmAtual.toLocaleString("pt-BR")} Km (+${kmAtraso.toLocaleString("pt-BR")} Km além do limite)`,
@@ -489,16 +486,9 @@ export function buildReincidenciaMessage(opts: {
       ? [`📊 *Média de atraso (últimas ${amostrasAtraso} trocas):* +${Math.round(mediaAtrasoKm).toLocaleString("pt-BR")} Km acima do limite`]
       : []),
     "",
-    `🎥 *INSTRUÇÕES DO VÍDEO (obrigatórias):*`,
-    `• Duração mínima: *1 min e 30s*`,
-    `• Mostrar o *km total* do painel ligado`,
-    `• Gravar *360º* da moto mostrando todos os detalhes (frente, laterais, traseira, pneus)`,
-    `• No início do vídeo, *fale ou escreva* a palavra-chave do dia + a data:`,
-    "",
-    `🔑 *Palavra-chave de hoje:* *${palavraChave.toUpperCase()}*`,
-    `📅 *Data:* ${dataHoje}`,
-    "",
-    `Envie o vídeo agora para revalidarmos a quilometragem no sistema e liberarmos o agendamento da troca. 🛠️`,
+    `Se já trocou, nos envie:`,
+    `📸 Foto do painel (com o km) no dia da troca`,
+    `🧾 Comprovante de pagamento ou nota da oficina`,
     "",
     `Em caso de não envio, a locação poderá ser suspensa conforme contrato.`,
   ];
