@@ -1076,17 +1076,22 @@ export default function CobrancasSemanaPage() {
       .map(e => `• ${metaFor(e.categoria || "").label} — ${fmtBRL(valorAtualDe(e))} (venc. ${fmtDt(e.dataPrevista || e.data)})`)
       .join("\n");
     const observacaoBase = `Acordo de parcelamento de dívida — substitui ${selecionadas.length} cobrança${selecionadas.length !== 1 ? "s" : ""} em atraso, total ${fmtBRL(valorTotal)}:\n${resumoItens}`;
+    // Herda placa/moto/locação das cobranças agrupadas quando todas pertencem à
+    // mesma moto — só fica em branco se o acordo realmente mistura motos diferentes.
+    const placasEnvolvidas = Array.from(new Set(selecionadas.map(e => e.placa).filter(Boolean)));
+    const motoIdsEnvolvidos = Array.from(new Set(selecionadas.map(e => e.motoId).filter(Boolean)));
+    const rentalIdsEnvolvidos = Array.from(new Set(selecionadas.map(e => e.rentalId).filter(Boolean)));
     const base = {
       tipo: "receita" as const,
       categoria: "outro_receita",
       subcategoria: "Parcelamento",
-      motoId: null,
-      rentalId: null,
+      motoId: motoIdsEnvolvidos.length === 1 ? motoIdsEnvolvidos[0] : null,
+      rentalId: rentalIdsEnvolvidos.length === 1 ? rentalIdsEnvolvidos[0] : null,
       clienteId: primeira.clienteId,
       pago: false,
       conta: "",
       natureza: "operacional" as const,
-      placa: "",
+      placa: placasEnvolvidas.join(", "),
       clienteNome: primeira.clienteNome,
       recurringGroupId: groupId,
       tags: ["parcelamento", "acordo-divida"],
@@ -1975,7 +1980,7 @@ export default function CobrancasSemanaPage() {
                 const pay = new Date(form.data + "T00:00:00");
                 const daysOverdue = Math.max(0, Math.floor((pay.getTime() - due.getTime()) / 86400000));
                 if (daysOverdue === 0) return null;
-                const cfg = activeCompany?.cobrancaConfig ?? { multaAtraso: 0, jurosDiario: 0, jurosMes: 0 };
+                const cfg = activeCompany?.cobrancaConfig ?? DEFAULT_COBRANCA_CONFIG;
                 const rental = confirmItem.entry.rentalId ? rentalsById.get(confirmItem.entry.rentalId) : undefined;
                 const multa = rental?.multaAtraso ?? cfg.multaAtraso ?? 0;
                 const jurosMes = rental?.jurosAtrasoMes ?? cfg.jurosMes ?? 0;

@@ -2564,7 +2564,12 @@ export default function FinanceiroPage() {
     // Deduplicar por id para evitar conflito de upsert
     const deduped = entriesWithoutStaleFee.filter((e, i, arr) => arr.findIndex(x => x.id === e.id) === i);
     let finalEntries = deduped;
-    if (isRentalPayment && temAcrescimo) {
+    // Evita duplicar o lançamento de juros/multa quando o pagamento é desfeito e
+    // confirmado de novo: um juros_atraso já PAGO para esta mesma cobrança não é
+    // removido pela limpeza acima (só remove os não pagos), então sem essa checagem
+    // o "confirmar de novo" criava um segundo lançamento idêntico.
+    const jaTemFeePago = deduped.some(e => e.categoria === "juros_atraso" && e.fixedOriginId === aluguelOrigemId && e.pago);
+    if (isRentalPayment && temAcrescimo && !jaTemFeePago) {
       // Quando o valor recebido cobre tudo (pendente ≤ 0), ainda assim cria o lançamento
       // de juros/multa pelo valor total dos acréscimos, mas já marcado como pago.
       const feeAmount = pendente > 0.009 ? pendente : (multa + totalJuros);
