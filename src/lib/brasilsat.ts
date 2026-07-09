@@ -376,17 +376,23 @@ export async function getAlarms(
 // ─── Comandos de dispositivo ──────────────────────────────────────────────────
 
 // Envia comando via API command/send (BrasilSat OPEN API §2.5)
-async function sendCommand(token: string, imei: string, command: string): Promise<string> {
+async function sendCommand(token: string, imei: string, command: string, paramData?: string): Promise<string> {
+  const params: Record<string, string> = { access_token: token, imei, command };
+  if (paramData) params.paramData = paramData;
   const data = await callProxy({
     endpoint: "command/send",
-    params: { access_token: token, imei, command },
+    params,
   });
   return data?.record?.commandid ?? "";
 }
 
-// mileageKm em km; API BrasilSat espera metros (mesmo formato que retorna)
+// mileageKm em km; API BrasilSat espera metros (mesmo formato que retorna).
+// O comando em si é só "SET_MILEAGE" — o valor vai à parte, em paramData como
+// JSON (ex.: {"mileage":"30"}). Mandar o valor colado no command (SET_MILEAGE,30)
+// é rejeitado pela BrasilSat com o erro 20048 "unsupported command".
 export async function setMileage(token: string, imei: string, mileageKm: number): Promise<void> {
-  await sendCommand(token, imei, `SET_MILEAGE,${Math.round(mileageKm * 1000)}`);
+  const meters = Math.round(mileageKm * 1000);
+  await sendCommand(token, imei, "SET_MILEAGE", JSON.stringify({ mileage: String(meters) }));
 }
 
 // value: 0 = bloqueado (cortar combustível), 1 = liberado (restaurar)
