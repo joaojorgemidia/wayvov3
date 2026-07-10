@@ -6,6 +6,7 @@ import { saveRentals, saveMotos, loadFinancial, saveFinancial, loadMotos, loadCl
 import { lastOilChange } from "@/lib/oil-kpis";
 import { useDataCacheSnapshot } from "@/lib/data-cache";
 import { resolveAssociations, AssociationContext } from "@/lib/financial-associations";
+import { computeSemanaPeriodo } from "@/lib/cobranca-week-stats";
 import { addWeeks, addDays, addMonths, isBefore, isEqual, parseISO, differenceInDays } from "date-fns";
 import { useCompany } from "@/contexts/CompanyContext";
 import { DEFAULT_COBRANCA_CONFIG } from "@/lib/companies";
@@ -29,6 +30,43 @@ import { usePermissions } from "@/hooks/usePermissions";
 const statusLabel: Record<string, string> = { ativa: "Ativa", finalizada: "Finalizada", cancelada: "Cancelada" };
 const statusColor: Record<string, string> = { ativa: "bg-success/10 text-success", finalizada: "bg-muted text-muted-foreground", cancelada: "bg-destructive/10 text-destructive" };
 const planoLabel: Record<string, string> = { aluguel: "Só Aluguel", moto_no_final: "Moto no Final" };
+
+/**
+ * Decide o que fazer com uma cobrança pendente de aluguel ao encerrar o contrato:
+ * - período já totalmente usado (fim do período < data de encerramento) → preserva como está (dívida real, já vencida).
+ * - período nem começou (início do período > data de encerramento) → remove (cobrança futura, contrato já não existe mais).
+ * - contrato termina NO MEIO do período (pré ou pós-pago, tanto faz) → preserva e corrige o
+ *   valor para diária real × dias efetivamente usados, sinalizando na observação.
+ * Para categorias fora de aluguel (ou frequência não semanal, sem período calculável), usa
+ * só a data de vencimento: vencida preserva, futura remove.
+ * OBS: `valorDiario` no cadastro da locação guarda o valor do PERÍODO (semana), não de 1 dia
+ * — a diária real é valorDiario / 7.
+ */
+function classifyPendenciaEncerramento(
+  rental: Rental,
+  entry: FinancialEntry,
+  encerrarDataISO: string,
+): { action: "preserve" | "remove"; novoValor?: number; nota?: string } {
+  const dueStr = entry.dataPrevista || entry.data;
+  if (!dueStr) return { action: "preserve" };
+  const categoria = (entry.categoria || "").toLowerCase();
+  if (categoria === "aluguel" && rental.frequenciaPagamento === "semanal" && (rental.valorDiario || 0) > 0) {
+    const { inicio, fim } = computeSemanaPeriodo(rental, parseISO(dueStr));
+    if (inicio && fim) {
+      if (fim < encerrarDataISO) return { action: "preserve" };
+      if (inicio > encerrarDataISO) return { action: "remove" };
+      // Straddle: o contrato termina dentro do período desta cobrança.
+      const diasUsados = Math.max(0, differenceInDays(parseISO(encerrarDataISO), parseISO(inicio)) + 1);
+      const diariaReal = rental.valorDiario / 7;
+      const novoValor = Math.round(Math.min(entry.valor, diariaReal * diasUsados) * 100) / 100;
+      if (novoValor >= entry.valor) return { action: "preserve" };
+      const dataFmt = new Date(encerrarDataISO + "T00:00:00").toLocaleDateString("pt-BR");
+      const nota = `Cobrança recalculada ao encerrar o contrato (${dataFmt}): cobrando apenas ${diasUsados} diária${diasUsados !== 1 ? "s" : ""} (R$ ${diariaReal.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}/dia) até a data final do contrato, em vez do período completo.`;
+      return { action: "preserve", novoValor, nota };
+    }
+  }
+  return dueStr <= encerrarDataISO ? { action: "preserve" } : { action: "remove" };
+}
 
 // Calcula total de pagamentos esperados para o plano "Moto no Final"
 function totalPagamentosEsperados(rental: Rental): number | null {
@@ -545,26 +583,36 @@ export default function LocacoesPage() {
   const openEncerrar = (r: Rental) => {
     setEncerrarRental(r);
     setEncerrarMotivo("");
-    setEncerrarData(localToday());
+    const hoje = localToday();
+    setEncerrarData(hoje);
     setEncerrarKmFim(r.kmFim ? String(r.kmFim) : "");
     setEncerrarObs("");
-    const pendentes = loadFinancial().filter(e => e.rentalId === r.id && !e.pago);
+    const pendentes = loadFinancial().filter(e => e.rentalId === r.id && e.tipo === "receita" && !e.pago && !e.ignorada);
     pendentes.sort((a, b) => (a.data ?? "").localeCompare(b.data ?? ""));
     setEncerrarPendencias(pendentes);
-    setEncerrarSelectedIds(new Set(pendentes.map(e => e.id)));
+    // Padrão: só marca para exclusão as cobranças "futuras" (período ainda não alcançado
+    // pela data de encerramento). Vencidas e a cobrança que abrange a data de encerramento
+    // ficam desmarcadas (preservadas) — o usuário ainda pode marcar manualmente se quiser.
+    const toSelect = pendentes.filter(e => classifyPendenciaEncerramento(r, e, hoje).action === "remove");
+    setEncerrarSelectedIds(new Set(toSelect.map(e => e.id)));
   };
 
   const ASAAS_TERMINAL = ["RECEIVED", "CANCELLED", "REFUNDED", "REFUND_REQUESTED"];
   const cancelAsaasEntries = async (entriesToCancel: FinancialEntry[]) => {
     const cancellable = entriesToCancel.filter(e => !!e.asaasPaymentId && !ASAAS_TERMINAL.includes(e.asaasStatus || ""));
     if (cancellable.length === 0) return;
-    await Promise.allSettled(
+    const results = await Promise.allSettled(
       cancellable.map(e =>
         supabase.functions.invoke("asaas-cancel-payment", {
           body: { asaasPaymentId: e.asaasPaymentId, companyId: activeCompany?.id },
         }),
       ),
     );
+    const failures = results.filter(r => r.status === "fulfilled" && r.value.error).length
+      + results.filter(r => r.status === "rejected").length;
+    if (failures > 0) {
+      toast.warning(`${failures} boleto(s) não puderam ser cancelados no Asaas — cancele manualmente lá.`);
+    }
   };
 
   const confirmEncerrar = async () => {
@@ -603,20 +651,42 @@ export default function LocacoesPage() {
       saveMotos(updatedMotos);
     }
 
-    // Excluir apenas as pendências selecionadas pelo usuário
     const allEntries = loadFinancial();
-    const toRemove = allEntries.filter(e => encerrarSelectedIds.has(e.id));
-    const remaining = allEntries.filter(e => !encerrarSelectedIds.has(e.id));
+
+    // ── Ao encerrar: preserva vencidas, exclui futuras, corrige a cobrança que
+    // abrange a data de encerramento (pré ou pós-pago) para cobrar só os dias
+    // usados. A cobrança corrigida nunca é excluída, mesmo se estava marcada —
+    // depois de corrigida, ela É a cobrança certa a receber.
+    let ajusteCount = 0;
+    const forcedPreserveIds = new Set<string>();
+    const entriesBase = allEntries.map(e => {
+      if (e.rentalId !== encerrarRental.id || e.tipo !== "receita" || e.pago || e.ignorada) return e;
+      const cls = classifyPendenciaEncerramento(encerrarRental, e, encerrarData);
+      if (cls.action === "preserve" && cls.novoValor != null) {
+        forcedPreserveIds.add(e.id);
+        ajusteCount++;
+        return { ...e, valor: cls.novoValor, observacao: [e.observacao, cls.nota].filter(Boolean).join(" — ") };
+      }
+      return e;
+    });
+
+    // Excluir apenas as pendências selecionadas pelo usuário
+    const toRemove = entriesBase.filter(e => encerrarSelectedIds.has(e.id) && !forcedPreserveIds.has(e.id));
+    const remaining = entriesBase.filter(e => !encerrarSelectedIds.has(e.id) || forcedPreserveIds.has(e.id));
     const removedCount = toRemove.length;
     if (removedCount > 0) {
       await cancelAsaasEntries(toRemove);
+    }
+    if (removedCount > 0 || ajusteCount > 0) {
       saveFinancial(remaining);
     }
 
     toast.success(
-      removedCount > 0
-        ? `Locação encerrada. ${removedCount} cobrança(s) pendente(s) removida(s).`
-        : "Locação encerrada com sucesso",
+      [
+        "Locação encerrada.",
+        removedCount > 0 ? `${removedCount} cobrança(s) pendente(s) removida(s).` : "",
+        ajusteCount > 0 ? `${ajusteCount} cobrança(s) recalculada(s) pró-rata.` : "",
+      ].filter(Boolean).join(" "),
     );
     setEncerrarRental(null);
     setEncerrarPendencias([]);

@@ -2263,9 +2263,12 @@ export default function CobrancasSemanaPage() {
                 const num = computeSemanaNumero(rental, due);
                 const { inicio, fim } = computeSemanaPeriodo(rental, due);
                 if (!num || !inicio || !fim) return null;
+                // Se o contrato encerrou no meio desse período, mostra o fim real do
+                // contrato em vez do fim nominal do período (que já não existe mais).
+                const fimEfetivo = rental.dataFim && rental.dataFim >= inicio && rental.dataFim < fim ? rental.dataFim : fim;
                 const freq = rental.frequenciaPagamento;
                 const lbl = freq === "quinzenal" ? "Quinzena" : freq === "mensal" ? "Mês" : "Semana";
-                return `${lbl} ${String(num).padStart(2, "0")}: ${fmt(inicio)} até ${fmt(fim)}`;
+                return `${lbl} ${String(num).padStart(2, "0")}: ${fmt(inicio)} até ${fmt(fimEfetivo)}`;
               };
               const extractFromDesc = (desc: string | undefined) => {
                 if (!desc) return null;

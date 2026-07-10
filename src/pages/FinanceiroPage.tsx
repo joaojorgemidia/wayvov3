@@ -2536,6 +2536,10 @@ export default function FinanceiroPage() {
     let removedRelatedUnpaid = 0;
     let keptRelatedPaid = 0;
     let entriesAfterUndo = updatedEntries;
+    // Entradas removidas nesta função que podem ter boleto Asaas gerado — precisam ser
+    // canceladas lá também, senão o boleto continua ativo cobrando algo que já não existe
+    // mais no financeiro do app.
+    const entriesToCancelInAsaas: FinancialEntry[] = [];
     if (confirmToggleEntry.pago) {
       const related = updatedEntries.filter(e =>
         e.fixedOriginId === confirmToggleEntry.id &&
@@ -2546,6 +2550,7 @@ export default function FinanceiroPage() {
       keptRelatedPaid = related.length - removedRelatedUnpaid;
       if (relatedUnpaidIds.size > 0) {
         entriesAfterUndo = updatedEntries.filter(e => !relatedUnpaidIds.has(e.id));
+        entriesToCancelInAsaas.push(...related.filter(e => relatedUnpaidIds.has(e.id)));
       }
     }
 
@@ -2557,10 +2562,11 @@ export default function FinanceiroPage() {
     // Limpeza de juros obsoletos só faz sentido ao confirmar um aluguel —
     // nunca ao confirmar um juros_atraso direto, pois o payDate coincidiria
     // com o dataPrevista de outros juros legítimos do mesmo cliente.
-    const entriesWithoutStaleFee = isRentalPayment ? entriesAfterUndo.filter(e =>
-      !(e.categoria === "juros_atraso" && e.rentalId === confirmToggleEntry.rentalId && !e.pago &&
-        (e.dataPrevista === payDate || e.fixedOriginId === aluguelOrigemId))
-    ) : entriesAfterUndo;
+    const isStaleFee = (e: FinancialEntry) =>
+      e.categoria === "juros_atraso" && e.rentalId === confirmToggleEntry.rentalId && !e.pago &&
+      (e.dataPrevista === payDate || e.fixedOriginId === aluguelOrigemId);
+    if (isRentalPayment) entriesToCancelInAsaas.push(...entriesAfterUndo.filter(isStaleFee));
+    const entriesWithoutStaleFee = isRentalPayment ? entriesAfterUndo.filter(e => !isStaleFee(e)) : entriesAfterUndo;
     // Deduplicar por id para evitar conflito de upsert
     const deduped = entriesWithoutStaleFee.filter((e, i, arr) => arr.findIndex(x => x.id === e.id) === i);
     let finalEntries = deduped;
@@ -2653,6 +2659,10 @@ export default function FinanceiroPage() {
         createdAt: new Date().toISOString(),
       };
       finalEntries = [...finalEntries, restanteEntry];
+    }
+
+    if (entriesToCancelInAsaas.length > 0) {
+      cancelAsaasPayments(entriesToCancelInAsaas);
     }
 
     persist(finalEntries).catch(err => {

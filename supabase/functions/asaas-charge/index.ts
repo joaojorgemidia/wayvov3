@@ -61,6 +61,8 @@ function computeSemanaPeriodo(dataInicio: string, cobrancaPrePaga: boolean, dueS
   return { inicio: inicioPeriodo, fim: fimPeriodo };
 }
 
+const fmtBRL = (v: number) => `R$ ${v.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -267,11 +269,23 @@ serve(async (req) => {
     let valorBoleto = baseValor;
     let fineToApply: { value: number; type: string } | null = null;
     let interestToApply: { value: number } | null = null;
+    // Explicação do valor quando a multa/juros já vêm embutidos no valor do boleto (cobrança
+    // já vencida na hora de gerar) — mesmo formato usado pelo cron asaas-update-fines, pra não
+    // ficar um valor "seco" sem explicar de onde veio o acréscimo.
+    let explicacaoAtraso: string | null = null;
 
     if (isAluguelOuCaucao) {
       if (diasAtrasoReal > 0) {
-        const jurosCalc = baseValor * (jurosAtrasoMes / 100 / 30) * diasAtrasoReal + jurosDiario * diasAtrasoReal + multaAtraso;
+        const jurosDiarioTotal = jurosDiario * diasAtrasoReal;
+        const jurosMesTotal = baseValor * (jurosAtrasoMes / 100 / 30) * diasAtrasoReal;
+        const jurosCalc = jurosMesTotal + jurosDiarioTotal + multaAtraso;
         valorBoleto = Math.round((baseValor + jurosCalc) * 100) / 100;
+
+        const parts: string[] = [`Valor original ${fmtBRL(baseValor)}`];
+        if (multaAtraso > 0) parts.push(`Multa ${fmtBRL(multaAtraso)}`);
+        if (jurosDiarioTotal > 0) parts.push(`Juros ${fmtBRL(jurosDiario)}/dia × ${diasAtrasoReal}d = ${fmtBRL(jurosDiarioTotal)}`);
+        if (jurosMesTotal > 0) parts.push(`Juros ${jurosAtrasoMes}%/mês (${diasAtrasoReal}d) = ${fmtBRL(jurosMesTotal)}`);
+        explicacaoAtraso = `${parts.join(" + ")} = ${fmtBRL(valorBoleto)} (${diasAtrasoReal}d em atraso)`;
       } else {
         if (multaAtraso > 0 && multaAtraso < baseValor) {
           fineToApply = { value: multaAtraso, type: "FIXED" };
@@ -295,7 +309,7 @@ serve(async (req) => {
             contratoNumero != null ? `Contrato #${contratoNumero}` : null,
             placa ? `Placa ${placa}` : null,
             semanaRef,
-            entry.observacao ? String(entry.observacao) : null,
+            explicacaoAtraso || (entry.observacao ? String(entry.observacao) : null),
           ].filter(Boolean).join(" · "),
       externalReference: entry.id,
       postalService: false,
@@ -359,7 +373,8 @@ serve(async (req) => {
 
     const payment = await asaas("/payments", "POST", apiKey, paymentPayload);
 
-    // 5. Atualiza a entrada com os dados do boleto
+    // 5. Atualiza a entrada com os dados do boleto (e a explicação do acréscimo, se houver,
+    // pra ficar igual ao que o asaas-update-fines grava quando recalcula um boleto vencido)
     await supabase
       .from("financial_entries")
       .update({
@@ -367,6 +382,7 @@ serve(async (req) => {
         asaas_status: payment.status,
         asaas_boleto_url: payment.bankSlipUrl || null,
         asaas_invoice_url: payment.invoiceUrl || null,
+        ...(explicacaoAtraso ? { observacao: explicacaoAtraso } : {}),
       })
       .eq("id", entryId);
 

@@ -64,7 +64,9 @@ serve(async (req) => {
     }
     if (!apiKey) throw new Error("Chave de API Asaas não configurada para esta empresa");
 
-    const result = await asaas(`/payments/${asaasPaymentId}/cancel`, "POST", apiKey);
+    // A API do Asaas não tem um endpoint "/cancel" — cancelar um boleto pendente é feito
+    // com DELETE direto no recurso (POST .../cancel não existe e retorna 404).
+    const result = await asaas(`/payments/${asaasPaymentId}`, "DELETE", apiKey);
 
     return new Response(
       JSON.stringify({ success: true, deleted: result.deleted }),
