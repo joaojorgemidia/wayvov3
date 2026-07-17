@@ -38,6 +38,19 @@ export interface DetranConfig {
   uf?: string;         // UF padrão da frota (default: "GO")
 }
 
+export interface SicoobConfig {
+  enabled: boolean;
+  clientId?: string;                // client_id do app cadastrado no Sicoob Developers
+  ambiente?: "sandbox" | "producao";
+  contaCorrente?: { numero?: string; agencia?: string; cooperativa?: string };
+  bankAccountId?: string | null;     // bank_accounts.id vinculado
+  bankAccountNome?: string | null;   // snapshot do nome, usado em financial_entries.conta
+  scopes?: string[];
+  lastSyncAt?: string | null;
+  lastSyncCursor?: string | null;
+  certificateSecretName?: string;   // nome do secret na Edge Function — nunca o certificado em si
+}
+
 export interface CobrancaConfig {
   multaAtraso: number;   // R$ fixos por atraso
   jurosDiario: number;   // R$ por dia de atraso
@@ -58,6 +71,7 @@ export interface Company {
   detranConfig?: DetranConfig | null;
   cobrancaConfig?: CobrancaConfig | null;
   autentiqueConfig?: AutentiqueConfig | null;
+  sicoobConfig?: SicoobConfig | null;
 }
 
 const COMPANIES_KEY = "moto-fleet-companies-v1";

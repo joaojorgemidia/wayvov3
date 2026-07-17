@@ -18,7 +18,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Table, TableHeader, TableBody, TableHead, TableRow, TableCell } from "@/components/ui/table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Plus, Search, FileText, Eye, Trash2, Pencil, XCircle, History, CheckCircle2, MoreHorizontal, Wallet, AlertTriangle, Flag, CalendarClock, Copy } from "lucide-react";
+import { Plus, Search, FileText, Eye, Trash2, Pencil, XCircle, History, CheckCircle2, MoreHorizontal, Wallet, AlertTriangle, Flag, CalendarClock, Copy, Bike } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuLabel, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import RentalWizard from "@/components/locacoes/RentalWizard";
@@ -213,6 +213,16 @@ const MOTIVOS_ENCERRAMENTO = [
   "Outro",
 ];
 
+const MOTIVOS_TROCA_MOTO = [
+  "Quebra / Pane mecânica",
+  "Acidente / Sinistro",
+  "Manutenção prolongada",
+  "Solicitação do cliente",
+  "Upgrade / Downgrade de plano",
+  "Venda da moto anterior",
+  "Outro",
+];
+
 function makeEmptyRental(defaults?: { multaAtraso?: number; jurosAtrasoMes?: number }): Rental {
   return {
     id: crypto.randomUUID(), motoId: "", clienteId: "", vendedor: "",
@@ -257,6 +267,15 @@ export default function LocacoesPage() {
   const [encerrarObs, setEncerrarObs] = useState("");
   const [encerrarPendencias, setEncerrarPendencias] = useState<FinancialEntry[]>([]);
   const [encerrarSelectedIds, setEncerrarSelectedIds] = useState<Set<string>>(new Set());
+
+  // Troca de moto (mesma locação continua, só o veículo muda)
+  const [trocarMotoRental, setTrocarMotoRental] = useState<Rental | null>(null);
+  const [trocarMotoNovaId, setTrocarMotoNovaId] = useState("");
+  const [trocarMotoData, setTrocarMotoData] = useState(localToday());
+  const [trocarMotoMotivo, setTrocarMotoMotivo] = useState("");
+  const [trocarMotoKmAntiga, setTrocarMotoKmAntiga] = useState("");
+  const [trocarMotoKmNova, setTrocarMotoKmNova] = useState("");
+  const [trocarMotoObs, setTrocarMotoObs] = useState("");
 
   const { canCreate, canEdit, canDelete } = usePermissions();
   const persist = (d: Rental[]) => { setRentals(d); saveRentals(d); };
@@ -693,6 +712,108 @@ export default function LocacoesPage() {
     setEncerrarSelectedIds(new Set());
   };
 
+  const openTrocarMoto = (r: Rental) => {
+    setTrocarMotoRental(r);
+    setTrocarMotoNovaId("");
+    setTrocarMotoData(localToday());
+    setTrocarMotoMotivo("");
+    const moto = motos.find(m => m.id === r.motoId);
+    setTrocarMotoKmAntiga(moto?.kmAtual ? String(moto.kmAtual) : "");
+    setTrocarMotoKmNova("");
+    setTrocarMotoObs("");
+  };
+
+  // Motos disponíveis para receber a locação (exclui a moto atual da própria locação)
+  const motosDisponiveisParaTroca = trocarMotoRental
+    ? motos.filter(m => m.status === "disponivel" && m.id !== trocarMotoRental.motoId)
+    : [];
+
+  const confirmTrocarMoto = async () => {
+    if (!trocarMotoRental) return;
+    if (!trocarMotoNovaId) { toast.error("Selecione a nova moto"); return; }
+    if (!trocarMotoMotivo) { toast.error("Selecione o motivo da troca"); return; }
+    if (!trocarMotoData) { toast.error("Informe a data da troca"); return; }
+
+    const motoAntiga = motos.find(m => m.id === trocarMotoRental.motoId);
+    const motoNova = motos.find(m => m.id === trocarMotoNovaId);
+    if (!motoNova) { toast.error("Moto selecionada não encontrada"); return; }
+
+    const placaAntiga = motoAntiga?.placa || "—";
+    const placaNova = motoNova.placa || "—";
+    const today = localToday();
+
+    // 1) Registra a narrativa da troca nas observações da locação (mesmo padrão do encerramento)
+    // e atualiza o veículo vinculado — a locação em si continua a mesma.
+    const obsBlock = [
+      `--- Troca de Moto ---`,
+      `De: ${placaAntiga} (${motoAntiga?.modelo || "—"}) → Para: ${placaNova} (${motoNova.modelo || "—"})`,
+      `Data: ${new Date(trocarMotoData + "T00:00:00").toLocaleDateString("pt-BR")}`,
+      `Motivo: ${trocarMotoMotivo}`,
+      trocarMotoKmAntiga ? `KM final (moto anterior): ${trocarMotoKmAntiga}` : "",
+      trocarMotoKmNova ? `KM inicial (moto nova): ${trocarMotoKmNova}` : "",
+      trocarMotoObs ? `Obs: ${trocarMotoObs}` : "",
+    ].filter(Boolean).join("\n");
+
+    const updatedRental: Rental = {
+      ...trocarMotoRental,
+      motoId: trocarMotoNovaId,
+      observacoes: [trocarMotoRental.observacoes, obsBlock].filter(Boolean).join("\n"),
+    };
+    persist(loadRentals().map(r => r.id === trocarMotoRental.id ? updatedRental : r));
+
+    // 2) Atualiza as duas motos: a antiga volta a ficar disponível, a nova passa a "alugada"
+    // (mesmo padrão explícito usado em handleSaveRental/confirmEncerrar — não depende do
+    // efeito de sincronização de MotosPage, que só roda com a página aberta).
+    const kmAntigaNum = trocarMotoKmAntiga ? Number(trocarMotoKmAntiga) : null;
+    const kmNovaNum = trocarMotoKmNova ? Number(trocarMotoKmNova) : null;
+    const allMotos = loadMotos();
+    const updatedMotos = allMotos.map(m => {
+      if (m.id === trocarMotoRental.motoId) {
+        const updates: Partial<Motorcycle> = { status: "disponivel" as const };
+        if (kmAntigaNum && (!m.kmAtual || m.kmAtual < kmAntigaNum)) updates.kmAtual = kmAntigaNum;
+        return { ...m, ...updates };
+      }
+      if (m.id === trocarMotoNovaId) {
+        const updates: Partial<Motorcycle> = { status: "alugada" as const };
+        if (kmNovaNum) {
+          const lastChange = lastOilChange(m);
+          if (!lastChange || lastChange.km < kmNovaNum) {
+            updates.historicoOleo = [...(m.historicoOleo || []), { id: crypto.randomUUID(), data: trocarMotoData, km: kmNovaNum } as OilChangeRecord];
+          }
+          if (!m.kmAtual || m.kmAtual < kmNovaNum) updates.kmAtual = kmNovaNum;
+        }
+        return { ...m, ...updates };
+      }
+      return m;
+    });
+    saveMotos(updatedMotos);
+
+    // 3) Lançamentos financeiros: "o que passou não mexe" — só cobranças ainda não vencidas
+    // (pendentes, com vencimento hoje ou no futuro) passam a referenciar a moto nova.
+    const allEntries = loadFinancial();
+    let atualizados = 0;
+    const updatedEntries = allEntries.map(e => {
+      if (e.rentalId !== trocarMotoRental.id) return e;
+      if (e.pago) return e;
+      const vencimento = e.dataPrevista || e.data;
+      if (!vencimento || vencimento < today) return e;
+      atualizados++;
+      return {
+        ...e,
+        motoId: trocarMotoNovaId,
+        placa: placaNova,
+        descricao: placaAntiga !== "—" ? e.descricao.split(placaAntiga).join(placaNova) : e.descricao,
+      };
+    });
+    if (atualizados > 0) saveFinancial(updatedEntries);
+
+    toast.success(
+      `Moto trocada: ${placaAntiga} → ${placaNova}.` +
+      (atualizados > 0 ? ` ${atualizados} cobrança(s) futura(s) atualizada(s).` : ""),
+    );
+    setTrocarMotoRental(null);
+  };
+
   const handleDelete = async (rental: Rental) => {
     persist(loadRentals().filter(r => r.id !== rental.id));
     const allEntries = loadFinancial();
@@ -884,6 +1005,16 @@ export default function LocacoesPage() {
                     {showActions === "ativa" && canEdit && (
                       <Button variant="ghost" size="sm" className="h-7 w-7 p-0" title="Editar locação" onClick={() => openEdit(r)}>
                         <Pencil className="h-3.5 w-3.5" />
+                      </Button>
+                    )}
+                    {showActions === "ativa" && canEdit && (
+                      <Button
+                        variant="ghost" size="sm"
+                        className="h-7 w-7 p-0 text-blue-500 hover:text-blue-600"
+                        title="Trocar moto"
+                        onClick={() => openTrocarMoto(r)}
+                      >
+                        <Bike className="h-3.5 w-3.5" />
                       </Button>
                     )}
                     {showActions === "ativa" && canEdit && (
@@ -1280,6 +1411,92 @@ export default function LocacoesPage() {
         </DialogContent>
       </Dialog>
 
+      {/* Trocar Moto — a locação continua a mesma, só o veículo muda */}
+      <Dialog open={!!trocarMotoRental} onOpenChange={() => setTrocarMotoRental(null)}>
+        <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-blue-600">
+              <Bike className="h-5 w-5" />
+              Trocar Moto {trocarMotoRental ? getNumero(trocarMotoRental) : ""}
+            </DialogTitle>
+          </DialogHeader>
+          {trocarMotoRental && (
+            <div className="space-y-4">
+              <div className="rounded-md bg-muted/50 p-3 text-sm space-y-1">
+                <p><span className="text-muted-foreground">Moto atual:</span> <span className="font-mono font-bold">{getMotoPlaca(trocarMotoRental.motoId)}</span> — {getMotoModelo(trocarMotoRental.motoId)}</p>
+                <p><span className="text-muted-foreground">Cliente:</span> {getRentalClientLabel(trocarMotoRental)}</p>
+              </div>
+
+              <div className="space-y-2">
+                <Label>Nova moto *</Label>
+                <Select value={trocarMotoNovaId} onValueChange={setTrocarMotoNovaId}>
+                  <SelectTrigger>
+                    <SelectValue placeholder={motosDisponiveisParaTroca.length ? "Selecione a moto" : "Nenhuma moto disponível"} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {motosDisponiveisParaTroca.map(m => (
+                      <SelectItem key={m.id} value={m.id}>{m.placa} — {m.modelo}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {motosDisponiveisParaTroca.length === 0 && (
+                  <p className="text-xs text-muted-foreground">Nenhuma moto com status "disponível" na frota no momento.</p>
+                )}
+              </div>
+
+              <div className="space-y-2">
+                <Label>Motivo da troca *</Label>
+                <Select value={trocarMotoMotivo} onValueChange={setTrocarMotoMotivo}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Selecione o motivo" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {MOTIVOS_TROCA_MOTO.map(m => (
+                      <SelectItem key={m} value={m}>{m}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="grid grid-cols-1 gap-3">
+                <div className="space-y-2">
+                  <Label>Data da troca *</Label>
+                  <Input type="date" value={trocarMotoData} onChange={e => setTrocarMotoData(e.target.value)} />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-2">
+                  <Label>KM final (moto anterior)</Label>
+                  <Input type="number" placeholder="Ex: 45000" value={trocarMotoKmAntiga} onChange={e => setTrocarMotoKmAntiga(e.target.value)} />
+                </div>
+                <div className="space-y-2">
+                  <Label>KM inicial (moto nova)</Label>
+                  <Input type="number" placeholder="Ex: 12000" value={trocarMotoKmNova} onChange={e => setTrocarMotoKmNova(e.target.value)} />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label>Observações</Label>
+                <Textarea placeholder="Detalhes sobre a troca..." value={trocarMotoObs} onChange={e => setTrocarMotoObs(e.target.value)} rows={3} />
+              </div>
+
+              <p className="text-xs text-muted-foreground border-t pt-2">
+                A moto atual volta a ficar disponível na frota. Cobranças já pagas ou já vencidas
+                não são alteradas — só as cobranças futuras desta locação passam a referenciar a
+                moto nova.
+              </p>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setTrocarMotoRental(null)}>Cancelar</Button>
+            <Button onClick={confirmTrocarMoto} className="gap-2 bg-blue-600 hover:bg-blue-700">
+              <Bike className="h-4 w-4" /> Confirmar Troca
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* View Rental Dialog */}
       <Dialog open={!!viewRental} onOpenChange={() => setViewRental(null)}>
         <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
@@ -1362,6 +1579,11 @@ export default function LocacoesPage() {
                   {canEdit && (
                     <Button variant="outline" size="sm" className="gap-1" onClick={() => { setViewRental(null); openEdit(viewRental); }}>
                       <Pencil className="h-3.5 w-3.5" /> Editar Locação
+                    </Button>
+                  )}
+                  {canEdit && (
+                    <Button variant="outline" size="sm" className="gap-1 text-blue-600 border-blue-200 hover:text-blue-700" onClick={() => { setViewRental(null); openTrocarMoto(viewRental); }}>
+                      <Bike className="h-3.5 w-3.5" /> Trocar Moto
                     </Button>
                   )}
                   {canEdit && (

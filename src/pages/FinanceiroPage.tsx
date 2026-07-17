@@ -41,7 +41,9 @@ import { useDataCacheSnapshot } from "@/lib/data-cache";
 import { getCompanyFeatureFlags, DEFAULT_COBRANCA_CONFIG } from "@/lib/companies";
 import { useCompany } from "@/contexts/CompanyContext";
 import { ImportExportBar } from "@/components/ImportExportBar";
-import { useBankAccounts } from "@/hooks/useSupabaseData";
+import { useBankAccounts, useSicoobTransactions, useCategorizationRules } from "@/hooks/useSupabaseData";
+import { suggestPatternFromDescription } from "@/lib/sicoob-matching";
+import { SicoobImportacoesTab } from "@/components/financeiro/SicoobImportacoesTab";
 import { supabase } from "@/integrations/supabase/client";
 import { reconcileCardInvoices, getCardInvoicesList, computeCardInvoiceYm } from "@/lib/credit-card-invoices";
 import { calculateAccountBalances } from "@/lib/account-balances";
@@ -852,6 +854,12 @@ export default function FinanceiroPage() {
   const [advBank, setAdvBank] = useState("");
   const [advNote, setAdvNote] = useState("");
   const [activeTab, setActiveTab] = useState("transacoes");
+  const { data: sicoobTransactionsData } = useSicoobTransactions();
+  const { upsertByPattern: upsertCategorizationRule } = useCategorizationRules();
+  const sicoobPendentesCount = useMemo(
+    () => (sicoobTransactionsData || []).filter((t) => t.status === "pendente" || t.status === "categorizado").length,
+    [sicoobTransactionsData],
+  );
   const [rowsPerPage, setRowsPerPage] = useState(50);
   const [currentPage, setCurrentPage] = useState(1);
   const [selectedCCCard, setSelectedCCCard] = useState<any>(null);
@@ -1964,6 +1972,32 @@ export default function FinanceiroPage() {
       syncAsaasPayment(normalizedEntry, prevEntry).catch(() => {});
     }
 
+    // Aprende com a correção manual: se o usuário reclassificou um lançamento
+    // importado do extrato Sicoob, oferece salvar/atualizar a regra de categorização
+    // para que descrições parecidas já venham certas da próxima vez.
+    if (
+      isEditing && prevEntry?.sicoobTransactionId &&
+      (normalizedEntry.categoria !== prevEntry.categoria || (normalizedEntry.subcategoria || "") !== (prevEntry.subcategoria || ""))
+    ) {
+      const padraoSugerido = suggestPatternFromDescription(normalizedEntry.descricao);
+      if (padraoSugerido) {
+        toast("Atualizar regra de categorização para descrições parecidas?", {
+          action: {
+            label: "Salvar regra",
+            onClick: () => {
+              upsertCategorizationRule({
+                padrao: padraoSugerido,
+                tipo: normalizedEntry.tipo,
+                categoria: normalizedEntry.categoria,
+                subcategoria: normalizedEntry.subcategoria || null,
+                tags: normalizedEntry.tags || [],
+              }).catch(() => {});
+            },
+          },
+        });
+      }
+    }
+
     // Sync "venda_moto" entries back to the motorcycle record
     if (normalizedEntry.categoria === "venda_moto" && normalizedEntry.motoId) {
       const allMotos = loadMotos();
@@ -2530,9 +2564,11 @@ export default function FinanceiroPage() {
     // ── Desfazendo confirmação: remove juros/multa e saldo restante derivados ──
     // Um pagamento confirmado pode ter gerado um lançamento de juros_atraso (atraso)
     // ou um "Saldo restante" (pagamento parcial), ambos com fixedOriginId apontando
-    // para este lançamento. Ao desfazer, esses derivados perdem sentido — se ainda
-    // não foram pagos, são excluídos junto; se já foram pagos separadamente, ficam
-    // como estão (representam dinheiro que de fato entrou).
+    // para este lançamento. Ao desfazer, esses derivados perdem sentido — são excluídos
+    // junto, exceto os que representam dinheiro que de fato entrou separadamente depois
+    // (pagos numa confirmação própria, não na tag "juros_pago_na_confirmacao" — ver criação
+    // do feeEntry abaixo). Um juros que nasceu já pago (quitado junto com o aluguel, o
+    // caminho mais comum) não teve entrada própria, então some junto ao desfazer.
     let removedRelatedUnpaid = 0;
     let keptRelatedPaid = 0;
     let entriesAfterUndo = updatedEntries;
@@ -2545,12 +2581,13 @@ export default function FinanceiroPage() {
         e.fixedOriginId === confirmToggleEntry.id &&
         (e.categoria === "juros_atraso" || (e.observacao || "").startsWith("Saldo devedor de pagamento parcial"))
       );
-      const relatedUnpaidIds = new Set(related.filter(e => !e.pago).map(e => e.id));
-      removedRelatedUnpaid = relatedUnpaidIds.size;
+      const isRemovable = (e: FinancialEntry) => !e.pago || !!e.tags?.includes("juros_pago_na_confirmacao");
+      const relatedRemovableIds = new Set(related.filter(isRemovable).map(e => e.id));
+      removedRelatedUnpaid = relatedRemovableIds.size;
       keptRelatedPaid = related.length - removedRelatedUnpaid;
-      if (relatedUnpaidIds.size > 0) {
-        entriesAfterUndo = updatedEntries.filter(e => !relatedUnpaidIds.has(e.id));
-        entriesToCancelInAsaas.push(...related.filter(e => relatedUnpaidIds.has(e.id)));
+      if (relatedRemovableIds.size > 0) {
+        entriesAfterUndo = updatedEntries.filter(e => !relatedRemovableIds.has(e.id));
+        entriesToCancelInAsaas.push(...related.filter(e => relatedRemovableIds.has(e.id)));
       }
     }
 
@@ -2604,7 +2641,13 @@ export default function FinanceiroPage() {
         pago: feePago,
         conta: confirmConta || confirmToggleEntry.conta || "",
         natureza: confirmToggleEntry.natureza || "operacional",
-        tags: confirmToggleEntry.categoria === "juros_atraso" ? ["sem_juros"] : [],
+        tags: [
+          ...(confirmToggleEntry.categoria === "juros_atraso" ? ["sem_juros"] : []),
+          // Marca que este juros nasceu já quitado (pago junto com o aluguel na mesma
+          // confirmação), para o "desfazer" saber que pode excluí-lo mesmo com pago:true —
+          // ver bloco "Desfazendo confirmação" acima.
+          ...(feePago ? ["juros_pago_na_confirmacao"] : []),
+        ],
         rentalId: confirmToggleEntry.rentalId ?? null,
         clienteId: confirmToggleEntry.clienteId ?? null,
         clienteNome: confirmToggleEntry.clienteNome || "",
@@ -3763,6 +3806,7 @@ export default function FinanceiroPage() {
               { value: "categorias", label: "Categorias" },
               { value: "evolucao", label: "Evolução" },
               { value: "repasse", label: "Repasse" },
+              { value: "importacoes", label: "Importações" },
             ].map(tab => (
               <button key={tab.value}
                 onClick={() => setActiveTab(tab.value)}
@@ -3772,6 +3816,11 @@ export default function FinanceiroPage() {
                     : "text-muted-foreground hover:text-foreground"
                 }`}>
                 {tab.label}
+                {tab.value === "importacoes" && sicoobPendentesCount > 0 && (
+                  <span className="ml-1.5 inline-flex items-center justify-center rounded-full bg-primary text-primary-foreground text-[10px] w-4 h-4">
+                    {sicoobPendentesCount}
+                  </span>
+                )}
                 {activeTab === tab.value && (
                   <span className="absolute bottom-0 left-0 right-0 h-[2px] bg-primary rounded-t-full" />
                 )}
@@ -4685,6 +4734,11 @@ export default function FinanceiroPage() {
               </div>
             </>
           )}
+        </TabsContent>
+
+        {/* TAB: Importações (extrato bancário) */}
+        <TabsContent value="importacoes" className="mt-4">
+          <SicoobImportacoesTab />
         </TabsContent>
       </Tabs>}
 

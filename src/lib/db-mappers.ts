@@ -1,4 +1,4 @@
-import type { Motorcycle, Client, Rental, Fine, Maintenance, FinancialEntry } from "@/lib/types";
+import type { Motorcycle, Client, Rental, Fine, Maintenance, FinancialEntry, SicoobTransaction, CategorizationRule } from "@/lib/types";
 
 export interface BankAccountData {
   id: string;
@@ -228,6 +228,7 @@ export function dbToFinancial(r: any): FinancialEntry {
     asaasStatus: r.asaas_status || null,
     asaasBoletoUrl: r.asaas_boleto_url || null,
     asaasInvoiceUrl: r.asaas_invoice_url || null,
+    sicoobTransactionId: r.sicoob_transaction_id || null,
   };
 }
 
@@ -252,6 +253,7 @@ export function financialToDb(e: FinancialEntry): any {
     asaas_status: e.asaasStatus || null,
     asaas_boleto_url: e.asaasBoletoUrl || null,
     asaas_invoice_url: e.asaasInvoiceUrl || null,
+    sicoob_transaction_id: e.sicoobTransactionId || null,
   };
 }
 
@@ -261,6 +263,87 @@ export function dbToBankAccount(r: any): BankAccountData {
 
 export function bankAccountToDb(a: any) {
   return { nome: a.nome, banco: a.banco, saldo_inicial: a.saldoInicial };
+}
+
+export function dbToSicoobTransaction(r: any): SicoobTransaction {
+  return {
+    id: r.id,
+    bankAccountId: r.bank_account_id || null,
+    sicoobTransactionId: r.sicoob_transaction_id,
+    data: r.data,
+    tipo: r.tipo,
+    valor: Number(r.valor) || 0,
+    descricao: r.descricao || "",
+    descricaoNormalizada: r.descricao_normalizada || "",
+    rawPayload: r.raw_payload || {},
+    status: r.status || "pendente",
+    matchedFinancialEntryId: r.matched_financial_entry_id || null,
+    generatedFinancialEntryId: r.generated_financial_entry_id || null,
+    candidateFinancialEntryIds: r.candidate_financial_entry_ids || [],
+    appliedRuleId: r.applied_rule_id || null,
+    suggestedCategoria: r.suggested_categoria || null,
+    suggestedSubcategoria: r.suggested_subcategoria || null,
+    suggestedTags: r.suggested_tags || [],
+    reviewedAt: r.reviewed_at || null,
+    reviewedBy: r.reviewed_by || null,
+    createdAt: r.created_at || undefined,
+  };
+}
+
+export function sicoobTransactionToDb(t: SicoobTransaction): any {
+  return {
+    bank_account_id: t.bankAccountId || null,
+    sicoob_transaction_id: t.sicoobTransactionId,
+    data: t.data,
+    tipo: t.tipo,
+    valor: t.valor,
+    descricao: t.descricao,
+    descricao_normalizada: t.descricaoNormalizada,
+    raw_payload: t.rawPayload || {},
+    status: t.status,
+    matched_financial_entry_id: t.matchedFinancialEntryId || null,
+    generated_financial_entry_id: t.generatedFinancialEntryId || null,
+    candidate_financial_entry_ids: t.candidateFinancialEntryIds || [],
+    applied_rule_id: t.appliedRuleId || null,
+    suggested_categoria: t.suggestedCategoria || null,
+    suggested_subcategoria: t.suggestedSubcategoria || null,
+    suggested_tags: t.suggestedTags || [],
+    reviewed_at: t.reviewedAt || null,
+    reviewed_by: t.reviewedBy || null,
+  };
+}
+
+export function dbToCategorizationRule(r: any): CategorizationRule {
+  return {
+    id: r.id,
+    padrao: r.padrao,
+    tipo: r.tipo,
+    categoria: r.categoria,
+    subcategoria: r.subcategoria || null,
+    tags: r.tags || [],
+    origemEscopo: r.origem_escopo || "sicoob",
+    fonte: r.fonte,
+    prioridade: r.prioridade ?? 0,
+    usosCount: r.usos_count ?? 0,
+    lastUsedAt: r.last_used_at || null,
+    ativo: r.ativo ?? true,
+  };
+}
+
+export function categorizationRuleToDb(rule: CategorizationRule): any {
+  return {
+    padrao: rule.padrao,
+    tipo: rule.tipo,
+    categoria: rule.categoria,
+    subcategoria: rule.subcategoria || null,
+    tags: rule.tags || [],
+    origem_escopo: rule.origemEscopo || "sicoob",
+    fonte: rule.fonte,
+    prioridade: rule.prioridade ?? 0,
+    usos_count: rule.usosCount ?? 0,
+    last_used_at: rule.lastUsedAt || null,
+    ativo: rule.ativo ?? true,
+  };
 }
 
 // ─── Table mapper registry ──────────────────────────────────────

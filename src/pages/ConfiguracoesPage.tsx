@@ -5,23 +5,27 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
-import { Settings, CreditCard, CheckCircle2, XCircle, ShieldCheck, Car, Receipt, FileSignature, Eye, EyeOff } from "lucide-react";
+import { Settings, CreditCard, CheckCircle2, XCircle, ShieldCheck, Car, Receipt, FileSignature, Eye, EyeOff, Landmark } from "lucide-react";
 import AsaasConfigDialog from "@/components/AsaasConfigDialog";
 import DetranConfigDialog from "@/components/DetranConfigDialog";
-import { AsaasConfig, DetranConfig, CobrancaConfig, DEFAULT_COBRANCA_CONFIG } from "@/lib/companies";
+import SicoobConfigDialog from "@/components/SicoobConfigDialog";
+import { AsaasConfig, DetranConfig, CobrancaConfig, SicoobConfig, DEFAULT_COBRANCA_CONFIG } from "@/lib/companies";
 import { useBankAccounts } from "@/hooks/useSupabaseData";
+import { seedDefaultCategorizationRules } from "@/lib/categorization-rules-seed";
 import { toast } from "sonner";
 
 export default function ConfiguracoesPage() {
-  const { activeCompany, updateAsaasConfig, updateDetranConfig, updateCobrancaConfig, updateAutentiqueConfig } = useCompany();
+  const { activeCompany, updateAsaasConfig, updateDetranConfig, updateCobrancaConfig, updateAutentiqueConfig, updateSicoobConfig } = useCompany();
   const { data: bankAccounts, save: saveBankAccount } = useBankAccounts();
   const [asaasOpen, setAsaasOpen] = useState(false);
   const [detranOpen, setDetranOpen] = useState(false);
+  const [sicoobOpen, setSicoobOpen] = useState(false);
   const [showAutToken, setShowAutToken] = useState(false);
   const [autToken, setAutToken] = useState(activeCompany?.autentiqueConfig?.token || "");
 
   const asaasCfg = activeCompany?.asaasConfig;
   const detranCfg = activeCompany?.detranConfig;
+  const sicoobCfg = activeCompany?.sicoobConfig;
   const cobrancaCfg = activeCompany?.cobrancaConfig ?? DEFAULT_COBRANCA_CONFIG;
   const [multaValue, setMultaValue] = useState(String(cobrancaCfg.multaAtraso));
   const [jurosValue, setJurosValue] = useState(String(cobrancaCfg.jurosDiario));
@@ -45,6 +49,32 @@ export default function ConfiguracoesPage() {
       });
       toast.success("Conta \"Asaas\" criada automaticamente em Contas.");
     }
+  };
+
+  const handleSaveSicoob = async (config: SicoobConfig) => {
+    let finalConfig = config;
+    // Cria a conta "Sicoob" automaticamente se o usuário ativou sem escolher uma conta —
+    // sem ela, não há onde lançar os créditos/débitos importados do extrato.
+    if (config.enabled && !config.bankAccountId) {
+      const jaTemContaSicoob = bankAccounts.some(a => a.nome === "Sicoob" || a.banco === "Sicoob");
+      if (!jaTemContaSicoob) {
+        const newAccountId = crypto.randomUUID();
+        await saveBankAccount({
+          id: newAccountId,
+          nome: "Sicoob",
+          banco: "Sicoob",
+          saldoInicial: 0,
+          tipo: "banco",
+          diaFechamento: null,
+          diaVencimento: null,
+          limite: 0,
+        });
+        finalConfig = { ...config, bankAccountId: newAccountId, bankAccountNome: "Sicoob" };
+        toast.success("Conta \"Sicoob\" criada automaticamente em Contas.");
+      }
+    }
+    await updateSicoobConfig(activeCompany.id, finalConfig);
+    if (finalConfig.enabled) await seedDefaultCategorizationRules(activeCompany.id);
   };
 
   const handleSaveDetran = async (config: DetranConfig | null) => {
@@ -191,6 +221,41 @@ export default function ConfiguracoesPage() {
         </CardContent>
       </Card>
 
+      {/* ── Sicoob ─────────────────────────────────────────────────────── */}
+      <Card>
+        <CardHeader className="pb-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Landmark className="h-4 w-4 text-muted-foreground" />
+              <CardTitle className="text-base">Extrato Bancário (Sicoob)</CardTitle>
+            </div>
+            {sicoobCfg?.enabled
+              ? <Badge variant="default" className="gap-1 text-xs"><CheckCircle2 className="h-3 w-3" />Ativo</Badge>
+              : <Badge variant="secondary" className="gap-1 text-xs"><XCircle className="h-3 w-3" />Inativo</Badge>
+            }
+          </div>
+          <CardDescription>
+            Importe automaticamente os lançamentos do extrato Sicoob, conciliando com cobranças
+            existentes e categorizando o restante por regra.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {sicoobCfg?.enabled && (
+            <div className="text-sm space-y-1 text-muted-foreground">
+              {sicoobCfg.bankAccountNome && (
+                <p>Conta vinculada: <span className="text-foreground font-medium">{sicoobCfg.bankAccountNome}</span></p>
+              )}
+              <p>Sincronização automática: <span className="text-foreground font-medium">
+                {sicoobCfg.clientId ? "aguardando certificado digital" : "não configurada — use a importação manual de CSV"}
+              </span></p>
+            </div>
+          )}
+          <Button variant="outline" size="sm" onClick={() => setSicoobOpen(true)}>
+            {sicoobCfg ? "Editar configuração" : "Configurar"}
+          </Button>
+        </CardContent>
+      </Card>
+
       {/* ── DETRAN-GO ──────────────────────────────────────────────────── */}
       <Card className={detranCfg ? "border-blue-200 dark:border-blue-900/40" : ""}>
         <CardHeader className="pb-3">
@@ -316,6 +381,14 @@ export default function ConfiguracoesPage() {
         onSave={handleSaveDetran}
         current={detranCfg}
         companyName={activeCompany?.nome}
+      />
+
+      <SicoobConfigDialog
+        open={sicoobOpen}
+        onClose={() => setSicoobOpen(false)}
+        onSave={handleSaveSicoob}
+        initial={sicoobCfg}
+        bankAccounts={bankAccounts}
       />
     </div>
   );

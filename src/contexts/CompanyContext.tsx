@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useCallback, ReactNode, useEffect, useMemo } from "react";
-import { Company, AsaasConfig, DetranConfig, CobrancaConfig, AutentiqueConfig, loadCompanies, saveCompanies, getActiveCompanyId, setActiveCompanyId } from "@/lib/companies";
+import { Company, AsaasConfig, DetranConfig, CobrancaConfig, AutentiqueConfig, SicoobConfig, loadCompanies, saveCompanies, getActiveCompanyId, setActiveCompanyId } from "@/lib/companies";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
@@ -14,6 +14,7 @@ interface CompanyContextType {
   updateDetranConfig: (id: string, config: DetranConfig | null) => Promise<void>;
   updateCobrancaConfig: (id: string, config: CobrancaConfig) => Promise<void>;
   updateAutentiqueConfig: (id: string, config: AutentiqueConfig | null) => Promise<void>;
+  updateSicoobConfig: (id: string, config: SicoobConfig | null) => Promise<void>;
   removeCompany: (id: string) => Promise<void>;
 }
 
@@ -54,10 +55,10 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
     if (!user) return;
     let cancelled = false;
     (async () => {
-      const { data, error } = await supabase.from("companies").select("id, nome, cnpj, asaas_config, detran_config, cobranca_config, autentique_config");
+      const { data, error } = await supabase.from("companies").select("id, nome, cnpj, asaas_config, detran_config, cobranca_config, autentique_config, sicoob_config");
       if (cancelled) return;
       if (!error && data) {
-        const dbCompanies: Company[] = data.map((c: any) => ({ id: c.id, nome: c.nome, cnpj: c.cnpj, asaasConfig: c.asaas_config ?? null, detranConfig: c.detran_config ?? null, cobrancaConfig: c.cobranca_config ?? null, autentiqueConfig: c.autentique_config ?? null }));
+        const dbCompanies: Company[] = data.map((c: any) => ({ id: c.id, nome: c.nome, cnpj: c.cnpj, asaasConfig: c.asaas_config ?? null, detranConfig: c.detran_config ?? null, cobrancaConfig: c.cobranca_config ?? null, autentiqueConfig: c.autentique_config ?? null, sicoobConfig: c.sicoob_config ?? null }));
 
         // One-time seed: if admin has local companies that aren't in DB yet, upload them
         if (isAdmin) {
@@ -275,8 +276,20 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
     toast.success("Configuração Autentique salva");
   }, [companies]);
 
+  const updateSicoobConfig = useCallback(async (id: string, config: SicoobConfig | null) => {
+    const { error } = await supabase.from("companies").update({ sicoob_config: config } as any).eq("id", id);
+    if (error) {
+      toast.error("Falha ao salvar configuração Sicoob: " + error.message);
+      return;
+    }
+    const next = companies.map(c => c.id === id ? { ...c, sicoobConfig: config } : c);
+    setCompanies(next);
+    saveCompanies(next);
+    toast.success("Configuração Sicoob salva");
+  }, [companies]);
+
   return (
-    <CompanyContext.Provider value={{ companies: visibleCompanies, activeCompany, switchCompany, addCompany, updateCompany, updateAsaasConfig, updateDetranConfig, updateCobrancaConfig, updateAutentiqueConfig, removeCompany }}>
+    <CompanyContext.Provider value={{ companies: visibleCompanies, activeCompany, switchCompany, addCompany, updateCompany, updateAsaasConfig, updateDetranConfig, updateCobrancaConfig, updateAutentiqueConfig, updateSicoobConfig, removeCompany }}>
       {children}
     </CompanyContext.Provider>
   );

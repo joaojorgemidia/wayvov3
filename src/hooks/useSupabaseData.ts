@@ -2,7 +2,9 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { getDataCache, setDataCache } from "@/lib/data-cache";
 import { useCompany } from "@/contexts/CompanyContext";
-import type { Motorcycle, Client, Rental, Fine, Maintenance, MaintenanceItem, FinancialEntry } from "@/lib/types";
+import type { Motorcycle, Client, Rental, Fine, Maintenance, MaintenanceItem, FinancialEntry, SicoobTransaction, CategorizationRule } from "@/lib/types";
+import { dbToSicoobTransaction, sicoobTransactionToDb, dbToCategorizationRule, categorizationRuleToDb, financialToDb as mapFinancialToDb } from "@/lib/db-mappers";
+import { normalizeText } from "@/lib/text-normalize";
 
 // ─── Generic CRUD hook factory ──────────────────────────────────
 
@@ -440,6 +442,7 @@ function dbToFinancial(r: any): FinancialEntry {
     asaasStatus: r.asaas_status || null,
     asaasBoletoUrl: r.asaas_boleto_url || null,
     asaasInvoiceUrl: r.asaas_invoice_url || null,
+    sicoobTransactionId: r.sicoob_transaction_id || null,
   };
 }
 
@@ -474,6 +477,7 @@ function financialToDb(e: FinancialEntry): any {
     asaas_status: e.asaasStatus || null,
     asaas_boleto_url: e.asaasBoletoUrl || null,
     asaas_invoice_url: e.asaasInvoiceUrl || null,
+    sicoob_transaction_id: e.sicoobTransactionId || null,
   };
 }
 
@@ -641,6 +645,154 @@ export function useBankAccounts() {
   };
 
   return { ...base, save, remove, restore, bulkSave, archivedAccounts: archivedQuery.data || [] };
+}
+
+// ─── Sicoob: extrato importado (staging) + regras de categorização ──────
+
+export function useSicoobTransactions() {
+  const qc = useQueryClient();
+  const { activeCompany } = useCompany();
+  const cid = activeCompany?.id ?? "";
+  const key = ["sicoob_transactions", cid];
+  const db = supabase as any;
+
+  const base = useTable<any, SicoobTransaction>(
+    "sicoob_transactions",
+    "sicoob_transactions",
+    dbToSicoobTransaction,
+    sicoobTransactionToDb,
+    (query) => query.is("deleted_at", null).order("data", { ascending: false }),
+  );
+
+  // Confirma uma linha pendente/categorizada: cria o lançamento financeiro e,
+  // opcionalmente, salva/atualiza a regra de categorização usada (aprendizado).
+  const confirmMutation = useMutation({
+    mutationFn: async (params: {
+      staging: SicoobTransaction;
+      entry: FinancialEntry & { id: string };
+      rule?: { padrao: string; tipo: "receita" | "despesa"; categoria: string; subcategoria?: string | null; tags?: string[] };
+    }) => {
+      const { staging, entry, rule } = params;
+
+      const { error: entryError } = await db.from("financial_entries").insert({
+        ...mapFinancialToDb(entry),
+        id: entry.id,
+        company_id: cid,
+        sicoob_transaction_id: staging.sicoobTransactionId,
+      });
+      if (entryError) throw entryError;
+
+      const { error: stagingError } = await db
+        .from("sicoob_transactions")
+        .update({
+          status: "conciliado",
+          generated_financial_entry_id: entry.id,
+          reviewed_at: new Date().toISOString(),
+        })
+        .eq("id", staging.id)
+        .eq("company_id", cid);
+      if (stagingError) throw stagingError;
+
+      if (rule?.padrao) {
+        await upsertCategorizationRule(db, cid, rule);
+      }
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: key });
+      qc.invalidateQueries({ queryKey: ["financial_entries", cid] });
+      qc.invalidateQueries({ queryKey: ["categorization_rules", cid] });
+    },
+  });
+
+  const ignoreMutation = useMutation({
+    mutationFn: async (stagingId: string) => {
+      const { error } = await db
+        .from("sicoob_transactions")
+        .update({ status: "ignorado", reviewed_at: new Date().toISOString() })
+        .eq("id", stagingId)
+        .eq("company_id", cid);
+      if (error) throw error;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: key }),
+  });
+
+  return {
+    ...base,
+    confirm: confirmMutation.mutateAsync,
+    ignore: ignoreMutation.mutateAsync,
+    isConfirming: confirmMutation.isPending,
+  };
+}
+
+async function upsertCategorizationRule(
+  db: any,
+  companyId: string,
+  rule: { padrao: string; tipo: "receita" | "despesa"; categoria: string; subcategoria?: string | null; tags?: string[] },
+) {
+  const padraoNormalizado = normalizeText(rule.padrao);
+  if (!padraoNormalizado) return;
+
+  const { data: existing } = await db
+    .from("categorization_rules")
+    .select("id, usos_count")
+    .eq("company_id", companyId)
+    .eq("padrao", padraoNormalizado)
+    .eq("tipo", rule.tipo)
+    .maybeSingle();
+
+  if (existing) {
+    await db
+      .from("categorization_rules")
+      .update({
+        categoria: rule.categoria,
+        subcategoria: rule.subcategoria || null,
+        tags: rule.tags || [],
+        usos_count: (existing.usos_count || 0) + 1,
+        last_used_at: new Date().toISOString(),
+        ativo: true,
+      })
+      .eq("id", existing.id);
+  } else {
+    await db.from("categorization_rules").insert({
+      company_id: companyId,
+      padrao: padraoNormalizado,
+      tipo: rule.tipo,
+      categoria: rule.categoria,
+      subcategoria: rule.subcategoria || null,
+      tags: rule.tags || [],
+      origem_escopo: "sicoob",
+      fonte: "usuario",
+      prioridade: 0,
+      usos_count: 1,
+      last_used_at: new Date().toISOString(),
+      ativo: true,
+    });
+  }
+}
+
+export function useCategorizationRules() {
+  const qc = useQueryClient();
+  const { activeCompany } = useCompany();
+  const cid = activeCompany?.id ?? "";
+  const key = ["categorization_rules", cid];
+  const db = supabase as any;
+
+  const base = useTable<any, CategorizationRule>(
+    "categorization_rules",
+    "categorization_rules",
+    dbToCategorizationRule,
+    categorizationRuleToDb,
+    (query) => query.is("deleted_at", null).order("prioridade", { ascending: false }),
+  );
+
+  const upsertByPattern = useMutation({
+    mutationFn: async (rule: { padrao: string; tipo: "receita" | "despesa"; categoria: string; subcategoria?: string | null; tags?: string[] }) => {
+      await upsertCategorizationRule(db, cid, rule);
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: key }),
+  });
+
+  return { ...base, upsertByPattern: upsertByPattern.mutateAsync };
 }
 
 // ─── Bulk save (for full array replacement like the old save* pattern) ───

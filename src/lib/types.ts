@@ -226,6 +226,7 @@ export interface FinancialEntry {
   asaasStatus?: string | null; // "PENDING" | "RECEIVED" | "OVERDUE" | "REFUNDED"
   asaasBoletoUrl?: string | null;
   asaasInvoiceUrl?: string | null;
+  sicoobTransactionId?: string | null; // vincula o lançamento à transação importada do extrato Sicoob
 }
 
 export interface BudgetEntry {
@@ -234,6 +235,46 @@ export interface BudgetEntry {
   tipo: "receita" | "despesa";
   limite: number;
   mesAno: string; // "2026-04"
+}
+
+export type SicoobTransactionStatus = "pendente" | "conciliado" | "categorizado" | "ignorado";
+
+export interface SicoobTransaction {
+  id: string;
+  bankAccountId: string | null;
+  sicoobTransactionId: string;
+  data: string;
+  tipo: "credito" | "debito";
+  valor: number;
+  descricao: string;
+  descricaoNormalizada: string;
+  rawPayload: Record<string, unknown>;
+  status: SicoobTransactionStatus;
+  matchedFinancialEntryId: string | null;
+  generatedFinancialEntryId: string | null;
+  candidateFinancialEntryIds?: string[];
+  appliedRuleId: string | null;
+  suggestedCategoria?: string | null;
+  suggestedSubcategoria?: string | null;
+  suggestedTags?: string[] | null;
+  reviewedAt?: string | null;
+  reviewedBy?: string | null;
+  createdAt?: string;
+}
+
+export interface CategorizationRule {
+  id: string;
+  padrao: string;
+  tipo: "receita" | "despesa";
+  categoria: string;
+  subcategoria?: string | null;
+  tags?: string[] | null;
+  origemEscopo: string;
+  fonte: "sistema" | "usuario";
+  prioridade: number;
+  usosCount: number;
+  lastUsedAt?: string | null;
+  ativo: boolean;
 }
 
 export const DEFAULT_CHECKLIST_ITEMS = [

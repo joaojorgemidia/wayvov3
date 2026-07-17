@@ -91,8 +91,8 @@ export function VendidosTab({ motos }: VendidosTabProps) {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b bg-muted/50">
-                <th className="px-3 py-3 text-left font-semibold text-muted-foreground">Placa</th>
                 <th className="px-3 py-3 text-left font-semibold text-muted-foreground">Modelo</th>
+                <th className="px-3 py-3 text-left font-semibold text-muted-foreground">Placa</th>
                 <th className="px-3 py-3 text-left font-semibold text-muted-foreground">
                   Data Venda <InfoTooltip text="Data em que a moto foi vendida" />
                 </th>
@@ -119,8 +119,8 @@ export function VendidosTab({ motos }: VendidosTabProps) {
             <tbody>
               {enriched.map(m => (
                 <tr key={m.id} className="border-b last:border-0 hover:bg-muted/30 transition-colors">
-                  <td className="px-3 py-3 font-mono font-bold text-foreground">{m.placa}</td>
                   <td className="px-3 py-3 text-muted-foreground">{m.modelo || "—"}</td>
+                  <td className="px-3 py-3 font-mono font-bold text-foreground">{m.placa}</td>
                   <td className="px-3 py-3 text-muted-foreground">{m.dataVenda ? new Date(m.dataVenda + "T12:00:00").toLocaleDateString("pt-BR") : "—"}</td>
                   <td className="px-3 py-3 text-right font-mono">{fmt(m.valorCompra)}</td>
                   <td className="px-3 py-3 text-right font-mono">{fmt(m.valorVenda)}</td>

@@ -41,7 +41,10 @@ serve(async (req) => {
     targetDate.setDate(targetDate.getDate() + Number(cfg.gerarBoletoXDiasAntes));
     const targetDateStr = targetDate.toISOString().split("T")[0];
 
-    // Entradas de aluguel/caução sem boleto, não pagas, com vencimento na data alvo
+    // Entradas de aluguel/caução sem boleto, não pagas, com vencimento até a data alvo.
+    // Usa "<=" (não "=") para recuperar entradas que ficaram sem boleto por falha pontual
+    // num dia anterior — com "=" elas nunca mais seriam pegas, já que no dia seguinte a
+    // data alvo já é outra.
     const { data: entries } = await supabase
       .from("financial_entries")
       .select("id")
@@ -50,7 +53,7 @@ serve(async (req) => {
       .is("asaas_payment_id", null)
       .eq("pago", false)
       .is("deleted_at", null)
-      .eq("data_prevista", targetDateStr);
+      .lte("data_prevista", targetDateStr);
 
     for (const entry of (entries || [])) {
       try {

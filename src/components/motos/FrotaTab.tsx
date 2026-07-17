@@ -151,8 +151,8 @@ export function FrotaTab({ motos, onEdit, onDelete, onSell }: FrotaTabProps) {
                 <th className="px-4 py-3.5 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                   Ano Fab./Modelo
                 </th>
-                <th className="px-4 py-3.5 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">Placa</th>
                 <th className="px-4 py-3.5 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">Modelo</th>
+                <th className="px-4 py-3.5 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">Placa</th>
                 <th className="px-4 py-3.5 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                   Aluguéis <InfoTooltip text="Quantidade total de locações registradas para esta moto" />
                 </th>
@@ -184,10 +184,10 @@ export function FrotaTab({ motos, onEdit, onDelete, onSell }: FrotaTabProps) {
                       {m.anoFabricacao && m.anoModelo ? `${m.anoFabricacao}/${m.anoModelo}` : m.anoModelo ?? "—"}
                       {m.cor && <span className="ml-2 text-xs text-muted-foreground font-sans">{m.cor}</span>}
                     </td>
+                    <td className="px-4 py-3.5 text-muted-foreground">{m.modelo || "—"}</td>
                     <td className="px-4 py-3.5">
                       <span className="inline-flex rounded-md bg-muted/60 px-2 py-0.5 font-mono font-bold text-foreground">{m.placa}</span>
                     </td>
-                    <td className="px-4 py-3.5 text-muted-foreground">{m.modelo || "—"}</td>
                     <td className="px-4 py-3.5 text-right font-mono tabular-nums">{mt.rentalsCount}</td>
                     <td className="px-4 py-3.5 text-right font-mono tabular-nums text-foreground/80">{fmtBRL(mt.faturado)}</td>
                     <td className="px-4 py-3.5 text-right font-mono tabular-nums text-foreground/80">{fmtBRL(mt.despesas)}</td>

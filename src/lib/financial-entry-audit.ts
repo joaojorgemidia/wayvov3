@@ -1,12 +1,5 @@
 import { FinancialEntry, Motorcycle } from "./types";
-
-function normalizeAuditText(value?: string) {
-  return (value || "")
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .trim();
-}
+import { normalizeText } from "./text-normalize";
 
 function normalizeAuditPlaca(value?: string) {
   return (value || "").toUpperCase().replace(/[\s-]/g, "");
@@ -48,7 +41,7 @@ export function auditCompraMotoEntry(
 
   const placa = normalizeAuditPlaca(fallbackPlaca);
   const isNvp = placa.includes("NVP");
-  const auditText = normalizeAuditText([
+  const auditText = normalizeText([
     entry.descricao,
     entry.observacao,
     entry.subcategoria,
