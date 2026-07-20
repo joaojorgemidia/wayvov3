@@ -7,6 +7,7 @@ import { importSpreadsheetEntries } from "@/lib/import-spreadsheet";
 import { resolveAllAssociations, resolveAssociations } from "@/lib/financial-associations";
 import { auditCompraMotoEntry, shouldLockManualClassification } from "@/lib/financial-entry-audit";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -27,7 +28,7 @@ import {
   PieChart as PieChartIcon, BarChart3, Settings2, HelpCircle,
   EyeOff, Pin, Tag as TagIcon, Check, ChevronsUpDown, Bookmark, AlertTriangle,
   MoreVertical, CheckCheck, Banknote, X, Eye, ChevronsLeft, ChevronsRight, ArrowLeftRight, ChevronDown,
-  ExternalLink, Loader2, Link2, RefreshCw, Scissors
+  ExternalLink, Loader2, Link2, RefreshCw, Scissors, Copy
 } from "lucide-react";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Textarea } from "@/components/ui/textarea";
@@ -43,6 +44,7 @@ import { useCompany } from "@/contexts/CompanyContext";
 import { ImportExportBar } from "@/components/ImportExportBar";
 import { useBankAccounts, useSicoobTransactions, useCategorizationRules } from "@/hooks/useSupabaseData";
 import { suggestPatternFromDescription } from "@/lib/sicoob-matching";
+import { BulkActionBar, SelectAllCheckbox, toggleSelected } from "@/components/ui/bulk-action-bar";
 import { SicoobImportacoesTab } from "@/components/financeiro/SicoobImportacoesTab";
 import { supabase } from "@/integrations/supabase/client";
 import { reconcileCardInvoices, getCardInvoicesList, computeCardInvoiceYm } from "@/lib/credit-card-invoices";
@@ -862,6 +864,7 @@ export default function FinanceiroPage() {
   );
   const [rowsPerPage, setRowsPerPage] = useState(50);
   const [currentPage, setCurrentPage] = useState(1);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [selectedCCCard, setSelectedCCCard] = useState<any>(null);
   const [ccViewYm, setCcViewYm] = useState<string>("");
 
@@ -922,6 +925,18 @@ export default function FinanceiroPage() {
   const [managerOpen, setManagerOpen] = useState<null | "cat_receita" | "cat_despesa" | "subcat" | "tags">(null);
   const [subcatTarget, setSubcatTarget] = useState("");
   const [confirmToggleEntry, setConfirmToggleEntry] = useState<FinancialEntry | null>(null);
+  // Fila de ids pendentes de confirmação em massa — reaproveita o MESMO diálogo de
+  // confirmação individual (valor com multa/juros, conta, data) um lançamento por vez,
+  // em vez de dar baixa silenciosa em todos de uma vez.
+  const [bulkPagoQueue, setBulkPagoQueue] = useState<string[]>([]);
+  // Diálogo dedicado de confirmação em massa: pede data + conta UMA vez e aplica em
+  // todos de uma tacada só (uma única atualização/salvamento, sem reabrir diálogo por
+  // lançamento). Casos com regra de juros de aluguel em atraso saem dessa lista e caem
+  // no fluxo individual (bulkPagoQueue acima), que já existia e sempre funcionou.
+  const [bulkConfirmIds, setBulkConfirmIds] = useState<string[] | null>(null);
+  const [bulkConfirmDate, setBulkConfirmDate] = useState("");
+  const [bulkConfirmConta, setBulkConfirmConta] = useState("");
+  const [bulkConfirmPayBank, setBulkConfirmPayBank] = useState("");
   const [confirmDate, setConfirmDate] = useState("");
   const [confirmConta, setConfirmConta] = useState("");
   const [confirmValor, setConfirmValor] = useState("");
@@ -1308,7 +1323,12 @@ export default function FinanceiroPage() {
   }, []);
 
   // Auto-materialize fixed and recurring entries so future months always show up
+  const materializingRef = React.useRef(false);
   React.useEffect(() => {
+    // Evita gerar um segundo lote (duplicado) se `entries` mudar de novo antes do persist
+    // anterior confirmar — sem essa trava, um re-render no meio de um save já viu a mesma
+    // "lacuna" de ocorrências futuras e criava 24 meses duplicados (aconteceu em produção).
+    if (materializingRef.current) return;
     const bases = entries.filter(e => !e.fixedOriginId && (e.recorrente || e.despesaFixa));
     if (!bases.length) return;
 
@@ -1318,7 +1338,9 @@ export default function FinanceiroPage() {
     bases.forEach(base => {
       const seedDate = base.dataPrevista || base.data;
       const seriesId = base.serieId || base.id;
-      const totalOccurrences = base.despesaFixa ? 24 : Math.max(base.recorrenciaVezes || 0, 0);
+      // Despesa fixa mantém sempre ~2 anos de ocorrências futuras geradas — 24 parcelas
+      // se for mensal, 2 se for anual (24 anos de antecedência não faria sentido).
+      const totalOccurrences = base.despesaFixa ? (base.recorrenciaTipo === "anual" ? 2 : 24) : Math.max(base.recorrenciaVezes || 0, 0);
       const interval = Math.max(1, base.recorrenciaPorPeriodo || 1);
       const occurrenceDates = generateRecurrenceDates(
         seedDate,
@@ -1377,7 +1399,10 @@ export default function FinanceiroPage() {
 
     if (changed) {
       if (entriesSignature(entries) !== entriesSignature(nextEntries)) {
-        persist(nextEntries).catch(err => { console.error("[FinanceiroPage] recurrence materialize error:", err); });
+        materializingRef.current = true;
+        persist(nextEntries)
+          .catch(err => { console.error("[FinanceiroPage] recurrence materialize error:", err); })
+          .finally(() => { materializingRef.current = false; });
       }
     }
   }, [entries, getRecurringDate, persist]);
@@ -1661,6 +1686,13 @@ export default function FinanceiroPage() {
       return true;
     });
   }, [filtered]);
+
+  const paginatedEntries = useMemo(() => {
+    const totalPages = Math.ceil(filteredNonCC.length / rowsPerPage);
+    const safePage = Math.min(currentPage, totalPages || 1);
+    const startIdx = (safePage - 1) * rowsPerPage;
+    return filteredNonCC.slice(startIdx, startIdx + rowsPerPage);
+  }, [filteredNonCC, rowsPerPage, currentPage]);
 
   // Comparison period totals
   const compTotals = useMemo(() => {
@@ -2314,6 +2346,51 @@ export default function FinanceiroPage() {
     setDeleteTarget(entry);
   };
 
+  // Exclusão em massa — mesma trava do handleDelete individual (nunca apaga pago/recebido)
+  // e mesma limpeza de tombstones (recorrência/fatura) que o handleDeleteOnly faz um a um.
+  const handleBulkDelete = async () => {
+    const selected = entries.filter(e => selectedIds.has(e.id));
+    const paid = selected.filter(e => e.pago);
+    const toDelete = selected.filter(e => !e.pago);
+    if (paid.length > 0) {
+      toast.error(`${paid.length} lançamento(s) já pago(s)/recebido(s) não pode(m) ser excluído(s) — foi(ram) ignorado(s) da seleção.`);
+    }
+    if (toDelete.length === 0) { setSelectedIds(new Set()); return; }
+    if (!confirm(`Excluir ${toDelete.length} lançamento(s) selecionado(s)?`)) return;
+
+    const idsToRemove = new Set<string>();
+    toDelete.forEach(target => {
+      idsToRemove.add(target.id);
+      if ((target.id.startsWith("inv__") || target.id.startsWith("fatura-")) && target.categoria === "fatura_cartao") {
+        suppressedInvoiceIdsRef.current.add(target.id);
+      }
+      const occDate = target.dataPrevista || target.data;
+      const occBaseId = target.fixedOriginId || (target.serieId && target.serieId !== target.id ? target.serieId : null);
+      if (occBaseId && occDate) deletedOccurrencesRef.current.add(`${occBaseId}::${occDate}`);
+      if (target.categoria === "transferencia" && target.serieId) {
+        entries.forEach(e => { if (e.id !== target.id && e.serieId === target.serieId) idsToRemove.add(e.id); });
+      }
+    });
+    try {
+      localStorage.setItem(`wayvo:suppressed-invoices:${currentCompanyId}`, JSON.stringify([...suppressedInvoiceIdsRef.current]));
+      localStorage.setItem(`wayvo:deleted-occurrences:${currentCompanyId}`, JSON.stringify([...deletedOccurrencesRef.current]));
+    } catch { /* ignora */ }
+
+    await cancelAsaasPayments(toDelete);
+    const updated = entries.filter(e => !idsToRemove.has(e.id));
+    setEntries(updated);
+    setSelectedIds(new Set());
+    saveFinancial(updated)
+      .then(() => toast.success(`${idsToRemove.size} lançamento(s) removido(s).`))
+      .catch(err => { setEntries(entries); console.error("[FinanceiroPage] persist error:", err); toast.error("Erro ao salvar. Verifique sua conexão."); });
+  };
+
+  const handleBulkIgnorar = (ignorada: boolean) => {
+    const updated = entries.map(e => selectedIds.has(e.id) ? { ...e, ignorada } : e);
+    persistWithFeedback(updated, { successMessage: ignorada ? "Lançamento(s) marcado(s) como ignorado." : "Lançamento(s) reativado(s)." });
+    setSelectedIds(new Set());
+  };
+
   const handleDeleteOnly = async () => {
     if (!deleteTarget) return;
     const target = deleteTarget;
@@ -2463,6 +2540,105 @@ export default function FinanceiroPage() {
       setConfirmValorEditado(false);
     }
   };
+
+  // Quando o diálogo de confirmação fecha (confirmado ou desfeito) e ainda há fila de
+  // seleção em massa, abre o próximo automaticamente — mesma janela, um de cada vez.
+  useEffect(() => {
+    if (confirmToggleEntry === null && bulkPagoQueue.length > 0) {
+      const [next, ...rest] = bulkPagoQueue;
+      setBulkPagoQueue(rest);
+      togglePago(next);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [confirmToggleEntry, bulkPagoQueue]);
+
+  const handleBulkMarcarPago = () => {
+    const ids = entries.filter(e => selectedIds.has(e.id) && !e.pago).map(e => e.id);
+    if (ids.length === 0) { toast.error("Nenhum lançamento pendente selecionado."); return; }
+    setSelectedIds(new Set());
+    setBulkConfirmDate(localToday());
+    setBulkConfirmConta("");
+    setBulkConfirmIds(ids);
+  };
+
+  const handleBulkDesfazer = () => {
+    const ids = entries.filter(e => selectedIds.has(e.id) && e.pago).map(e => e.id);
+    if (ids.length === 0) { toast.error("Nenhum lançamento pago/recebido selecionado."); return; }
+    if (!confirm(`Desfazer o pagamento/recebimento de ${ids.length} lançamento(s)? Cada um volta pra pendente, na data de vencimento original.`)) return;
+    setSelectedIds(new Set());
+    const complexIds: string[] = [];
+    let working = entries;
+    ids.forEach(id => {
+      const entry = working.find(e => e.id === id);
+      if (!entry) return;
+      const hasDerived = working.some(e => e.fixedOriginId === entry.id && (e.categoria === "juros_atraso" || (e.observacao || "").startsWith("Saldo devedor de pagamento parcial")));
+      if (hasDerived) { complexIds.push(id); return; }
+      working = working.map(e => e.id === id ? { ...e, pago: false, data: e.dataPrevista || e.data } : e);
+    });
+    persistWithFeedback(working, { successMessage: `${ids.length - complexIds.length} lançamento(s) revertido(s) para pendente.` });
+    if (complexIds.length > 0) {
+      toast.info(`${complexIds.length} lançamento(s) com juros/saldo derivado precisam ser desfeitos individualmente.`);
+      setBulkPagoQueue(complexIds.slice(1));
+      togglePago(complexIds[0]);
+    }
+  };
+
+  // Confirma o pagamento/recebimento de vários lançamentos com UMA data e UMA conta,
+  // numa tacada só (um único salvamento) — sem reabrir diálogo por lançamento e sem os
+  // problemas de disparar vários salvamentos em sequência rápida. Aluguéis em atraso (que
+  // têm regra própria de multa/juros) saem dessa lista e caem no fluxo individual já
+  // existente, que sempre funcionou — só o caminho simples (a grande maioria dos casos:
+  // despesas, receitas avulsas, aluguéis em dia) é resolvido aqui de uma vez.
+  const runBulkConfirm = async () => {
+    if (!bulkConfirmIds || !bulkConfirmConta) {
+      toast.error("Selecione a conta bancária antes de confirmar.");
+      return;
+    }
+    const payDate = bulkConfirmDate || localToday();
+    const complexIds: string[] = [];
+    let working = entries;
+    for (const id of bulkConfirmIds) {
+      const entry = working.find(e => e.id === id);
+      if (!entry || entry.pago) continue;
+      const rental = entry.rentalId ? rentals.find(r => r.id === entry.rentalId) : null;
+      const isRentalPayment = !!entry.rentalId && entry.tipo === "receita" && entry.categoria === "aluguel" && rental?.status === "ativa";
+      const dueDateStr = entry.dataPrevista || entry.data;
+      const daysOverdue = isRentalPayment && dueDateStr
+        ? Math.max(0, Math.floor((new Date(payDate + "T00:00:00").getTime() - new Date(dueDateStr + "T00:00:00").getTime()) / 86400000))
+        : 0;
+      if (daysOverdue > 0) { complexIds.push(id); continue; } // tem multa/juros a calcular — confirmação individual
+      const isCard = creditCards.some(c => c.nome === bulkConfirmConta);
+      let obs = entry.observacao || "";
+      if (isCard && bulkConfirmPayBank) {
+        obs = obs.replace(/\s*•\s*Pago via [^•]+/g, "").trim();
+        obs = (obs ? obs + " " : "") + `• Pago via ${bulkConfirmPayBank}`;
+      }
+      working = working.map(e => e.id === id ? { ...e, pago: true, data: payDate, conta: bulkConfirmConta, observacao: obs } : e);
+    }
+    const done = bulkConfirmIds.length - complexIds.length;
+    setBulkConfirmIds(null);
+    if (done > 0) {
+      await persistWithFeedback(working, { successMessage: `${done} lançamento${done !== 1 ? "s" : ""} confirmado${done !== 1 ? "s" : ""}.` });
+    }
+    if (complexIds.length > 0) {
+      toast.info(`${complexIds.length} lançamento(s) em atraso com multa/juros a calcular — confirme individualmente.`);
+      setBulkPagoQueue(complexIds.slice(1));
+      togglePago(complexIds[0]);
+    }
+  };
+
+  // Rótulos da barra de ações seguem a linguagem certa pra cada situação: "recebido"
+  // pra receita, "pago" pra despesa. Só cai no termo combinado se a seleção misturar os dois.
+  const marcarPagoLabel = useMemo(() => {
+    const tipos = new Set(entries.filter(e => selectedIds.has(e.id) && !e.pago).map(e => e.tipo));
+    if (tipos.size === 1) return tipos.has("receita") ? "Marcar como recebido" : "Marcar como pago";
+    return "Marcar como pago/recebido";
+  }, [entries, selectedIds]);
+  const desfazerPagoLabel = useMemo(() => {
+    const tipos = new Set(entries.filter(e => selectedIds.has(e.id) && e.pago).map(e => e.tipo));
+    if (tipos.size === 1) return tipos.has("receita") ? "Desfazer recebimento" : "Desfazer pagamento";
+    return "Desfazer pagamento/recebimento";
+  }, [entries, selectedIds]);
 
   // Recalcula confirmValor com multa+juros quando a data de pagamento muda
   useEffect(() => {
@@ -2629,11 +2805,17 @@ export default function FinanceiroPage() {
         const lbl = rental?.frequenciaPagamento === "quinzenal" ? "Quinzena" : rental?.frequenciaPagamento === "mensal" ? "Mês" : "Semana";
         periodoRef = `${lbl} ${String(semanaNum).padStart(2, "0")}: ${fmtDM(semanaInicio)} até ${fmtDM(semanaFim)}`;
       }
+      // Quando o valor recebido não cobre nem a multa/juros (pendente > multa+juros), a
+      // diferença que sobra aqui não é só "juros" de verdade — é aluguel que também ficou
+      // sem pagar. Sinaliza isso (tag + texto) pra não passar a impressão de que só falta
+      // juros quando na real falta aluguel também.
+      const incluiAluguelNaoPago = pendente > 0.009 && pendente > (multa + totalJuros) + 0.01;
+      const labelBase = incluiAluguelNaoPago ? "Saldo parcial (aluguel + juros/multa)" : "Juros/Multa";
       const feeEntry: FinancialEntry = {
         id: crypto.randomUUID(),
         tipo: "receita",
         categoria: "juros_atraso",
-        descricao: periodoRef ? `Juros/Multa — ${periodoRef}` : `Juros/Multa — ref. venc. ${dueFmt}`,
+        descricao: periodoRef ? `${labelBase} — ${periodoRef}` : `${labelBase} — ref. venc. ${dueFmt}`,
         valor: feeAmount,
         data: payDate,
         dataPrevista: payDate,
@@ -2647,13 +2829,16 @@ export default function FinanceiroPage() {
           // confirmação), para o "desfazer" saber que pode excluí-lo mesmo com pago:true —
           // ver bloco "Desfazendo confirmação" acima.
           ...(feePago ? ["juros_pago_na_confirmacao"] : []),
+          ...(incluiAluguelNaoPago ? ["saldo_parcial"] : []),
         ],
         rentalId: confirmToggleEntry.rentalId ?? null,
         clienteId: confirmToggleEntry.clienteId ?? null,
         clienteNome: confirmToggleEntry.clienteNome || "",
         motoId: confirmToggleEntry.motoId ?? null,
         placa: confirmToggleEntry.placa || "",
-        observacao: `Juros e multa referente ao pagamento com vencimento em ${dueFmt}${periodoRef ? ` (${periodoRef})` : ""}`,
+        observacao: incluiAluguelNaoPago
+          ? `Recebido R$ ${finalValor.toFixed(2)} de um total de R$ ${totalComAcrescimos.toFixed(2)} (aluguel + multa + juros) com vencimento em ${dueFmt}${periodoRef ? ` (${periodoRef})` : ""} — este saldo inclui aluguel não pago, não é só juros/multa.`
+          : `Juros e multa referente ao pagamento com vencimento em ${dueFmt}${periodoRef ? ` (${periodoRef})` : ""}`,
         fixedOriginId: aluguelOrigemId,
         recorrente: false,
         despesaFixa: false,
@@ -4053,6 +4238,9 @@ export default function FinanceiroPage() {
                 <thead>
                   <tr className="bg-muted/30 border-b border-border/40">
                     <th className="w-[3px] p-0"></th>
+                    <th className="w-8 py-2.5 px-2">
+                      <SelectAllCheckbox ids={paginatedEntries.map(e => e.id)} selected={selectedIds} onChange={setSelectedIds} />
+                    </th>
                     <th className="text-center py-2.5 px-2">
                       <div className="flex items-center justify-center gap-1">
                         <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Status</span>
@@ -4115,15 +4303,9 @@ export default function FinanceiroPage() {
                 </thead>
                 <tbody>
                   {filteredNonCC.length === 0 && (
-                    <tr><td colSpan={12} className="py-16 text-center text-muted-foreground text-sm">Nenhum lançamento encontrado</td></tr>
+                    <tr><td colSpan={13} className="py-16 text-center text-muted-foreground text-sm">Nenhum lançamento encontrado</td></tr>
                   )}
-                  {(() => {
-                    const totalPages = Math.ceil(filteredNonCC.length / rowsPerPage);
-                    const safePage = Math.min(currentPage, totalPages || 1);
-                    const startIdx = (safePage - 1) * rowsPerPage;
-                    const paginated = filteredNonCC.slice(startIdx, startIdx + rowsPerPage);
-                    return paginated;
-                  })().map((e) => {
+                  {paginatedEntries.map((e) => {
                     const motoPlaca = e.motoId ? (motos.find(m => m.id === e.motoId)?.placa || e.placa || null) : (e.placa || null);
                     const rawClientName = e.clienteId ? (clients.find(c => c.id === e.clienteId)?.nome || e.clienteNome || null) : (e.clienteNome || null);
                     const fmtClientName = rawClientName ? rawClientName.split(" ").map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(" ") : null;
@@ -4146,10 +4328,14 @@ export default function FinanceiroPage() {
                         const seriesId = e.serieId || e.fixedOriginId;
                         if (!seriesId && !e.recorrente) return null;
                         const effectiveSeriesId = e.serieId || e.fixedOriginId || e.id;
+                        // fixedOriginId também é usado por outras telas (Multas, Manutenções)
+                        // só como referência ao registro de origem, sem ser uma série real —
+                        // exige mesmo tipo/categoria pra não confundir a receita e a despesa
+                        // de um mesmo lançamento (que têm o mesmo fixedOriginId) com parcelas.
                         seriesMembers = entries.filter(s =>
-                          s.id === effectiveSeriesId ||
-                          s.serieId === effectiveSeriesId ||
-                          s.fixedOriginId === effectiveSeriesId
+                          (s.id === effectiveSeriesId || s.serieId === effectiveSeriesId || s.fixedOriginId === effectiveSeriesId) &&
+                          s.tipo === e.tipo &&
+                          normalizeCategoryValue(s.categoria, s.tipo) === normalizeCategoryValue(e.categoria, e.tipo)
                         );
                       }
                       const sorted = [...seriesMembers].sort((a, b) => {
@@ -4172,6 +4358,14 @@ export default function FinanceiroPage() {
                         onClick={() => setDetailEntry(e)}
                       >
                         <td className="p-0"><div className="w-[3px] h-full min-h-[44px]" style={{ backgroundColor: e.pago ? "hsl(var(--success))" : overdue ? "hsl(var(--destructive))" : "hsl(var(--warning))" }} /></td>
+                        <td className="py-2 px-2" onClick={ev => ev.stopPropagation()}>
+                          <input
+                            type="checkbox"
+                            checked={selectedIds.has(e.id)}
+                            onChange={() => setSelectedIds(prev => toggleSelected(prev, e.id))}
+                            className="h-4 w-4 rounded border-border accent-primary cursor-pointer"
+                          />
+                        </td>
                         {/* Status */}
                         <td className="py-2 px-2 text-center">
                           <button onClick={(ev) => { ev.stopPropagation(); togglePago(e.id); }} className="cursor-pointer" aria-label={e.pago ? "Efetuado" : "Pendente"}>
@@ -4461,6 +4655,16 @@ export default function FinanceiroPage() {
                                   <RefreshCw className="h-3.5 w-3.5" /> Corrigir referência
                                 </DropdownMenuItem>
                               )}
+                              <DropdownMenuSeparator />
+                              <DropdownMenuItem
+                                onClick={() => {
+                                  const matches = filteredNonCC.filter(o => o.data === e.data && o.valor === e.valor && (o.conta || "") === (e.conta || "")).map(o => o.id);
+                                  setSelectedIds(prev => new Set([...prev, ...matches]));
+                                }}
+                                className="gap-2 text-xs"
+                              >
+                                <Copy className="h-3.5 w-3.5" /> Selecionar duplicatas (data, valor e banco iguais)
+                              </DropdownMenuItem>
                               {canDelete && (
                                 <DropdownMenuItem onClick={() => handleDelete(e.id)} className="gap-2 text-xs text-destructive focus:text-destructive">
                                   <Trash2 className="h-3.5 w-3.5" /> Excluir
@@ -4518,6 +4722,16 @@ export default function FinanceiroPage() {
             })()}
           </div>
 
+          <BulkActionBar
+            count={selectedIds.size}
+            onClear={() => setSelectedIds(new Set())}
+            actions={[
+              { label: marcarPagoLabel, icon: CheckCheck, onClick: handleBulkMarcarPago },
+              { label: desfazerPagoLabel, icon: Circle, onClick: handleBulkDesfazer },
+              { label: "Ignorar", icon: EyeOff, onClick: () => handleBulkIgnorar(true) },
+              { label: "Excluir", icon: Trash2, variant: "destructive", onClick: handleBulkDelete },
+            ]}
+          />
         </TabsContent>
 
         {/* TAB: Categorias */}
@@ -4864,8 +5078,8 @@ export default function FinanceiroPage() {
                 <div className="flex items-center gap-2">
                   <button type="button" className={`text-xs px-3 py-1.5 rounded-full border transition-colors ${form.data === localToday() ? "bg-primary text-primary-foreground border-primary" : "bg-muted/50 text-muted-foreground border-border hover:bg-muted"}`}
                     onClick={() => setForm({ ...form, data: localToday(), pago: true })}>Hoje</button>
-                  <button type="button" className={`text-xs px-3 py-1.5 rounded-full border transition-colors ${(() => { const d = new Date(); d.setDate(d.getDate()-1); return form.data === d.toISOString().split("T")[0]; })() ? "bg-primary text-primary-foreground border-primary" : "bg-muted/50 text-muted-foreground border-border hover:bg-muted"}`}
-                    onClick={() => { const d = new Date(); d.setDate(d.getDate()-1); setForm({ ...form, data: d.toISOString().split("T")[0], pago: true }); }}>Ontem</button>
+                  <button type="button" className={`text-xs px-3 py-1.5 rounded-full border transition-colors ${(() => { const d = new Date(); d.setDate(d.getDate()-1); return form.data === localToday(d); })() ? "bg-primary text-primary-foreground border-primary" : "bg-muted/50 text-muted-foreground border-border hover:bg-muted"}`}
+                    onClick={() => { const d = new Date(); d.setDate(d.getDate()-1); setForm({ ...form, data: localToday(d), pago: true }); }}>Ontem</button>
                   <Input type="date" value={form.data} onChange={e => {
                     const selected = e.target.value;
                     const today = localToday();
@@ -5064,12 +5278,26 @@ export default function FinanceiroPage() {
               {/* Divider */}
               <div className="border-t border-border/50 pt-3 space-y-3">
                 {/* Receita/Despesa fixa */}
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <Pin className="h-4 w-4 text-muted-foreground" />
-                    <Label className="text-sm">{form.tipo === "receita" ? "Receita fixa" : "Despesa fixa"}</Label>
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Pin className="h-4 w-4 text-muted-foreground" />
+                      <Label className="text-sm">{form.tipo === "receita" ? "Receita fixa" : "Despesa fixa"}</Label>
+                    </div>
+                    <Switch checked={form.despesaFixa || false} onCheckedChange={v => setForm({ ...form, despesaFixa: v, recorrente: v ? false : form.recorrente, recorrenciaTipo: v ? (form.recorrenciaTipo === "anual" ? "anual" : "mensal") : form.recorrenciaTipo })} />
                   </div>
-                  <Switch checked={form.despesaFixa || false} onCheckedChange={v => setForm({ ...form, despesaFixa: v, recorrente: v ? false : form.recorrente })} />
+                  {form.despesaFixa && (
+                    <div className="flex items-center gap-2 pl-6">
+                      <span className="text-xs text-muted-foreground">Repete a cada</span>
+                      <Select value={form.recorrenciaTipo === "anual" ? "anual" : "mensal"} onValueChange={v => setForm({ ...form, recorrenciaTipo: v as any })}>
+                        <SelectTrigger className="w-28 h-8 text-sm"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="mensal">mês</SelectItem>
+                          <SelectItem value="anual">ano</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
                 </div>
 
                 {/* Repetir */}
@@ -5291,7 +5519,7 @@ export default function FinanceiroPage() {
       </AlertDialog>
 
       {/* ═══ Confirm Toggle Dialog ═══ */}
-      <Dialog open={!!confirmToggleEntry} onOpenChange={(v) => { if (!v) setConfirmToggleEntry(null); }}>
+      <Dialog open={!!confirmToggleEntry} onOpenChange={(v) => { if (!v) { setBulkPagoQueue([]); setConfirmToggleEntry(null); } }}>
         <DialogContent className="sm:max-w-md flex flex-col max-h-[90vh]">
           <DialogHeader className="shrink-0">
             <DialogTitle>
@@ -5546,8 +5774,8 @@ export default function FinanceiroPage() {
                     Hoje
                   </Button>
                   <Button type="button" size="sm"
-                    variant={confirmDate === new Date(Date.now() - 86400000).toISOString().split("T")[0] ? "default" : "outline"}
-                    onClick={() => setConfirmDate(new Date(Date.now() - 86400000).toISOString().split("T")[0])}>
+                    variant={confirmDate === localToday(new Date(Date.now() - 86400000)) ? "default" : "outline"}
+                    onClick={() => setConfirmDate(localToday(new Date(Date.now() - 86400000)))}>
                     Ontem
                   </Button>
                   <Input type="date" className="h-9 w-[150px]" value={confirmDate} onChange={(ev) => setConfirmDate(ev.target.value)} />
@@ -5574,6 +5802,12 @@ export default function FinanceiroPage() {
                 )}
               </div>
 
+              {bulkPagoQueue.length > 0 && (
+                <p className="text-xs text-muted-foreground rounded-md border border-dashed border-primary/40 bg-primary/5 px-3 py-2">
+                  Este é um de {bulkPagoQueue.length + 1} lançamentos selecionados que precisam de confirmação individual (têm regra de juros/multa a calcular).
+                </p>
+              )}
+
               {/* Banco que pagou (quando a conta é um cartão) */}
               {creditCards.some(c => c.nome === confirmConta) && (
                 <div className="space-y-1.5">
@@ -5596,7 +5830,7 @@ export default function FinanceiroPage() {
           ) : null}
           {confirmToggleEntry && !confirmToggleEntry.pago && (
             <div className="flex justify-between pt-3 shrink-0 border-t">
-              <Button variant="outline" onClick={() => setConfirmToggleEntry(null)}>Cancelar</Button>
+              <Button variant="outline" onClick={() => { setBulkPagoQueue([]); setConfirmToggleEntry(null); }}>Cancelar</Button>
               <Button
                 style={confirmDate && confirmConta ? { backgroundColor: confirmToggleEntry.tipo === "receita" ? "#16a34a" : "#dc2626", color: "white" } : undefined}
                 onClick={confirmTogglePago}
@@ -5657,11 +5891,84 @@ export default function FinanceiroPage() {
                 </div>
               </div>
               <div className="flex justify-between pt-3 shrink-0 border-t">
-                <Button variant="outline" onClick={() => setConfirmToggleEntry(null)}>Cancelar</Button>
+                <Button variant="outline" onClick={() => { setBulkPagoQueue([]); setConfirmToggleEntry(null); }}>Cancelar</Button>
                 <Button variant="destructive" onClick={confirmTogglePago}>Desfazer</Button>
               </div>
             </>
           ) : null}
+        </DialogContent>
+      </Dialog>
+      {/* ═══ Confirmação de pagamento/recebimento em massa ═══ */}
+      <Dialog open={!!bulkConfirmIds} onOpenChange={(v) => { if (!v) setBulkConfirmIds(null); }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>✅ Confirmar {bulkConfirmIds?.length} lançamento{bulkConfirmIds && bulkConfirmIds.length !== 1 ? "s" : ""}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <p className="text-sm text-muted-foreground">
+              A mesma data e conta serão aplicadas a todos os selecionados. Lançamentos em atraso com multa/juros a calcular (ex: aluguel vencido) não entram aqui — eles pedem confirmação individual logo em seguida.
+            </p>
+            <div className="space-y-1.5">
+              <Label className="text-sm">Data do pagamento/recebimento</Label>
+              <div className="flex items-center gap-2">
+                <Button type="button" size="sm"
+                  variant={bulkConfirmDate === localToday() ? "default" : "outline"}
+                  onClick={() => setBulkConfirmDate(localToday())}>
+                  Hoje
+                </Button>
+                <Button type="button" size="sm"
+                  variant={bulkConfirmDate === localToday(new Date(Date.now() - 86400000)) ? "default" : "outline"}
+                  onClick={() => setBulkConfirmDate(localToday(new Date(Date.now() - 86400000)))}>
+                  Ontem
+                </Button>
+                <Input type="date" className="h-9 w-[150px]" value={bulkConfirmDate} onChange={ev => setBulkConfirmDate(ev.target.value)} />
+              </div>
+            </div>
+            <div className="space-y-1">
+              <div className="flex items-center gap-3">
+                <Wallet className={`h-5 w-5 shrink-0 ${!bulkConfirmConta ? "text-destructive" : "text-muted-foreground"}`} />
+                <Select value={bulkConfirmConta} onValueChange={setBulkConfirmConta}>
+                  <SelectTrigger className={`h-9 ${!bulkConfirmConta ? "border-destructive ring-1 ring-destructive" : ""}`}>
+                    <SelectValue placeholder="Selecione a conta *" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {CONTAS.map(c => (
+                      <SelectItem key={c} value={c}>{c}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              {!bulkConfirmConta && (
+                <p className="text-xs text-destructive pl-8">Obrigatório: selecione a conta para confirmar.</p>
+              )}
+            </div>
+            {creditCards.some(c => c.nome === bulkConfirmConta) && (
+              <div className="space-y-1.5">
+                <Label className="text-sm flex items-center gap-1.5">
+                  <CreditCard className="h-4 w-4 text-primary" />
+                  Banco que pagou a fatura
+                </Label>
+                <Select value={bulkConfirmPayBank} onValueChange={setBulkConfirmPayBank}>
+                  <SelectTrigger className="h-9"><SelectValue placeholder="Selecione o banco" /></SelectTrigger>
+                  <SelectContent>
+                    {(bankAccountsList || []).filter(a => a.tipo !== "cartao").map(a => (
+                      <SelectItem key={a.id} value={a.nome}>{a.nome}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+          </div>
+          <div className="flex justify-between pt-3 shrink-0 border-t">
+            <Button variant="outline" onClick={() => setBulkConfirmIds(null)}>Cancelar</Button>
+            <Button
+              style={bulkConfirmDate && bulkConfirmConta ? { backgroundColor: "#16a34a", color: "white" } : undefined}
+              onClick={runBulkConfirm}
+              disabled={!bulkConfirmDate || !bulkConfirmConta}
+            >
+              Confirmar {bulkConfirmIds?.length} lançamento{bulkConfirmIds && bulkConfirmIds.length !== 1 ? "s" : ""}
+            </Button>
+          </div>
         </DialogContent>
       </Dialog>
       {/* ═══ Rental Payment Success Dialog ═══ */}
@@ -6016,8 +6323,8 @@ export default function FinanceiroPage() {
               <div className="flex items-center gap-2">
                 <button type="button" onClick={() => setAdvDate(localToday())}
                   className={`text-xs px-3 py-1.5 rounded-full border transition-colors ${advDate === localToday() ? "bg-primary text-primary-foreground border-primary" : "bg-muted/50 text-muted-foreground border-border hover:bg-muted"}`}>Hoje</button>
-                <button type="button" onClick={() => { const d = new Date(); d.setDate(d.getDate() - 1); setAdvDate(d.toISOString().split("T")[0]); }}
-                  className="text-xs px-3 py-1.5 rounded-full border bg-muted/50 text-muted-foreground border-border hover:bg-muted transition-colors">Ontem</button>
+                <button type="button" onClick={() => { const d = new Date(); d.setDate(d.getDate() - 1); setAdvDate(localToday(d)); }}
+                  className={`text-xs px-3 py-1.5 rounded-full border transition-colors ${(() => { const d = new Date(); d.setDate(d.getDate() - 1); return advDate === localToday(d); })() ? "bg-primary text-primary-foreground border-primary" : "bg-muted/50 text-muted-foreground border-border hover:bg-muted"}`}>Ontem</button>
                 <Input type="date" value={advDate} onChange={e => setAdvDate(e.target.value)} className="flex-1 h-8 text-sm" />
               </div>
             </div>

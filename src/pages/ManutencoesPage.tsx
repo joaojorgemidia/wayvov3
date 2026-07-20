@@ -25,6 +25,7 @@ import {
   DollarSign, ListChecks, TrendingDown, Trophy,
 } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { BulkActionBar, toggleSelected } from "@/components/ui/bulk-action-bar";
 
 // ─── Constantes ──────────────────────────────────────────────────
 
@@ -240,6 +241,7 @@ export default function ManutencoesPage() {
   const [maintConfig, setMaintConfig] = useState<MaintenanceConfig>(loadMaintenanceConfig);
 
   const [detailOS, setDetailOS] = useState<Maintenance | null>(null);
+  const [osSelectedIds, setOsSelectedIds] = useState<Set<string>>(new Set());
   const [formOpen, setFormOpen] = useState(false);
   const [form, setForm] = useState<Maintenance>(emptyForm());
   const [markupTipo, setMarkupTipo] = useState<"reais" | "percentual">("reais");
@@ -637,6 +639,23 @@ export default function ManutencoesPage() {
     }
   };
 
+  const handleBulkDelete = async () => {
+    const ids = [...osSelectedIds];
+    if (!confirm(`Remover ${ids.length} OS selecionada(s)? Os lançamentos financeiros vinculados também serão removidos.`)) return;
+    try {
+      await Promise.all(ids.map((id) => remove(id)));
+      const all = loadFinancial();
+      const linked = all.filter((e) => e.fixedOriginId && ids.includes(e.fixedOriginId));
+      if (linked.length > 0) {
+        await storeFinancialAll(all.filter((e) => !(e.fixedOriginId && ids.includes(e.fixedOriginId))));
+      }
+      toast.success(`${ids.length} OS removida(s)`);
+      setOsSelectedIds(new Set());
+    } catch {
+      toast.error("Erro ao remover OS selecionadas");
+    }
+  };
+
   const handleQuickStatus = async (os: Maintenance, status: Maintenance["status"]) => {
     if (status === "concluida" && os.pagamentoRealizado && !os.conta && os.quemPaga !== "locatario_direto") {
       setForm({ ...os, status });
@@ -940,6 +959,19 @@ export default function ManutencoesPage() {
           )}
         </Card>
       ) : (
+        <>
+        {canDelete && (
+          <div className="flex justify-end">
+            <Button
+              variant="outline" size="sm"
+              onClick={() => setOsSelectedIds(prev =>
+                filtered.every(os => prev.has(os.id)) ? new Set() : new Set(filtered.map(os => os.id)),
+              )}
+            >
+              {filtered.every(os => osSelectedIds.has(os.id)) ? "Desmarcar todos" : "Selecionar todos"}
+            </Button>
+          </div>
+        )}
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {filtered
             .slice()
@@ -949,17 +981,36 @@ export default function ManutencoesPage() {
               return nb - na;
             })
             .map((os) => (
-              <OSCard
-                key={os.id}
-                os={os}
-                motoLabel={getMotoLabel(os.motoId)}
-                onView={() => setDetailOS(os)}
-                onEdit={canEdit ? () => openEdit(os) : undefined}
-                onDelete={canDelete ? () => handleDelete(os.id) : undefined}
-                onStatusChange={(s) => handleQuickStatus(os, s)}
-              />
+              <div key={os.id} className="relative">
+                {canDelete && (
+                  <input
+                    type="checkbox"
+                    checked={osSelectedIds.has(os.id)}
+                    onChange={() => setOsSelectedIds(prev => toggleSelected(prev, os.id))}
+                    onClick={e => e.stopPropagation()}
+                    className="absolute top-3 left-3 z-10 h-4 w-4 rounded border-border accent-primary cursor-pointer"
+                  />
+                )}
+                <OSCard
+                  os={os}
+                  motoLabel={getMotoLabel(os.motoId)}
+                  onView={() => setDetailOS(os)}
+                  onEdit={canEdit ? () => openEdit(os) : undefined}
+                  onDelete={canDelete ? () => handleDelete(os.id) : undefined}
+                  onStatusChange={(s) => handleQuickStatus(os, s)}
+                />
+              </div>
             ))}
         </div>
+        </>
+      )}
+
+      {canDelete && (
+        <BulkActionBar
+          count={osSelectedIds.size}
+          onClear={() => setOsSelectedIds(new Set())}
+          actions={[{ label: "Excluir", icon: Trash2, variant: "destructive", onClick: handleBulkDelete }]}
+        />
       )}
 
       {/* Sheet de detalhe */}

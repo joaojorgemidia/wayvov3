@@ -67,6 +67,11 @@ export default function MotosPage() {
     if (confirm("Tem certeza que deseja remover esta moto?")) persist(motos.filter((m) => m.id !== id));
   };
 
+  const handleBulkDelete = (ids: Set<string>) => {
+    if (!confirm(`Remover ${ids.size} moto(s) selecionada(s)?`)) return;
+    persist(motos.filter((m) => !ids.has(m.id)));
+  };
+
   const handleEdit = (moto: Motorcycle) => {
     setEditMoto({ ...moto });
     setDialogMode("edit");
@@ -170,7 +175,7 @@ export default function MotosPage() {
         </TabsContent>
 
         <TabsContent value="frota" className="mt-4">
-          <FrotaTab motos={activeMotos} onEdit={handleEdit} onDelete={handleDelete} onSell={handleSell} />
+          <FrotaTab motos={activeMotos} onEdit={handleEdit} onDelete={handleDelete} onBulkDelete={handleBulkDelete} onSell={handleSell} />
         </TabsContent>
 
         <TabsContent value="vendidos" className="mt-4">

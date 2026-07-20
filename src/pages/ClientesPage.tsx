@@ -21,6 +21,7 @@ import { uploadDocument, downloadDocument, buildClientDocPath } from "@/lib/docu
 import { useCompany } from "@/contexts/CompanyContext";
 import { usePermissions } from "@/hooks/usePermissions";
 import { AlertTriangle } from "lucide-react";
+import { BulkActionBar, toggleSelected } from "@/components/ui/bulk-action-bar";
 
 const emptyClient = (): Client => ({
   id: crypto.randomUUID(), nome: "", cpf: "", cnh: "", cnhCategoria: "", cnhValidade: null,
@@ -64,6 +65,7 @@ export default function ClientesPage() {
   const [clients, setClients] = useState<Client[]>([]);
   useEffect(() => { setClients(cache.clients); }, [cache.clients]);
   const [search, setSearch] = useState("");
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [dialogOpen, setDialogOpen] = useState(false);
   const [form, setForm] = useState<Client>(emptyClient());
   const [mode, setMode] = useState<"add" | "edit">("add");
@@ -368,6 +370,12 @@ export default function ClientesPage() {
     if (confirm("Remover este cliente?")) persist(clients.filter(c => c.id !== id));
   };
 
+  const handleBulkDelete = () => {
+    if (!confirm(`Remover ${selectedIds.size} cliente(s) selecionado(s)?`)) return;
+    persist(clients.filter(c => !selectedIds.has(c.id)));
+    setSelectedIds(new Set());
+  };
+
   const { canCreate, canEdit, canDelete } = usePermissions();
   const openAdd = () => { setForm(emptyClient()); setMode("add"); setStep(1); setDialogOpen(true); };
   const openEdit = (c: Client) => { setForm({ ...c }); setMode("edit"); setStep(1); setDialogOpen(true); };
@@ -384,9 +392,21 @@ export default function ClientesPage() {
         {canCreate && <Button onClick={openAdd} className="gap-2"><Plus className="h-4 w-4" /> Novo Cliente</Button>}
       </div>
 
-      <div className="relative max-w-md">
-        <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-        <Input placeholder="Buscar nome, CPF ou telefone..." value={search} onChange={e => setSearch(e.target.value)} className="pl-9" />
+      <div className="flex items-center gap-3">
+        <div className="relative max-w-md flex-1">
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input placeholder="Buscar nome, CPF ou telefone..." value={search} onChange={e => setSearch(e.target.value)} className="pl-9" />
+        </div>
+        {canDelete && filtered.length > 0 && (
+          <Button
+            variant="outline" size="sm"
+            onClick={() => setSelectedIds(prev =>
+              filtered.every(c => prev.has(c.id)) ? new Set() : new Set(filtered.map(c => c.id)),
+            )}
+          >
+            {filtered.every(c => selectedIds.has(c.id)) ? "Desmarcar todos" : "Selecionar todos"}
+          </Button>
+        )}
       </div>
 
       {filtered.length === 0 ? (
@@ -402,9 +422,19 @@ export default function ClientesPage() {
             return (
             <Card key={c.id} className={`p-4 space-y-3 ${cnhStatus.hasBlocker ? "border-destructive/60" : cnhStatus.issues.includes("vence_em_breve") ? "border-yellow-500/60" : ""}`}>
               <div className="flex items-start justify-between">
-                <div>
-                  <h3 className="font-semibold text-foreground">{c.nome}</h3>
-                  <p className="text-sm text-muted-foreground">CPF: {c.cpf || "—"}</p>
+                <div className="flex items-start gap-2">
+                  {canDelete && (
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.has(c.id)}
+                      onChange={() => setSelectedIds(prev => toggleSelected(prev, c.id))}
+                      className="h-4 w-4 mt-1 rounded border-border accent-primary cursor-pointer"
+                    />
+                  )}
+                  <div>
+                    <h3 className="font-semibold text-foreground">{c.nome}</h3>
+                    <p className="text-sm text-muted-foreground">CPF: {c.cpf || "—"}</p>
+                  </div>
                 </div>
                 <div className="flex gap-1">
                   {canEdit && <Button variant="ghost" size="icon" onClick={() => openEdit(c)}><Pencil className="h-4 w-4" /></Button>}
@@ -470,6 +500,14 @@ export default function ClientesPage() {
             );
           })}
         </div>
+      )}
+
+      {canDelete && (
+        <BulkActionBar
+          count={selectedIds.size}
+          onClear={() => setSelectedIds(new Set())}
+          actions={[{ label: "Excluir", icon: Trash2, variant: "destructive", onClick: handleBulkDelete }]}
+        />
       )}
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>

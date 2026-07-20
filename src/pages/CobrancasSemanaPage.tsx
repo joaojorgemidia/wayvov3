@@ -218,6 +218,11 @@ export default function CobrancasSemanaPage() {
   const [parcelGrupoSelected, setParcelGrupoSelected] = useState<Set<string>>(new Set());
   const [parcelGrupoForm, setParcelGrupoForm] = useState({ entrada: "", valorParcela: "", primeiraData: "" });
   const [parcelGrupoSalvando, setParcelGrupoSalvando] = useState(false);
+  // Datas ajustadas manualmente por parcela (índice → ISO). Some quando o
+  // usuário edita uma data específica no preview, sobrepondo o cálculo
+  // automático (primeiraData + 7 dias × índice) só para aquela parcela.
+  const [parcelDateOverrides, setParcelDateOverrides] = useState<Record<number, string>>({});
+  const [parcelEditingIndex, setParcelEditingIndex] = useState<number | null>(null);
   const [debtFuturasOpen, setDebtFuturasOpen] = useState(false);
   const [debtPagasOpen, setDebtPagasOpen] = useState(false);
   const [reschedClientItems, setReschedClientItems] = useState<RowItem[]>([]);
@@ -901,11 +906,15 @@ export default function CobrancasSemanaPage() {
 
   const openReschedule = (item: RowItem) => {
     setReschedItem(item);
-    // Pré-popula com o maior entre hoje e o vencimento atual, para que
-    // adiar uma cobrança já vencida jogue ela para frente (não para o passado).
+    // Pré-popula com o maior entre amanhã e o vencimento atual, para que
+    // adiar uma cobrança já vencida jogue ela para frente de verdade — se o
+    // padrão fosse "hoje", confirmar sem trocar a data não adiava nada e a
+    // cobrança voltava a aparecer como atrasada assim que o dia virasse.
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    const base = item.due && item.due.getTime() > today.getTime() ? item.due : today;
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    const base = item.due && item.due.getTime() > today.getTime() ? item.due : tomorrow;
     setReschedDate(toISODate(base));
   };
 
@@ -1105,7 +1114,7 @@ export default function CobrancasSemanaPage() {
       newEntries.push({ ...base, id: crypto.randomUUID(), descricao: "Acordo de parcelamento de dívida – Entrada", valor: entrada, data: hoje, dataPrevista: hoje });
     }
     for (let i = 0; i < nParcelas; i++) {
-      const data = addDaysLocal(primeiraData, i * 7);
+      const data = parcelDateOverrides[i] || addDaysLocal(primeiraData, i * 7);
       const v = i === nParcelas - 1 ? parseFloat((restante - valorParcela * (nParcelas - 1)).toFixed(2)) : valorParcela;
       newEntries.push({ ...base, id: crypto.randomUUID(), descricao: `Acordo de parcelamento de dívida – Parcela ${i + 1}/${nParcelas}`, valor: v, data, dataPrevista: data });
     }
@@ -1659,6 +1668,10 @@ export default function CobrancasSemanaPage() {
                       const { textCls, badgeCls, dot } = urgencyStyle(maxDays);
                       const clienteId = items[0].clienteId;
                       const placas = [...new Set(items.map(i => i.entry.placa).filter(Boolean))];
+                      // Dívida de locação já encerrada: não tem contrato ativo pra "esperar a
+                      // próxima cobrança" — precisa de ação direta (cobrar avulso/acordo), por
+                      // isso ganha destaque separado da cobrança normal de locação ativa.
+                      const hasEncerrada = items.some(i => i.entry.rentalId && rentalsById.get(i.entry.rentalId)?.status !== "ativa");
                       return (
                         <div key={key} className="flex items-center gap-1 pr-1 hover:bg-muted/30 transition-colors">
                           <button
@@ -1671,6 +1684,11 @@ export default function CobrancasSemanaPage() {
                               {placas.map(p => (
                                 <span key={p} className="font-mono text-[10px] bg-muted border border-border/50 rounded px-1.5 py-px text-muted-foreground flex-shrink-0">{p}</span>
                               ))}
+                              {hasEncerrada && (
+                                <span className="text-[10px] font-bold bg-purple-600 text-white rounded-full px-1.5 py-px flex-shrink-0">
+                                  Locação encerrada
+                                </span>
+                              )}
                             </div>
                             <div className="flex items-center gap-2 flex-shrink-0">
                               <span className={`text-[10px] font-bold ${badgeCls} rounded-full px-2 py-px ${textCls}`}>
@@ -1682,8 +1700,11 @@ export default function CobrancasSemanaPage() {
                           <button
                             title="Adiar cobranças"
                             onClick={() => {
+                              // Padrão = amanhã, não hoje: adiar para "hoje" não tira a
+                              // cobrança do atraso, ela reaparece assim que o dia virar.
                               const base = new Date();
                               base.setHours(0, 0, 0, 0);
+                              base.setDate(base.getDate() + 1);
                               setReschedClientItems(items);
                               setReschedClientDate(toISODate(base));
                             }}
@@ -1745,6 +1766,7 @@ export default function CobrancasSemanaPage() {
                   const { textCls, badgeCls, dot } = urgencyStyle(maxDays);
                   const clienteId = items[0].clienteId;
                   const placas = [...new Set(items.map(i => i.entry.placa).filter(Boolean))];
+                  const hasEncerrada = items.some(i => i.entry.rentalId && rentalsById.get(i.entry.rentalId)?.status !== "ativa");
                   return (
                     <button
                       key={key}
@@ -1757,6 +1779,11 @@ export default function CobrancasSemanaPage() {
                         {placas.map(p => (
                           <span key={p} className="font-mono text-[10px] bg-muted border border-border/50 rounded px-1.5 py-px text-muted-foreground flex-shrink-0">{p}</span>
                         ))}
+                        {hasEncerrada && (
+                          <span className="text-[10px] font-bold bg-purple-600 text-white rounded-full px-1.5 py-px flex-shrink-0">
+                            Locação encerrada
+                          </span>
+                        )}
                       </div>
                       <div className="flex items-center gap-2 flex-shrink-0">
                         <span className={`text-[10px] font-bold ${badgeCls} rounded-full px-2 py-px ${textCls}`}>
@@ -2265,10 +2292,16 @@ export default function CobrancasSemanaPage() {
                 if (!num || !inicio || !fim) return null;
                 // Se o contrato encerrou no meio desse período, mostra o fim real do
                 // contrato em vez do fim nominal do período (que já não existe mais).
-                const fimEfetivo = rental.dataFim && rental.dataFim >= inicio && rental.dataFim < fim ? rental.dataFim : fim;
+                const encerrouNoMeio = !!rental.dataFim && rental.dataFim >= inicio && rental.dataFim < fim;
+                const fimEfetivo = encerrouNoMeio ? rental.dataFim! : fim;
                 const freq = rental.frequenciaPagamento;
                 const lbl = freq === "quinzenal" ? "Quinzena" : freq === "mensal" ? "Mês" : "Semana";
-                return `${lbl} ${String(num).padStart(2, "0")}: ${fmt(inicio)} até ${fmt(fimEfetivo)}`;
+                const base = `${lbl} ${String(num).padStart(2, "0")}: ${fmt(inicio)} até ${fmt(fimEfetivo)}`;
+                if (!encerrouNoMeio) return base;
+                // Deixa explícito que não é o período cheio — é só a fração de diárias
+                // cobrada até o dia real do encerramento do contrato.
+                const dias = Math.round((new Date(fimEfetivo + "T00:00:00").getTime() - new Date(inicio + "T00:00:00").getTime()) / 86400000) + 1;
+                return `${base} · ${dias} diária${dias !== 1 ? "s" : ""} (encerramento)`;
               };
               const extractFromDesc = (desc: string | undefined) => {
                 if (!desc) return null;
@@ -2331,6 +2364,23 @@ export default function CobrancasSemanaPage() {
                 if (rental) {
                   const due = parseISO(e.dataOriginal || e.dataPrevista || e.data);
                   return calcLabel(due);
+                }
+              }
+              // Juros/multa (inclui saldo de pagamento parcial que ficou pendente após a
+              // confirmação) — sem isso caía no rótulo genérico "Juros por Atraso", sem
+              // indicar a qual semana/cobrança aquele valor se refere.
+              if (e.categoria === "juros_atraso") {
+                // Prefixo vem do próprio texto salvo na criação — "Juros/Multa" quando é só
+                // acréscimo de atraso, ou "Saldo parcial (aluguel + juros/multa)" quando o
+                // valor pendente inclui aluguel que também não foi coberto pelo pagamento.
+                const label = e.tags?.includes("saldo_parcial") ? "Saldo parcial (aluguel + juros/multa)" : "Juros/Multa";
+                const src = `${e.descricao || ""} ${e.observacao || ""}`;
+                const mSemana = src.match(/((?:Semana|Quinzena|M[eê]s)\s+\d+:\s*\d{2}\/\d{2}\s+até\s+\d{2}\/\d{2})/i);
+                if (mSemana) return `${label} — ${mSemana[1]}`;
+                if (rental) {
+                  const due = parseISO(e.dataOriginal || e.dataPrevista || e.data);
+                  const periodo = calcLabel(due);
+                  if (periodo) return `${label} — ${periodo}`;
                 }
               }
               return null;
@@ -2483,6 +2533,7 @@ export default function CobrancasSemanaPage() {
 
             const clientePlacas = [...new Set(debtDetailEntries.map(e => e.placa).filter(Boolean))];
             const temParcelamentos = debtDetailEntries.some(e => e.subcategoria === "Parcelamento" && e.fixedOriginId);
+            const temLocacaoEncerrada = debtDetailEntries.some(e => e.rentalId && rentalsById.get(e.rentalId)?.status !== "ativa");
             const clienteTelefone = debtDetailClientId ? clientsById.get(debtDetailClientId)?.telefone ?? null : null;
 
             return (
@@ -2497,6 +2548,11 @@ export default function CobrancasSemanaPage() {
                         {clientePlacas.map(p => (
                           <span key={p} className="font-mono text-[10px] font-semibold text-foreground/60 bg-muted border border-border/60 rounded px-1.5 py-px tracking-wider">{p}</span>
                         ))}
+                        {temLocacaoEncerrada && (
+                          <span className="text-[10px] font-bold bg-purple-600 text-white rounded-full px-1.5 py-px">
+                            Locação encerrada
+                          </span>
+                        )}
                       </div>
                     </div>
                     {temParcelamentos && (
@@ -2549,6 +2605,8 @@ export default function CobrancasSemanaPage() {
                           const amanha = new Date(today.getTime());
                           amanha.setDate(amanha.getDate() + 1);
                           setParcelGrupoForm({ entrada: "", valorParcela: "", primeiraData: toISODate(amanha) });
+                          setParcelDateOverrides({});
+                          setParcelEditingIndex(null);
                         }}
                         className="flex items-center gap-1.5 text-[11px] font-semibold text-indigo-700 dark:text-indigo-400 bg-indigo-100 dark:bg-indigo-950/40 hover:bg-indigo-200 dark:hover:bg-indigo-900/50 border border-indigo-300 dark:border-indigo-700 rounded-lg px-2.5 py-1.5 transition-colors"
                       >
@@ -2820,7 +2878,7 @@ export default function CobrancasSemanaPage() {
 
         const previewParcelas = nParcelas > 0 && nParcelas <= 104 && parcelGrupoForm.primeiraData
           ? Array.from({ length: nParcelas }, (_, i) => {
-              const data = addDaysLocal(parcelGrupoForm.primeiraData, i * 7);
+              const data = parcelDateOverrides[i] || addDaysLocal(parcelGrupoForm.primeiraData, i * 7);
               const v = i === nParcelas - 1 ? parseFloat((restante - valorParcelaNum * (nParcelas - 1)).toFixed(2)) : valorParcelaNum;
               return { index: i + 1, data, v };
             })
@@ -2932,12 +2990,39 @@ export default function CobrancasSemanaPage() {
                           <span className="font-semibold">{fmtBRL(entradaNum)}</span>
                         </div>
                       )}
-                      {previewParcelas.map(p => (
-                        <div key={p.index} className="flex justify-between px-4 py-2 text-xs">
-                          <span className="text-muted-foreground">Parcela {p.index}/{nParcelas} · {fmtDt(p.data)}</span>
-                          <span className="font-semibold">{fmtBRL(p.v)}</span>
-                        </div>
-                      ))}
+                      {previewParcelas.map(p => {
+                        const idx = p.index - 1;
+                        return (
+                          <div key={p.index} className="flex justify-between items-center px-4 py-2 text-xs gap-2">
+                            <span className="text-muted-foreground flex items-center gap-1.5 min-w-0">
+                              Parcela {p.index}/{nParcelas} ·
+                              {parcelEditingIndex === idx ? (
+                                <Input
+                                  type="date"
+                                  autoFocus
+                                  value={p.data}
+                                  onChange={(e) => {
+                                    const v = e.target.value;
+                                    setParcelDateOverrides(prev => ({ ...prev, [idx]: v }));
+                                  }}
+                                  onBlur={() => setParcelEditingIndex(null)}
+                                  className="h-6 w-[124px] text-xs px-1.5 py-0"
+                                />
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => setParcelEditingIndex(idx)}
+                                  className="underline decoration-dotted underline-offset-2 hover:text-foreground"
+                                  title="Clique para alterar a data desta parcela"
+                                >
+                                  {fmtDt(p.data)}
+                                </button>
+                              )}
+                            </span>
+                            <span className="font-semibold shrink-0">{fmtBRL(p.v)}</span>
+                          </div>
+                        );
+                      })}
                       <div className="flex justify-between px-4 py-2.5 text-sm font-bold bg-indigo-50 dark:bg-indigo-950/30">
                         <span>Total do acordo</span>
                         <span>{fmtBRL(entradaNum + previewParcelas.reduce((s, p) => s + p.v, 0))}</span>

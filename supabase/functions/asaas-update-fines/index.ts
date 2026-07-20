@@ -156,6 +156,12 @@ serve(async (req) => {
     const diasAtraso = Math.max(0, Math.floor((todayTs - dueTs) / MS_DAY));
     if (diasAtraso <= 0) { skipped++; continue; }
 
+    // Saldo restante de um pagamento parcial anterior — a multa/juros já foi somada UMA
+    // vez ao calcular esse saldo (ver asaas-charge/FinanceiroPage/CobrancasSemanaPage).
+    // Recalcular multa/juros aqui de novo dobraria o encargo a cada rodada de atraso do
+    // mesmo saldo — mesmo critério usado no resto do app (isSaldoRestanteEntry).
+    if ((entry.observacao || "").startsWith("Saldo devedor de pagamento parcial")) { skipped++; continue; }
+
     const baseValor = Number(entry.valor) || 0;
     const multaFixa = multaAtraso;
     const jurosDiarioTotal = jurosDiario * diasAtraso;

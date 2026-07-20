@@ -258,6 +258,14 @@ serve(async (req) => {
 
     const baseValor = Number(entry.valor) || 0;
 
+    // Saldo restante de um pagamento parcial anterior (ex.: cliente pagou o aluguel mas
+    // não a multa/juros daquela rodada, ou pagou só parte do aluguel) — a multa/juros já
+    // foi somada UMA vez ao calcular esse saldo (ver FinanceiroPage/CobrancasSemanaPage).
+    // Sem essa checagem, gerar boleto pra esse saldo quando ele já está atrasado somaria
+    // multa/juros de novo em cima de um valor que já é (total ou parcialmente) multa/juros
+    // — mesmo critério usado no resto do app (isSaldoRestanteEntry).
+    const isSaldoRestante = (entry.observacao || "").startsWith("Saldo devedor de pagamento parcial");
+
     // Multa/juros de atraso só se aplicam a aluguel e caução — mesma regra usada em todo o
     // resto do app (ex: calcValorAtualizado no Financeiro/Cobranças). O app usa multa fixa +
     // juros diário (R$/dia) + juros mensal (%) — o Asaas não tem um equivalente nativo para
@@ -274,7 +282,12 @@ serve(async (req) => {
     // ficar um valor "seco" sem explicar de onde veio o acréscimo.
     let explicacaoAtraso: string | null = null;
 
-    if (isAluguelOuCaucao) {
+    if (isAluguelOuCaucao && isSaldoRestante) {
+      // Zera fine/interest pra não deixar o Asaas aplicar a taxa padrão da conta em cima
+      // de um valor que já é o saldo (parcial ou só multa/juros) de uma rodada anterior.
+      fineToApply = { value: 0, type: "FIXED" };
+      interestToApply = { value: 0 };
+    } else if (isAluguelOuCaucao) {
       if (diasAtrasoReal > 0) {
         const jurosDiarioTotal = jurosDiario * diasAtrasoReal;
         const jurosMesTotal = baseValor * (jurosAtrasoMes / 100 / 30) * diasAtrasoReal;
@@ -286,6 +299,13 @@ serve(async (req) => {
         if (jurosDiarioTotal > 0) parts.push(`Juros ${fmtBRL(jurosDiario)}/dia × ${diasAtrasoReal}d = ${fmtBRL(jurosDiarioTotal)}`);
         if (jurosMesTotal > 0) parts.push(`Juros ${jurosAtrasoMes}%/mês (${diasAtrasoReal}d) = ${fmtBRL(jurosMesTotal)}`);
         explicacaoAtraso = `${parts.join(" + ")} = ${fmtBRL(valorBoleto)} (${diasAtrasoReal}d em atraso)`;
+
+        // Zera fine/interest explicitamente no boleto (mesma lógica do cron
+        // asaas-update-fines): sem isso, o Asaas aplica a taxa padrão da conta
+        // (ex.: 2,37%/mês) por cima do valor que JÁ inclui multa/juros calculados
+        // acima — juros em cima de juros a partir do vencimento do boleto.
+        fineToApply = { value: 0, type: "FIXED" };
+        interestToApply = { value: 0 };
       } else {
         if (multaAtraso > 0 && multaAtraso < baseValor) {
           fineToApply = { value: multaAtraso, type: "FIXED" };

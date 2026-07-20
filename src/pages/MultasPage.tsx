@@ -14,7 +14,8 @@ import { Label } from "@/components/ui/label";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Plus, Search, AlertTriangle, Pencil, Trash2, RefreshCw, Car, Loader2, CheckCircle2, XCircle, Info, Settings, ShieldCheck, Upload, ScanLine } from "lucide-react";
+import { BulkActionBar, SelectAllCheckbox, toggleSelected } from "@/components/ui/bulk-action-bar";
+import { Plus, Search, AlertTriangle, Pencil, Trash2, RefreshCw, Car, Loader2, CheckCircle2, XCircle, Info, Settings, ShieldCheck, Upload, ScanLine, CheckCheck, Circle } from "lucide-react";
 import { usePermissions } from "@/hooks/usePermissions";
 import { toast } from "sonner";
 import DetranConfigDialog from "@/components/DetranConfigDialog";
@@ -106,10 +107,14 @@ export default function MultasPage() {
   const detranConfigurado = !!activeCompany?.detranConfig?.login;
 
   const [search, setSearch] = useState("");
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [dialogOpen, setDialogOpen] = useState(false);
   const [form, setForm] = useState<Fine>(emptyFine());
   const [valorStr, setValorStr] = useState("");
   const [mode, setMode] = useState<"add" | "edit">("add");
+  // Passo 1 = só anexar o print/PDF (agiliza o dia a dia); passo 2 = formulário completo,
+  // pré-preenchido pela leitura automática (ou preenchido à mão se o gestor pular a leitura).
+  const [formStep, setFormStep] = useState<1 | 2>(1);
   const [extracting, setExtracting] = useState(false);
   const [isDragActive, setIsDragActive] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -134,12 +139,39 @@ export default function MultasPage() {
     f.descricao.toLowerCase().includes(search.toLowerCase())
   ), [fines, search, motos]);
 
+  // Bloqueia/avisa multa repetida: Auto da Infração e Nº RENAINF são identificadores
+  // oficiais únicos (cada um sozinho já basta, valem em qualquer moto). Sem nenhum dos
+  // dois (cadastro manual sem OCR), cai no fallback de mesma moto + mesma data + mesmo valor.
+  const normAuto = (s: string | null | undefined) => (s || "").trim().toUpperCase();
+  type DuplicateCandidate = { id?: string; motoId: string; dataMulta: string; valor: number; autoInfracao?: string | null; numeroRenainf?: string | null };
+  const findDuplicateFine = (candidate: DuplicateCandidate) => {
+    const temAuto = !!normAuto(candidate.autoInfracao);
+    const temRenainf = !!normAuto(candidate.numeroRenainf);
+    return fines.find(f => {
+      if (f.id === candidate.id) return false;
+      if (temAuto && normAuto(f.autoInfracao) === normAuto(candidate.autoInfracao)) return true;
+      if (temRenainf && normAuto(f.numeroRenainf) === normAuto(candidate.numeroRenainf)) return true;
+      if (temAuto || temRenainf) return false;
+      return f.motoId === candidate.motoId && f.dataMulta === candidate.dataMulta && f.valor === candidate.valor;
+    });
+  };
+  const duplicateFineMessage = (candidate: { autoInfracao?: string | null; numeroRenainf?: string | null }) => {
+    if (normAuto(candidate.autoInfracao)) return `Já existe uma multa cadastrada com o Auto da Infração ${candidate.autoInfracao}.`;
+    if (normAuto(candidate.numeroRenainf)) return `Já existe uma multa cadastrada com o Nº RENAINF ${candidate.numeroRenainf}.`;
+    return "Já existe uma multa cadastrada para essa moto, nessa data e com esse valor.";
+  };
+
   const handleSave = async () => {
     if (!form.motoId) return;
     const valor = parseFloat(valorStr.replace(/\./g, "").replace(",", ".")) || 0;
     const responsavel: Fine["responsavel"] = gerarEntrada ? "cliente" : "locadora";
     const finalForm = { ...form, valor, responsavel };
     const isNew = !fines.find(f => f.id === form.id);
+
+    if (findDuplicateFine(finalForm)) {
+      toast.error(duplicateFineMessage(finalForm));
+      return;
+    }
 
     if (isNew) persist([...fines, finalForm]);
     else persist(fines.map(f => f.id === form.id ? finalForm : f));
@@ -169,7 +201,7 @@ export default function MultasPage() {
         motoId: finalForm.motoId, rentalId: finalForm.rentalId,
         clienteId: finalForm.clienteId, clienteNome: client?.nome || "",
         placa, natureza: "operacional", conta: "", tags: ["multa"],
-        recorrente: false, fixedOriginId: finalForm.id,
+        recorrente: false,
         descricao, observacao: partes || undefined,
       };
 
@@ -212,6 +244,17 @@ export default function MultasPage() {
 
   const handleDelete = (id: string) => {
     if (confirm("Remover esta multa?")) persist(fines.filter(f => f.id !== id));
+  };
+
+  const handleBulkDelete = () => {
+    if (!confirm(`Remover ${selectedIds.size} multa(s) selecionada(s)?`)) return;
+    persist(fines.filter(f => !selectedIds.has(f.id)));
+    setSelectedIds(new Set());
+  };
+
+  const handleBulkStatus = (status: Fine["status"]) => {
+    persist(fines.map(f => selectedIds.has(f.id) ? { ...f, status } : f));
+    setSelectedIds(new Set());
   };
 
   const handleMultaUpload = async (file: File) => {
@@ -262,7 +305,21 @@ export default function MultasPage() {
         horaInfracao: d.horaInfracao ? String(d.horaInfracao) : prev.horaInfracao,
         localInfracao: d.localInfracao ? String(d.localInfracao) : prev.localInfracao,
       }));
-      toast.success("Dados da multa extraídos com sucesso!");
+      if (clienteId !== form.clienteId) setGerarEntrada(!!clienteId);
+
+      const dataMultaFinal = d.dataMulta ? String(d.dataMulta) : form.dataMulta;
+      const autoInfracaoFinal = d.autoInfracao ? String(d.autoInfracao) : form.autoInfracao;
+      const numeroRenainfFinal = d.numeroRenainf ? String(d.numeroRenainf) : form.numeroRenainf;
+      // Auto da Infração e Nº RENAINF sozinhos já identificam duplicata — não dependem de
+      // a placa ter sido reconhecida no OCR (ex: moto não cadastrada com esse texto de placa).
+      const candidato = { id: form.id, motoId: motoId || form.motoId, dataMulta: dataMultaFinal, valor: novoValor || form.valor, autoInfracao: autoInfracaoFinal, numeroRenainf: numeroRenainfFinal };
+      const duplicate = (normAuto(autoInfracaoFinal) || normAuto(numeroRenainfFinal) || motoId || form.motoId) && findDuplicateFine(candidato);
+      if (duplicate) {
+        toast.warning(`Multa repetida! ${duplicateFineMessage(candidato)}`, { duration: 8000 });
+      } else {
+        toast.success("Dados da multa extraídos com sucesso!");
+      }
+      setFormStep(2);
     } catch (err: any) {
       toast.error(err.message || "Erro ao ler a multa");
     } finally {
@@ -440,7 +497,7 @@ export default function MultasPage() {
             </div>
           )}
           {canCreate && (
-            <Button onClick={() => { setForm(emptyFine()); setValorStr(""); setGerarEntrada(true); setNaoGerarSaida(false); setMode("add"); setDialogOpen(true); }} className="gap-2">
+            <Button onClick={() => { setForm(emptyFine()); setValorStr(""); setGerarEntrada(false); setNaoGerarSaida(false); setMode("add"); setFormStep(1); setDialogOpen(true); }} className="gap-2">
               <Plus className="h-4 w-4" /> Nova Multa
             </Button>
           )}
@@ -463,12 +520,18 @@ export default function MultasPage() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b bg-muted/50">
+                  {canDelete && (
+                    <th className="px-3 py-3 w-8">
+                      <SelectAllCheckbox ids={filtered.map(f => f.id)} selected={selectedIds} onChange={setSelectedIds} />
+                    </th>
+                  )}
+                  <th className="px-3 py-3 text-left font-semibold text-muted-foreground">Responsável</th>
                   <th className="px-3 py-3 text-left font-semibold text-muted-foreground">Moto</th>
                   <th className="px-3 py-3 text-left font-semibold text-muted-foreground">Cliente</th>
                   <th className="px-3 py-3 text-left font-semibold text-muted-foreground">Data</th>
-                  <th className="px-3 py-3 text-left font-semibold text-muted-foreground">Valor</th>
+                  <th className="px-3 py-3 text-left font-semibold text-muted-foreground">Auto da infração</th>
                   <th className="px-3 py-3 text-left font-semibold text-muted-foreground">Descrição</th>
-                  <th className="px-3 py-3 text-left font-semibold text-muted-foreground">Responsável</th>
+                  <th className="px-3 py-3 text-left font-semibold text-muted-foreground">Valor</th>
                   <th className="px-3 py-3 text-left font-semibold text-muted-foreground">Status</th>
                   <th className="px-3 py-3 text-right font-semibold text-muted-foreground">Ações</th>
                 </tr>
@@ -476,6 +539,21 @@ export default function MultasPage() {
               <tbody>
                 {filtered.map(f => (
                   <tr key={f.id} className="border-b last:border-0 hover:bg-muted/30 transition-colors">
+                    {canDelete && (
+                      <td className="px-3 py-3">
+                        <input
+                          type="checkbox"
+                          checked={selectedIds.has(f.id)}
+                          onChange={() => setSelectedIds(prev => toggleSelected(prev, f.id))}
+                          className="h-4 w-4 rounded border-border accent-primary cursor-pointer"
+                        />
+                      </td>
+                    )}
+                    <td className="px-3 py-3">
+                      <Badge variant={f.responsavel === "cliente" ? "default" : "secondary"}>
+                        {f.responsavel === "cliente" ? "Cliente" : "Locadora"}
+                      </Badge>
+                    </td>
                     <td className="px-3 py-3 font-mono font-bold">
                       {getMotoPlaca(f.motoId)}
                       {f.origem === "detran" && (
@@ -484,19 +562,15 @@ export default function MultasPage() {
                     </td>
                     <td className="px-3 py-3">{getClientName(f.clienteId)}</td>
                     <td className="px-3 py-3">{new Date(f.dataMulta + "T00:00:00").toLocaleDateString("pt-BR")}</td>
-                    <td className="px-3 py-3 font-semibold">{fmt(f.valor)}</td>
+                    <td className="px-3 py-3 text-muted-foreground">{f.autoInfracao || "—"}</td>
                     <td className="px-3 py-3 text-muted-foreground max-w-[200px] truncate">{f.descricao || "—"}</td>
-                    <td className="px-3 py-3">
-                      <Badge variant={f.responsavel === "cliente" ? "default" : "secondary"}>
-                        {f.responsavel === "cliente" ? "Cliente" : "Locadora"}
-                      </Badge>
-                    </td>
+                    <td className="px-3 py-3 font-semibold">{fmt(f.valor)}</td>
                     <td className="px-3 py-3">
                       <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${statusColor[f.status]}`}>{statusLabel[f.status]}</span>
                     </td>
                     <td className="px-3 py-3">
                       <div className="flex justify-end gap-1">
-                        {canEdit && <Button variant="ghost" size="icon" onClick={() => { setForm({ ...f }); setValorStr(f.valor ? String(f.valor).replace(".", ",") : ""); setGerarEntrada(f.responsavel === "cliente"); setNaoGerarSaida(false); setMode("edit"); setDialogOpen(true); }}><Pencil className="h-4 w-4" /></Button>}
+                        {canEdit && <Button variant="ghost" size="icon" onClick={() => { setForm({ ...f }); setValorStr(f.valor ? String(f.valor).replace(".", ",") : ""); setGerarEntrada(f.responsavel === "cliente"); setNaoGerarSaida(false); setMode("edit"); setFormStep(2); setDialogOpen(true); }}><Pencil className="h-4 w-4" /></Button>}
                         {canDelete && <Button variant="ghost" size="icon" onClick={() => handleDelete(f.id)}><Trash2 className="h-4 w-4 text-destructive" /></Button>}
                       </div>
                     </td>
@@ -508,230 +582,276 @@ export default function MultasPage() {
         </Card>
       )}
 
+      {canDelete && (
+        <BulkActionBar
+          count={selectedIds.size}
+          onClear={() => setSelectedIds(new Set())}
+          actions={[
+            { label: "Marcar como paga", icon: CheckCheck, onClick: () => handleBulkStatus("paga") },
+            { label: "Marcar como pendente", icon: Circle, onClick: () => handleBulkStatus("pendente") },
+            { label: "Excluir", icon: Trash2, variant: "destructive", onClick: handleBulkDelete },
+          ]}
+        />
+      )}
+
       {/* ── Formulário manual ─────────────────────────────────────────────────── */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="sm:max-w-lg">
+        <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>{mode === "add" ? "Nova Multa" : "Editar Multa"}</DialogTitle>
           </DialogHeader>
           <div className="grid gap-4 py-2">
-            {/* 0. Zona de upload OCR */}
-            <div
-              className={`relative border-2 border-dashed rounded-lg p-4 text-center cursor-pointer transition-colors ${
-                isDragActive
-                  ? "border-primary bg-primary/5"
-                  : "border-border hover:border-primary/50 hover:bg-muted/30"
-              } ${extracting ? "pointer-events-none opacity-60" : ""}`}
-              onClick={() => fileInputRef.current?.click()}
-              onDragOver={e => { e.preventDefault(); setIsDragActive(true); }}
-              onDragLeave={() => setIsDragActive(false)}
-              onDrop={(e: DragEvent<HTMLDivElement>) => {
-                e.preventDefault();
-                setIsDragActive(false);
-                const file = e.dataTransfer.files?.[0];
-                if (file) void handleMultaUpload(file);
-              }}
-            >
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="image/*,application/pdf"
-                className="hidden"
-                onChange={(e: ChangeEvent<HTMLInputElement>) => {
-                  const file = e.target.files?.[0];
-                  e.target.value = "";
-                  if (file) void handleMultaUpload(file);
-                }}
-              />
-              {extracting ? (
-                <div className="flex flex-col items-center gap-1.5 py-1">
-                  <Loader2 className="h-5 w-5 animate-spin text-primary" />
-                  <p className="text-[12px] text-muted-foreground">Lendo multa...</p>
+            {/* Passo 1: só o anexo — agiliza o registro no dia a dia (a leitura automática
+                preenche o resto e já avança pro passo 2). */}
+            {formStep === 1 && (
+              <>
+                <div
+                  className={`relative border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-colors ${
+                    isDragActive
+                      ? "border-primary bg-primary/5"
+                      : "border-border hover:border-primary/50 hover:bg-muted/30"
+                  } ${extracting ? "pointer-events-none opacity-60" : ""}`}
+                  onClick={() => fileInputRef.current?.click()}
+                  onDragOver={e => { e.preventDefault(); setIsDragActive(true); }}
+                  onDragLeave={() => setIsDragActive(false)}
+                  onDrop={(e: DragEvent<HTMLDivElement>) => {
+                    e.preventDefault();
+                    setIsDragActive(false);
+                    const file = e.dataTransfer.files?.[0];
+                    if (file) void handleMultaUpload(file);
+                  }}
+                >
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/*,application/pdf"
+                    className="hidden"
+                    onChange={(e: ChangeEvent<HTMLInputElement>) => {
+                      const file = e.target.files?.[0];
+                      e.target.value = "";
+                      if (file) void handleMultaUpload(file);
+                    }}
+                  />
+                  {extracting ? (
+                    <div className="flex flex-col items-center gap-2 py-3">
+                      <Loader2 className="h-6 w-6 animate-spin text-primary" />
+                      <p className="text-sm text-muted-foreground">Lendo multa...</p>
+                    </div>
+                  ) : (
+                    <div className="flex flex-col items-center gap-2 py-3">
+                      <ScanLine className="h-6 w-6 text-muted-foreground/60" />
+                      <p className="text-sm font-medium text-foreground">Anexar print ou PDF da multa</p>
+                      <p className="text-xs text-muted-foreground">O sistema preenche os campos automaticamente · JPG, PNG, PDF</p>
+                    </div>
+                  )}
                 </div>
-              ) : (
-                <div className="flex flex-col items-center gap-1.5 py-1">
-                  <ScanLine className="h-5 w-5 text-muted-foreground/60" />
-                  <p className="text-[12px] font-medium text-foreground">Anexar print ou PDF da multa</p>
-                  <p className="text-[10px] text-muted-foreground">O sistema preenche os campos automaticamente · JPG, PNG, PDF</p>
+                <div className="flex items-center gap-3">
+                  <div className="h-px flex-1 bg-border" />
+                  <span className="text-[11px] text-muted-foreground">ou</span>
+                  <div className="h-px flex-1 bg-border" />
                 </div>
-              )}
-            </div>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  className="w-full gap-2"
+                  onClick={() => setFormStep(2)}
+                >
+                  <Pencil className="h-4 w-4" /> Não tenho o print, preencher manualmente
+                </Button>
+              </>
+            )}
 
-            {/* 1. Placa + Data — preenchidos primeiro para identificar o locatário */}
-            <div className="grid grid-cols-2 gap-3">
+            {/* Passo 2: formulário completo — pré-preenchido pela leitura ou em branco
+                se o gestor pulou o anexo. */}
+            {formStep === 2 && (
+              <>
+            {/* Identificação — a placa é o dado mais importante: define quem estava com a
+                moto no período (locatário ou a própria locadora) e, a partir disso, quem
+                paga a multa. Por isso vem em primeiro e com mais destaque. */}
+            <div className="rounded-lg border border-border/50 bg-muted/20 p-3 space-y-3">
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Identificação</p>
               <div className="grid gap-2">
-                <Label>Moto (placa)</Label>
+                <Label className="text-sm font-semibold">Moto (placa)</Label>
                 <SearchableSelect
                   options={motos.map(m => ({ value: m.id, label: m.placa }))}
                   value={form.motoId}
                   onValueChange={v => {
                     const rental = form.dataMulta ? findRentalAtDate(v, form.dataMulta, rentals) : null;
                     setForm({ ...form, motoId: v, clienteId: rental?.clienteId ?? null, rentalId: rental?.id ?? null });
+                    setGerarEntrada(!!rental?.clienteId);
                   }}
                   placeholder="Selecione..."
                   searchPlaceholder="Buscar placa..."
+                  triggerClassName="h-11 text-base border-primary/40"
                 />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="grid gap-2">
+                  <Label>Data da infração</Label>
+                  <Input
+                    type="date"
+                    value={form.dataMulta}
+                    onChange={e => {
+                      const d = e.target.value;
+                      const rental = form.motoId ? findRentalAtDate(form.motoId, d, rentals) : null;
+                      setForm({ ...form, dataMulta: d, clienteId: rental?.clienteId ?? null, rentalId: rental?.id ?? null });
+                      setGerarEntrada(!!rental?.clienteId);
+                    }}
+                  />
+                </div>
+                <div className="grid gap-2">
+                  <Label>Auto da infração</Label>
+                  <Input
+                    value={form.autoInfracao || ""}
+                    onChange={e => setForm({ ...form, autoInfracao: e.target.value || null })}
+                    placeholder="Ex: AA123456"
+                  />
+                </div>
               </div>
               <div className="grid gap-2">
-                <Label>Data da Multa</Label>
-                <Input
-                  type="date"
-                  value={form.dataMulta}
-                  onChange={e => {
-                    const d = e.target.value;
-                    const rental = form.motoId ? findRentalAtDate(form.motoId, d, rentals) : null;
-                    setForm({ ...form, dataMulta: d, clienteId: rental?.clienteId ?? null, rentalId: rental?.id ?? null });
+                <Label className="flex items-center gap-1.5 flex-wrap">
+                  Locatário na data
+                  {form.motoId && form.dataMulta && (
+                    <span className="text-[10px] font-normal text-muted-foreground">
+                      {form.clienteId ? "· identificado automaticamente" : "· nenhuma locação ativa nessa data"}
+                    </span>
+                  )}
+                  <Badge variant={gerarEntrada ? "default" : "secondary"} className="ml-auto">
+                    Responsável: {gerarEntrada ? "Cliente" : "Locadora"}
+                  </Badge>
+                </Label>
+                <SearchableSelect
+                  options={[{ value: "none", label: "Nenhum" }, ...clients.map(c => ({ value: c.id, label: c.nome }))]}
+                  value={form.clienteId || "none"}
+                  onValueChange={v => {
+                    const novoClienteId = v === "none" ? null : v;
+                    setForm({ ...form, clienteId: novoClienteId });
+                    setGerarEntrada(!!novoClienteId);
                   }}
+                  placeholder="Nenhum"
+                  searchPlaceholder="Buscar cliente..."
                 />
+                <p className="text-[10px] text-muted-foreground">
+                  Quem estava com a moto paga a multa. Sem locatário na data = a locadora estava com a moto e assume a despesa.
+                </p>
               </div>
             </div>
-            {/* 2. Cliente — auto-identificado pela placa + data, mas editável */}
-            <div className="grid gap-2">
-              <Label className="flex items-center gap-1.5">
-                Locatário na data
-                {form.motoId && form.dataMulta && (
-                  <span className="text-[10px] font-normal text-muted-foreground">
-                    {form.clienteId ? "· identificado automaticamente" : "· nenhuma locação ativa nessa data"}
-                  </span>
-                )}
-              </Label>
-              <SearchableSelect
-                options={[{ value: "none", label: "Nenhum" }, ...clients.map(c => ({ value: c.id, label: c.nome }))]}
-                value={form.clienteId || "none"}
-                onValueChange={v => setForm({ ...form, clienteId: v === "none" ? null : v })}
-                placeholder="Nenhum"
-                searchPlaceholder="Buscar cliente..."
-              />
-            </div>
-            {/* 3. Valor */}
-            <div className="grid gap-2">
-              <Label>Valor</Label>
-              <div className="relative">
-                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground pointer-events-none">R$</span>
-                <Input
-                  className="pl-8"
-                  inputMode="decimal"
-                  placeholder="0,00"
-                  value={valorStr}
-                  onChange={e => {
-                    const raw = e.target.value;
-                    setValorStr(raw);
-                    const n = parseFloat(raw.replace(/\./g, "").replace(",", "."));
-                    setForm({ ...form, valor: isNaN(n) ? 0 : n });
-                  }}
-                />
+
+            {/* Financeiro — status, vencimento e o que gerar no Financeiro */}
+            <div className="rounded-lg border border-border/50 bg-muted/20 p-3 space-y-3">
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Financeiro</p>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="grid gap-2">
+                  <Label>Status</Label>
+                  <SearchableSelect
+                    options={Object.entries(statusLabel).map(([k, v]) => ({ value: k, label: v }))}
+                    value={form.status}
+                    onValueChange={v => setForm({ ...form, status: v as Fine["status"] })}
+                  />
+                </div>
+                <div className="grid gap-2">
+                  <Label>Data de Vencimento</Label>
+                  <Input type="date" value={form.dataVencimento || ""} onChange={e => setForm({ ...form, dataVencimento: e.target.value || null })} />
+                </div>
               </div>
-            </div>
-            {/* 3b. Checkboxes financeiro */}
-            <div className="flex flex-col gap-2">
               <label className="flex items-center gap-2.5 cursor-pointer select-none">
                 <Checkbox
                   checked={naoGerarSaida}
                   onCheckedChange={v => setNaoGerarSaida(!!v)}
                 />
-                <span className="text-sm">Não gerar saída no financeiro.</span>
+                <span className="text-sm">Não gerar saída no financeiro</span>
               </label>
-              <label className="flex items-start gap-2.5 cursor-pointer select-none">
-                <Checkbox
-                  checked={gerarEntrada}
-                  onCheckedChange={v => setGerarEntrada(!!v)}
-                  className="mt-0.5"
-                />
-                <span className="text-sm leading-tight">
-                  Gerar entrada no financeiro
-                  <span className="block text-[11px] text-muted-foreground">(será pago pelo locatário)</span>
-                </span>
-              </label>
+              {/* Info sobre lançamentos automáticos */}
+              {mode === "add" && form.dataVencimento && (gerarEntrada || !naoGerarSaida) && (
+                <p className="text-[11px] text-muted-foreground bg-background/60 rounded-md px-3 py-2 leading-snug">
+                  {gerarEntrada && !naoGerarSaida
+                    ? "Ao salvar: será gerada uma entrada (cobrança ao locatário) e uma saída (despesa no vencimento)."
+                    : gerarEntrada
+                    ? "Ao salvar: será gerada apenas uma entrada (cobrança ao locatário)."
+                    : "Ao salvar: será gerada apenas uma saída (despesa no vencimento)."}
+                </p>
+              )}
             </div>
-            {/* 4. Status + Data Vencimento */}
-            <div className="grid grid-cols-2 gap-3">
-              <div className="grid gap-2">
-                <Label>Status</Label>
-                <SearchableSelect
-                  options={Object.entries(statusLabel).map(([k, v]) => ({ value: k, label: v }))}
-                  value={form.status}
-                  onValueChange={v => setForm({ ...form, status: v as Fine["status"] })}
-                />
+
+            {/* Dados da infração — só relevantes para consulta/comprovação, agrupados à parte */}
+            <div className="rounded-lg border border-border/50 bg-muted/20 p-3 space-y-3">
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Dados da infração</p>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="grid gap-2">
+                  <Label>Nº RENAINF</Label>
+                  <Input
+                    value={form.numeroRenainf || ""}
+                    onChange={e => setForm({ ...form, numeroRenainf: e.target.value || null })}
+                    placeholder="000000000"
+                  />
+                </div>
+                <div className="grid gap-2">
+                  <Label>Código da infração</Label>
+                  <Input
+                    value={form.codigoInfracao || ""}
+                    onChange={e => setForm({ ...form, codigoInfracao: e.target.value || null })}
+                    placeholder="Ex: 74550"
+                  />
+                </div>
               </div>
               <div className="grid gap-2">
-                <Label>Data de Vencimento</Label>
-                <Input type="date" value={form.dataVencimento || ""} onChange={e => setForm({ ...form, dataVencimento: e.target.value || null })} />
+                <Label>Descrição da infração</Label>
+                <Input value={form.descricao} onChange={e => setForm({ ...form, descricao: e.target.value })} placeholder="Ex: Transitar velocidade superior máx permitida" />
               </div>
-            </div>
-            {/* 5. Nº RENAINF + Código da Infração + Auto da Infração */}
-            <div className="grid grid-cols-3 gap-3">
               <div className="grid gap-2">
-                <Label>Nº RENAINF</Label>
+                <Label>Valor</Label>
+                <div className="relative">
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground pointer-events-none">R$</span>
+                  <Input
+                    className="pl-8"
+                    inputMode="decimal"
+                    placeholder="0,00"
+                    value={valorStr}
+                    onChange={e => {
+                      const raw = e.target.value;
+                      setValorStr(raw);
+                      const n = parseFloat(raw.replace(/\./g, "").replace(",", "."));
+                      setForm({ ...form, valor: isNaN(n) ? 0 : n });
+                    }}
+                  />
+                </div>
+              </div>
+              <div className="grid grid-cols-3 gap-3">
+                <div className="grid gap-2 col-span-2">
+                  <Label>Órgão competência</Label>
+                  <Input
+                    value={form.orgaoCompetencia || ""}
+                    onChange={e => setForm({ ...form, orgaoCompetencia: e.target.value || null })}
+                    placeholder="Ex: PREF. DE: GO – SENADOR CANEDO"
+                  />
+                </div>
+                <div className="grid gap-2">
+                  <Label>Hora da infração</Label>
+                  <Input
+                    value={form.horaInfracao || ""}
+                    onChange={e => setForm({ ...form, horaInfracao: e.target.value || null })}
+                    placeholder="12:33"
+                  />
+                </div>
+              </div>
+              <div className="grid gap-2">
+                <Label>Local da infração</Label>
                 <Input
-                  value={form.numeroRenainf || ""}
-                  onChange={e => setForm({ ...form, numeroRenainf: e.target.value || null })}
-                  placeholder="000000000"
-                />
-              </div>
-              <div className="grid gap-2">
-                <Label>Código da infração</Label>
-                <Input
-                  value={form.codigoInfracao || ""}
-                  onChange={e => setForm({ ...form, codigoInfracao: e.target.value || null })}
-                  placeholder="Ex: 74550"
-                />
-              </div>
-              <div className="grid gap-2">
-                <Label>Auto da infração</Label>
-                <Input
-                  value={form.autoInfracao || ""}
-                  onChange={e => setForm({ ...form, autoInfracao: e.target.value || null })}
-                  placeholder="Ex: AA123456"
+                  value={form.localInfracao || ""}
+                  onChange={e => setForm({ ...form, localInfracao: e.target.value || null })}
+                  placeholder="Ex: Av. Anuar Auad x Rua 36, Sentido bairro residencial..."
                 />
               </div>
             </div>
-            {/* 6. Descrição da infração */}
-            <div className="grid gap-2">
-              <Label>Descrição da infração</Label>
-              <Input value={form.descricao} onChange={e => setForm({ ...form, descricao: e.target.value })} placeholder="Ex: Transitar velocidade superior máx permitida" />
-            </div>
-            {/* 7. Órgão competência + Hora */}
-            <div className="grid grid-cols-3 gap-3">
-              <div className="grid gap-2 col-span-2">
-                <Label>Órgão competência</Label>
-                <Input
-                  value={form.orgaoCompetencia || ""}
-                  onChange={e => setForm({ ...form, orgaoCompetencia: e.target.value || null })}
-                  placeholder="Ex: PREF. DE: GO – SENADOR CANEDO"
-                />
-              </div>
-              <div className="grid gap-2">
-                <Label>Hora da infração</Label>
-                <Input
-                  value={form.horaInfracao || ""}
-                  onChange={e => setForm({ ...form, horaInfracao: e.target.value || null })}
-                  placeholder="12:33"
-                />
-              </div>
-            </div>
-            {/* 8. Local da infração */}
-            <div className="grid gap-2">
-              <Label>Local da infração</Label>
-              <Input
-                value={form.localInfracao || ""}
-                onChange={e => setForm({ ...form, localInfracao: e.target.value || null })}
-                placeholder="Ex: Av. Anuar Auad x Rua 36, Sentido bairro residencial..."
-              />
-            </div>
-            {/* Info sobre lançamentos automáticos */}
-            {mode === "add" && form.dataVencimento && (gerarEntrada || !naoGerarSaida) && (
-              <p className="text-[11px] text-muted-foreground bg-muted/50 rounded-md px-3 py-2 leading-snug">
-                {gerarEntrada && !naoGerarSaida
-                  ? "Ao salvar: será gerada uma entrada (cobrança ao locatário) e uma saída (despesa no vencimento)."
-                  : gerarEntrada
-                  ? "Ao salvar: será gerada apenas uma entrada (cobrança ao locatário)."
-                  : "Ao salvar: será gerada apenas uma saída (despesa no vencimento)."}
-              </p>
+              </>
             )}
           </div>
           <div className="flex justify-end gap-2">
+            {formStep === 2 && mode === "add" && (
+              <Button variant="ghost" className="mr-auto" onClick={() => setFormStep(1)}>← Voltar</Button>
+            )}
             <Button variant="outline" onClick={() => setDialogOpen(false)}>Cancelar</Button>
-            <Button onClick={handleSave}>Salvar</Button>
+            {formStep === 2 && <Button onClick={handleSave}>Salvar</Button>}
           </div>
         </DialogContent>
       </Dialog>

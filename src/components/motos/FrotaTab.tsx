@@ -13,6 +13,7 @@ import { downloadStoredFile } from "@/lib/file-data";
 import { downloadDocument } from "@/lib/document-storage";
 import { useDataCacheSnapshot } from "@/lib/data-cache";
 import { computeFinancingPaidExtra } from "@/lib/moto-financing";
+import { BulkActionBar, SelectAllCheckbox, toggleSelected } from "@/components/ui/bulk-action-bar";
 
 const statusLabels: Record<string, string> = {
   disponivel: "Disponível",
@@ -46,12 +47,14 @@ interface FrotaTabProps {
   motos: Motorcycle[];
   onEdit: (moto: Motorcycle) => void;
   onDelete: (id: string) => void;
+  onBulkDelete?: (ids: Set<string>) => void;
   onSell: (moto: Motorcycle) => void;
 }
 
-export function FrotaTab({ motos, onEdit, onDelete, onSell }: FrotaTabProps) {
+export function FrotaTab({ motos, onEdit, onDelete, onBulkDelete, onSell }: FrotaTabProps) {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [infoMoto, setInfoMoto] = useState<Motorcycle | null>(null);
   const { canEdit, canDelete } = usePermissions();
   const cache = useDataCacheSnapshot();
@@ -147,6 +150,11 @@ export function FrotaTab({ motos, onEdit, onDelete, onSell }: FrotaTabProps) {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b bg-muted/40">
+                {canDelete && onBulkDelete && (
+                  <th className="px-4 py-3.5 w-8">
+                    <SelectAllCheckbox ids={filtered.map(m => m.id)} selected={selectedIds} onChange={setSelectedIds} />
+                  </th>
+                )}
                 <th className="px-4 py-3.5 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">Status</th>
                 <th className="px-4 py-3.5 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                   Ano Fab./Modelo
@@ -174,6 +182,16 @@ export function FrotaTab({ motos, onEdit, onDelete, onSell }: FrotaTabProps) {
                 const liquido = mt.faturado - mt.despesas;
                 return (
                   <tr key={m.id} className="border-b last:border-0 transition-colors hover:bg-primary/[0.03] cursor-pointer" onClick={() => setInfoMoto(m)}>
+                    {canDelete && onBulkDelete && (
+                      <td className="px-4 py-3.5" onClick={e => e.stopPropagation()}>
+                        <input
+                          type="checkbox"
+                          checked={selectedIds.has(m.id)}
+                          onChange={() => setSelectedIds(prev => toggleSelected(prev, m.id))}
+                          className="h-4 w-4 rounded border-border accent-primary cursor-pointer"
+                        />
+                      </td>
+                    )}
                     <td className="px-4 py-3.5">
                       <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide ring-1 ${statusStyles[m.status]}`}>
                         <span className={`h-1.5 w-1.5 rounded-full ${statusDot[m.status]}`} />
@@ -231,7 +249,7 @@ export function FrotaTab({ motos, onEdit, onDelete, onSell }: FrotaTabProps) {
               })}
               {filtered.length === 0 && (
                 <tr>
-                  <td colSpan={10} className="px-4 py-16 text-center">
+                  <td colSpan={11} className="px-4 py-16 text-center">
                     <div className="flex flex-col items-center gap-2 text-muted-foreground">
                       <div className="flex h-12 w-12 items-center justify-center rounded-full bg-muted">
                         <Search className="h-5 w-5" />
@@ -246,7 +264,7 @@ export function FrotaTab({ motos, onEdit, onDelete, onSell }: FrotaTabProps) {
             {filtered.length > 0 && (
               <tfoot>
                 <tr className="border-t-2 bg-muted/30 font-semibold">
-                  <td className="px-4 py-3.5 text-xs uppercase tracking-wider text-muted-foreground" colSpan={4}>
+                  <td className="px-4 py-3.5 text-xs uppercase tracking-wider text-muted-foreground" colSpan={canDelete && onBulkDelete ? 5 : 4}>
                     Totais ({filtered.length} {filtered.length === 1 ? "moto" : "motos"})
                   </td>
                   <td className="px-4 py-3.5 text-right font-mono tabular-nums">{totals.rentalsCount}</td>
@@ -261,6 +279,14 @@ export function FrotaTab({ motos, onEdit, onDelete, onSell }: FrotaTabProps) {
           </table>
         </div>
       </Card>
+
+      {canDelete && onBulkDelete && (
+        <BulkActionBar
+          count={selectedIds.size}
+          onClear={() => setSelectedIds(new Set())}
+          actions={[{ label: "Excluir", icon: Trash2, variant: "destructive", onClick: () => { onBulkDelete(selectedIds); setSelectedIds(new Set()); } }]}
+        />
+      )}
 
       <Dialog open={!!infoMoto} onOpenChange={open => !open && setInfoMoto(null)}>
         <DialogContent className="max-w-xs">
