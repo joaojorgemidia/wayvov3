@@ -1329,7 +1329,13 @@ export default function FinanceiroPage() {
     // anterior confirmar — sem essa trava, um re-render no meio de um save já viu a mesma
     // "lacuna" de ocorrências futuras e criava 24 meses duplicados (aconteceu em produção).
     if (materializingRef.current) return;
-    const bases = entries.filter(e => !e.fixedOriginId && (e.recorrente || e.despesaFixa));
+    // Lançamentos vinculados a uma locação (rentalId) já têm sua própria recorrência
+    // controlada pelo motor de cobrança de aluguel (LocacoesPage.tsx). Se um deles for
+    // marcado como recorrente/despesa fixa aqui (ex.: edição manual por engano), esse
+    // efeito ficaria recriando para sempre ocorrências antigas já pagas/renegociadas —
+    // já aconteceu em produção com uma cobrança que tinha sido quitada num acordo de
+    // parcelamento e voltava sozinha. Por isso ignoramos qualquer base com rentalId.
+    const bases = entries.filter(e => !e.fixedOriginId && !e.rentalId && (e.recorrente || e.despesaFixa));
     if (!bases.length) return;
 
     const nextEntries = [...entries];

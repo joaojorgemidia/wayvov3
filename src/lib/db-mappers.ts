@@ -112,6 +112,7 @@ export function dbToRental(r: any): Rental {
     status: r.status || "ativa",
     checklistRetirada: r.checklist_retirada || [], checklistDevolucao: r.checklist_devolucao || [],
     observacoes: r.observacoes || "", createdAt: r.created_at || "",
+    pagamentosOcultos: r.pagamentos_ocultos || false,
   };
 }
 
@@ -136,6 +137,7 @@ export function rentalToDb(r: Rental): any {
     gerar_cobranca_pagamento: r.gerarCobrancaPagamento,
     status: r.status, checklist_retirada: r.checklistRetirada,
     checklist_devolucao: r.checklistDevolucao, observacoes: r.observacoes,
+    pagamentos_ocultos: r.pagamentosOcultos || false,
   };
 }
 
@@ -229,6 +231,7 @@ export function dbToFinancial(r: any): FinancialEntry {
     asaasBoletoUrl: r.asaas_boleto_url || null,
     asaasInvoiceUrl: r.asaas_invoice_url || null,
     sicoobTransactionId: r.sicoob_transaction_id || null,
+    fineId: r.fine_id || null,
   };
 }
 
@@ -254,6 +257,7 @@ export function financialToDb(e: FinancialEntry): any {
     asaas_boleto_url: e.asaasBoletoUrl || null,
     asaas_invoice_url: e.asaasInvoiceUrl || null,
     sicoob_transaction_id: e.sicoobTransactionId || null,
+    fine_id: e.fineId || null,
   };
 }
 

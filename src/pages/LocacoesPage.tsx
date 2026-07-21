@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import { localToday } from "@/lib/utils";
 import { supabase } from "@/integrations/supabase/client";
 import { Rental, Motorcycle, Client, FinancialEntry, OilChangeRecord } from "@/lib/types";
@@ -18,7 +19,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Table, TableHeader, TableBody, TableHead, TableRow, TableCell } from "@/components/ui/table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Plus, Search, FileText, Eye, Trash2, Pencil, XCircle, History, CheckCircle2, MoreHorizontal, Wallet, AlertTriangle, Flag, CalendarClock, Copy, Bike } from "lucide-react";
+import { Plus, Search, FileText, Eye, Trash2, Pencil, XCircle, History, CheckCircle2, MoreHorizontal, Wallet, AlertTriangle, Flag, CalendarClock, Copy, Bike, EyeOff } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuLabel, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import RentalWizard from "@/components/locacoes/RentalWizard";
@@ -278,6 +279,7 @@ export default function LocacoesPage() {
   const [trocarMotoObs, setTrocarMotoObs] = useState("");
 
   const { canCreate, canEdit, canDelete } = usePermissions();
+  const navigate = useNavigate();
   const persist = (d: Rental[]) => { setRentals(d); saveRentals(d); };
 
   // Seleção múltipla
@@ -349,11 +351,31 @@ export default function LocacoesPage() {
       const aluguelSerieId = `aluguel-${rental.id}`;
       const aluguelGroupId = aluguelDoRental.find(e => e.recurringGroupId)?.recurringGroupId ?? crypto.randomUUID();
 
+      // Mapeia as cobranças de aluguel já existentes por data: se `startDate` (calculado
+      // a partir de um `cache.financial` que pode estar momentaneamente desatualizado)
+      // cair numa data que já tem cobrança gerada, buildAluguelCharges reaproveita o id
+      // existente em vez de criar uma linha nova duplicada.
+      const existingByDate = new Map(aluguelDoRental.map(e => [e.data, e]));
+
+      // O número da semana/quinzena/mês tem que vir da DATA, nunca da contagem de
+      // lançamentos existentes (`aluguelDoRental.length`) — excluir uma cobrança antiga
+      // reduz essa contagem e fazia esse efeito renumerar as cobranças seguintes (ex.:
+      // apagar a "Semana 10" virava a "Semana 11" em "Semana 10" na próxima geração).
+      const prePaga = !!rental.cobrancaPrePaga;
+      const advanceFromStart = (d: Date): Date => {
+        if (rental.frequenciaPagamento === "semanal") return addWeeks(d, 1);
+        if (rental.frequenciaPagamento === "quinzenal") return addDays(d, 15);
+        return addMonths(d, 1);
+      };
+      const firstCharge = prePaga ? parseISO(rental.dataInicio) : advanceFromStart(parseISO(rental.dataInicio));
+      const periodosDesdeInicio = Math.round(differenceInDays(startDate, firstCharge) / periodDays);
+      const startIdxCalculado = Math.max(1, periodosDesdeInicio + 1);
+
       novasEntradas.push(...buildAluguelCharges({
         rental, client, motoPlaca, numContrato, obsExtra, ctx,
         aluguelSerieId, aluguelGroupId,
-        startIdx: aluguelDoRental.length + 1, startDate, endDate: novoHorizonte,
-        existingByDate: new Map(), deletedDates: new Set(),
+        startIdx: startIdxCalculado, startDate, endDate: novoHorizonte,
+        existingByDate, deletedDates: new Set(),
         paidDates: new Set(), isEditing: false, today,
       }));
     }
@@ -902,6 +924,16 @@ export default function LocacoesPage() {
       }
       return m;
     })();
+    // Total pendente por locação — usado no selo de contratos encerrados com cobranças
+    // ocultadas da fila de Pagamentos (ver CobrancasSemanaPage.tsx).
+    const pendenteTotalPorRental = (() => {
+      const m = new Map<string, number>();
+      for (const e of cache.financial) {
+        if (e.tipo !== "receita" || e.pago || !e.rentalId) continue;
+        m.set(e.rentalId, (m.get(e.rentalId) || 0) + (e.valor || 0));
+      }
+      return m;
+    })();
     return (
       <div className="rounded-md border">
         <Table>
@@ -993,9 +1025,24 @@ export default function LocacoesPage() {
                   })()}
                 </TableCell>
                 <TableCell>
-                  <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium ${statusColor[r.status]}`}>
-                    {statusLabel[r.status]}
-                  </span>
+                  <div className="flex flex-col gap-1 items-start">
+                    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium ${statusColor[r.status]}`}>
+                      {statusLabel[r.status]}
+                    </span>
+                    {r.status !== "ativa" && r.pagamentosOcultos && (pendenteTotalPorRental.get(r.id) || 0) > 0 && (
+                      <button
+                        title="Cobrança oculta da fila de Pagamentos — clique para ver e resolver"
+                        onClick={e => {
+                          e.stopPropagation();
+                          navigate(`/cobrancas/semana?cliente=${r.clienteId}`);
+                        }}
+                        className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold bg-purple-100 text-purple-700 dark:bg-purple-950/40 dark:text-purple-300 hover:bg-purple-200 dark:hover:bg-purple-900/50 transition-colors"
+                      >
+                        <EyeOff className="h-2.5 w-2.5" />
+                        R$ {(pendenteTotalPorRental.get(r.id) || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })} pendente
+                      </button>
+                    )}
+                  </div>
                 </TableCell>
                 <TableCell className="text-right" onClick={e => e.stopPropagation()}>
                   <div className="flex items-center justify-end gap-1">

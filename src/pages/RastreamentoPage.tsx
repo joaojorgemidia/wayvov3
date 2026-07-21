@@ -1,15 +1,11 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import L from "leaflet";
 import {
-  authenticate, getDeviceList, trackDevices, getPlayback, getAlarms,
-  setMileage, setRelay,
-  loadBrasilSatConfig, saveBrasilSatConfig, clearBrasilSatConfig,
-  loadDeviceNames, saveDeviceName,
-  loadKmSyncConfig, saveKmSyncConfig,
-  type BrasilSatConfig, type BrasilSatToken, type DeviceInfo,
-  type DeviceTrack, type PlaybackPoint, type AlarmRecord,
-  type KmSyncConfig,
-} from "@/lib/brasilsat";
+  DRIVERS, loadTrackerProvider, saveTrackerProvider, clearTrackerProvider,
+  type TrackerProvider, type TrackerDriver, type AnyTrackerToken, type AnyTrackerConfig,
+  type DeviceInfo, type DeviceTrack, type PlaybackPoint, type AlarmRecord,
+} from "@/lib/tracker";
+import type { KmSyncConfig } from "@/lib/brasilsat";
 import { loadMotos, loadRentals, loadClients, saveMotos } from "@/lib/store";
 import { isPrivacyEnabled, getRealDataCache, useDataCacheSnapshot } from "@/lib/data-cache";
 import { useCompany } from "@/contexts/CompanyContext";
@@ -267,7 +263,7 @@ function DeviceDetail({
 }
 
 // ─── Tipos internos ───────────────────────────────────────────────────────────
-interface AuthState { token: BrasilSatToken; devices: DeviceInfo[] }
+interface AuthState { token: AnyTrackerToken; devices: DeviceInfo[] }
 
 // ─── Página principal ─────────────────────────────────────────────────────────
 export default function RastreamentoPage() {
@@ -277,10 +273,14 @@ export default function RastreamentoPage() {
   const { activeCompany } = useCompany();
   const companyId = activeCompany?.id ?? "default";
 
+  const [provider, setProvider]     = useState<TrackerProvider | null>(null);
+  const [dialogProvider, setDialogProvider] = useState<TrackerProvider>("brasilsat");
   const [auth, setAuth]             = useState<AuthState | null>(null);
-  const [config, setConfig]         = useState<BrasilSatConfig>({ account: "", password: "" });
+  const [config, setConfig]         = useState<AnyTrackerConfig>({});
   const [configOpen, setConfigOpen] = useState(false);
   const [connecting, setConnecting] = useState(false);
+
+  const driver: TrackerDriver | null = provider ? DRIVERS[provider] : null;
 
   const [tracks, setTracks]             = useState<DeviceTrack[]>([]);
   const [loadingTrack, setLoadingTrack] = useState(false);
@@ -380,24 +380,25 @@ export default function RastreamentoPage() {
   }, [activeRentalsByPlate, auth, customNames]);
 
   // ── Token ─────────────────────────────────────────────────────────────────
-  const getValidToken = useCallback(async (): Promise<string> => {
-    if (auth && Date.now() < auth.token.expires_at) return auth.token.access_token;
-    const saved = loadBrasilSatConfig(companyId);
-    if (!saved?.account) throw new Error("Configure as credenciais primeiro");
-    const token = await authenticate(saved);
+  const getValidToken = useCallback(async (): Promise<AnyTrackerToken> => {
+    if (!driver) throw new Error("Selecione um provedor de rastreamento");
+    if (auth && Date.now() < auth.token.expires_at) return auth.token;
+    const saved = driver.loadConfig(companyId);
+    if (!saved) throw new Error("Configure as credenciais primeiro");
+    const token = await driver.authenticate(saved);
     setAuth(prev => prev ? { ...prev, token } : null);
-    return token.access_token;
-  }, [auth, companyId]);
+    return token;
+  }, [auth, companyId, driver]);
 
   // ── Sincronização km rastreador ↔ sistema ────────────────────────────────
   const syncKm = useCallback(async (freshTracks: DeviceTrack[]): Promise<boolean> => {
     // Usa dados REAIS para que o sync funcione mesmo com modo demo ativo
     const motos = getRealDataCache().motos;
-    if (!motos.length || !freshTracks.length) return false;
-    let token: string;
+    if (!driver || !motos.length || !freshTracks.length) return false;
+    let token: AnyTrackerToken;
     try { token = await getValidToken(); } catch { return false; }
 
-    const { marginKm } = loadKmSyncConfig(companyId);
+    const { marginKm } = driver.loadKmSyncConfig(companyId);
     let anySynced = false;
     // Motos cujo kmAtual deve ser atualizado com o valor do rastreador
     const kmUpdates = new Map<string, number>();
@@ -436,7 +437,7 @@ export default function RastreamentoPage() {
       if (kmAtual > trackerKm) {
         // Sistema tem km maior (ex: troca de óleo registrada): push para o rastreador
         try {
-          await setMileage(token, track.imei, targetKm);
+          await driver.setMileage(token, track.imei, targetKm);
           toast.success(`KM sincronizado: ${getDisplayName(track.imei)} → ${targetKm.toLocaleString("pt-BR")} km`);
           // Marca como sincronizado apenas após sucesso — falhas não bloqueiam retries futuros
           syncedKmRef.current.set(track.imei, targetKm);
@@ -463,17 +464,22 @@ export default function RastreamentoPage() {
     }
 
     return anySynced;
-  }, [getValidToken, customNames, getDisplayName, auth, companyId]);
+  }, [getValidToken, customNames, getDisplayName, auth, companyId, driver]);
 
   // ── Conexão ────────────────────────────────────────────────────────────────
-  const connect = useCallback(async (cfg: BrasilSatConfig) => {
-    if (!cfg.account || !cfg.password) { toast.error("Informe conta e senha"); return; }
+  const connect = useCallback(async (providerArg: TrackerProvider, cfg: AnyTrackerConfig) => {
+    const drv = DRIVERS[providerArg];
+    if (drv.credentialFields.some(f => !cfg[f.key]?.trim())) {
+      toast.error("Preencha todos os campos"); return;
+    }
     setConnecting(true);
     try {
-      const token   = await authenticate(cfg);
-      const devices = await getDeviceList(token.access_token);
+      const token   = await drv.authenticate(cfg);
+      const devices = await drv.getDeviceList(token);
+      setProvider(providerArg);
       setAuth({ token, devices });
-      saveBrasilSatConfig(companyId, cfg);
+      drv.saveConfig(companyId, cfg);
+      saveTrackerProvider(companyId, providerArg);
       setConfigOpen(false);
       toast.success(`Conectado · ${devices.length} dispositivo(s)`);
     } catch (e: any) {
@@ -486,13 +492,13 @@ export default function RastreamentoPage() {
 
   // ── Buscar posições ────────────────────────────────────────────────────────
   const fetchTracks = useCallback(async () => {
-    if (!auth) return;
+    if (!auth || !driver) return;
     setLoadingTrack(true);
     try {
       const token = await getValidToken();
       const imeis = auth.devices.map(d => d.imei).filter(Boolean);
       if (!imeis.length) return;
-      const result = await trackDevices(token, imeis);
+      const result = await driver.trackDevices(token, imeis);
       setTracks(result);
       const hadSync = await syncKm(result);
       // Se algum km foi sincronizado, re-busca após 2s para exibir o valor atualizado do rastreador
@@ -502,7 +508,7 @@ export default function RastreamentoPage() {
     } finally {
       setLoadingTrack(false);
     }
-  }, [auth, getValidToken, syncKm]);
+  }, [auth, getValidToken, syncKm, driver]);
 
   // ── Mantém ref da função atualizada (evita stale closure no setInterval) ──
   useEffect(() => { fetchTracksRef.current = fetchTracks; }, [fetchTracks]);
@@ -592,11 +598,11 @@ export default function RastreamentoPage() {
 
   // ── Histórico ─────────────────────────────────────────────────────────────
   const loadPlayback = async () => {
-    if (!histImei) { toast.error("Selecione um dispositivo"); return; }
+    if (!histImei || !driver) { toast.error("Selecione um dispositivo"); return; }
     setLoadingHist(true);
     try {
       const token = await getValidToken();
-      const pts = await getPlayback(
+      const pts = await driver.getPlayback(
         token, histImei,
         new Date(histBegin).getTime(), new Date(histEnd).getTime(),
       );
@@ -624,11 +630,11 @@ export default function RastreamentoPage() {
 
   // ── Alarmes ───────────────────────────────────────────────────────────────
   const loadAlarms = async () => {
-    if (!alarmImei) { toast.error("Selecione um dispositivo"); return; }
+    if (!alarmImei || !driver) { toast.error("Selecione um dispositivo"); return; }
     setLoadingAlarms(true);
     try {
       const token = await getValidToken();
-      const result = await getAlarms(
+      const result = await driver.getAlarms(
         token, alarmImei,
         new Date(alarmBegin).getTime(), new Date(alarmEnd).getTime(),
       );
@@ -653,29 +659,42 @@ export default function RastreamentoPage() {
     trackMarkersRef.current.forEach(m => m.remove());
     trackMarkersRef.current.clear();
 
-    // Carrega config da empresa atual
-    const savedCfg = loadBrasilSatConfig(companyId);
-    setConfig(savedCfg ?? { account: "", password: "" });
+    // Descobre o provedor escolhido pela empresa (ou nenhum, se ainda não configurado)
+    const savedProvider = loadTrackerProvider(companyId);
+    setProvider(savedProvider);
+    setDialogProvider(savedProvider ?? "brasilsat");
 
-    const savedNames = loadDeviceNames(companyId);
+    if (!savedProvider) {
+      setConfig({});
+      setCustomNames({});
+      setKmConfig({ marginKm: 0 });
+      setKmMarginInput("0");
+      return; // mostra a tela de boas-vindas com escolha de provedor
+    }
+
+    const drv = DRIVERS[savedProvider];
+    const savedCfg = drv.loadConfig(companyId);
+    setConfig(savedCfg ?? {});
+
+    const savedNames = drv.loadDeviceNames(companyId);
     setCustomNames(savedNames);
 
-    const savedKmCfg = loadKmSyncConfig(companyId);
+    const savedKmCfg = drv.loadKmSyncConfig(companyId);
     setKmConfig(savedKmCfg);
     setKmMarginInput(String(savedKmCfg.marginKm));
 
-    if (savedCfg?.account) connect(savedCfg);
-    // Sem else: empresa sem config mostra a tela de boas-vindas com os botões de suporte
+    if (savedCfg) connect(savedProvider, savedCfg);
+    // Sem else: empresa com provedor escolhido mas sem credenciais mostra o formulário de conexão
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [companyId]);
 
   // ── Ações de dispositivo ──────────────────────────────────────────────────
   const handleRename = () => {
-    if (!selectedImei) return;
+    if (!selectedImei || !driver) return;
     const name = renameValue.trim();
     if (!name) { toast.error("Informe um nome"); return; }
-    saveDeviceName(companyId, selectedImei, name);
-    const updated = loadDeviceNames(companyId);
+    driver.saveDeviceName(companyId, selectedImei, name);
+    const updated = driver.loadDeviceNames(companyId);
     setCustomNames(updated);
     const marker = trackMarkersRef.current.get(selectedImei);
     marker?.setTooltipContent(name);
@@ -684,12 +703,12 @@ export default function RastreamentoPage() {
   };
 
   const handleUpdateKm = async () => {
-    if (!selectedImei) return;
+    if (!selectedImei || !driver) return;
     const km = parseFloat(kmValue);
     if (isNaN(km) || km < 0) { toast.error("KM inválido"); return; }
     try {
       const token = await getValidToken();
-      await setMileage(token, selectedImei, km);
+      await driver.setMileage(token, selectedImei, km);
       syncedKmRef.current.set(selectedImei, km);
       setKmOpen(false);
       toast.success(`KM atualizado: ${km.toLocaleString("pt-BR")} km`);
@@ -700,10 +719,11 @@ export default function RastreamentoPage() {
   };
 
   const handleSaveKmConfig = () => {
+    if (!driver) return;
     const margin = parseFloat(kmMarginInput);
     if (isNaN(margin) || margin < 0) { toast.error("Margem inválida"); return; }
     const cfg: KmSyncConfig = { marginKm: margin };
-    saveKmSyncConfig(companyId, cfg);
+    driver.saveKmSyncConfig(companyId, cfg);
     setKmConfig(cfg);
     // Limpa o cache de sync para que o próximo fetchTracks reaplique com a nova margem
     syncedKmRef.current.clear();
@@ -711,10 +731,11 @@ export default function RastreamentoPage() {
   };
 
   const handleBlock = async (imei: string) => {
+    if (!driver) return;
     setRelayLoading(prev => new Set(prev).add(imei));
     try {
       const token = await getValidToken();
-      await setRelay(token, imei, 0);
+      await driver.setRelay(token, imei, 0);
       toast.success("Dispositivo bloqueado");
       fetchTracks();
     } catch (e: any) {
@@ -725,10 +746,11 @@ export default function RastreamentoPage() {
   };
 
   const handleUnblock = async (imei: string) => {
+    if (!driver) return;
     setRelayLoading(prev => new Set(prev).add(imei));
     try {
       const token = await getValidToken();
-      await setRelay(token, imei, 1);
+      await driver.setRelay(token, imei, 1);
       toast.success("Dispositivo desbloqueado");
       fetchTracks();
     } catch (e: any) {
@@ -740,15 +762,27 @@ export default function RastreamentoPage() {
 
   // ── Logout ────────────────────────────────────────────────────────────────
   const handleLogout = () => {
-    clearBrasilSatConfig(companyId);
+    driver?.clearConfig(companyId);
     setAuth(null);
     setTracks([]);
     setSelectedImei(null);
-    setConfig({ account: "", password: "" });
+    setConfig({});
     syncedKmRef.current.clear();
     trackMarkersRef.current.forEach(m => m.remove());
     trackMarkersRef.current.clear();
-    toast.success("Desconectado do BrasilSat");
+    toast.success(`Desconectado do ${driver?.label ?? "rastreador"}`);
+  };
+
+  // ── Troca de provedor (volta à tela de escolha) ──────────────────────────
+  const handleChangeProvider = () => {
+    driver?.clearConfig(companyId);
+    clearTrackerProvider(companyId);
+    setProvider(null);
+    setAuth(null);
+    setTracks([]);
+    setSelectedImei(null);
+    setConfig({});
+    setConfigOpen(false);
   };
 
   // ── Listas filtradas ──────────────────────────────────────────────────────
@@ -783,7 +817,7 @@ export default function RastreamentoPage() {
           {auth ? (
             <Badge variant="outline" className="border-emerald-500/40 bg-emerald-500/10 text-emerald-600 text-[11px]">
               <Wifi className="h-2.5 w-2.5 mr-1" />
-              Conectado · {auth.devices.length} dispositivos · {onlineCount} online
+              Conectado · {driver?.label} · {auth.devices.length} dispositivos · {onlineCount} online
             </Badge>
           ) : (
             <Badge variant="outline" className="border-muted text-muted-foreground text-[11px]">
@@ -801,7 +835,7 @@ export default function RastreamentoPage() {
             <Settings className="h-4 w-4 mr-1.5" /> Configurações
           </Button>
           {auth && (
-            <Button size="sm" variant="ghost" onClick={handleLogout} title="Sair do BrasilSat">
+            <Button size="sm" variant="ghost" onClick={handleLogout} title={`Sair do ${driver?.label ?? "rastreador"}`}>
               <LogOut className="h-4 w-4" />
             </Button>
           )}
@@ -819,18 +853,41 @@ export default function RastreamentoPage() {
               <div>
                 <h3 className="font-semibold text-base">Rastreamento não configurado</h3>
                 <p className="text-sm text-muted-foreground mt-1">
-                  Esta empresa ainda não tem integração com o BrasilSat GPS.
+                  {provider
+                    ? `Esta empresa ainda não conectou o ${driver?.label}.`
+                    : "Escolha o rastreador GPS que essa empresa utiliza."}
                 </p>
               </div>
             </div>
 
             <div className="flex flex-col gap-2.5">
-              <Button className="w-full" onClick={() => setConfigOpen(true)}>
-                <Settings className="h-4 w-4 mr-2" /> Inserir credenciais BrasilSat
-              </Button>
+              {!provider ? (
+                Object.entries(DRIVERS).map(([key, drv]) => (
+                  <Button
+                    key={key}
+                    variant="outline"
+                    className="w-full"
+                    onClick={() => { setDialogProvider(key as TrackerProvider); setConfig({}); setConfigOpen(true); }}
+                  >
+                    <Settings className="h-4 w-4 mr-2" /> Configurar {drv.label}
+                  </Button>
+                ))
+              ) : (
+                <>
+                  <Button className="w-full" onClick={() => setConfigOpen(true)}>
+                    <Settings className="h-4 w-4 mr-2" /> Conectar {driver?.label}
+                  </Button>
+                  <button
+                    onClick={handleChangeProvider}
+                    className="text-xs text-muted-foreground hover:text-foreground underline underline-offset-2"
+                  >
+                    Usar outro rastreador
+                  </button>
+                </>
+              )}
 
               <a
-                href={`https://wa.me/?text=${encodeURIComponent("Olá! Gostaria de saber mais sobre a integração de rastreamento GPS BrasilSat no WAYVO.")}`}
+                href={`https://wa.me/?text=${encodeURIComponent("Olá! Gostaria de saber mais sobre a integração de rastreamento GPS no WAYVO.")}`}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="inline-flex items-center justify-center gap-2 w-full h-10 px-4 rounded-md text-sm font-medium border border-border bg-background hover:bg-muted transition-colors"
@@ -1112,32 +1169,44 @@ export default function RastreamentoPage() {
       {/* Dialog: Credenciais */}
       <Dialog open={configOpen} onOpenChange={open => {
         setConfigOpen(open);
-        if (open) setKmMarginInput(String(loadKmSyncConfig(companyId).marginKm));
+        if (open) setKmMarginInput(String(DRIVERS[dialogProvider].loadKmSyncConfig(companyId).marginKm));
       }}>
         <DialogContent className="max-w-sm">
-          <DialogHeader><DialogTitle>Configurações BrasilSat GPS</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>Configurações · {DRIVERS[dialogProvider].label}</DialogTitle></DialogHeader>
           <div className="space-y-4 pt-2">
             <div className="grid gap-1.5">
-              <Label>Conta</Label>
-              <Input
-                placeholder="Usuário BrasilSat"
-                value={config.account}
-                onChange={e => setConfig(c => ({ ...c, account: e.target.value }))}
-              />
+              <Label>Rastreador</Label>
+              <Select
+                value={dialogProvider}
+                onValueChange={v => {
+                  const p = v as TrackerProvider;
+                  setDialogProvider(p);
+                  setConfig(DRIVERS[p].loadConfig(companyId) ?? {});
+                }}
+              >
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {Object.entries(DRIVERS).map(([key, drv]) => (
+                    <SelectItem key={key} value={key}>{drv.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
-            <div className="grid gap-1.5">
-              <Label>Senha</Label>
-              <Input
-                type="password"
-                placeholder="Senha BrasilSat"
-                value={config.password}
-                onChange={e => setConfig(c => ({ ...c, password: e.target.value }))}
-              />
-            </div>
+            {DRIVERS[dialogProvider].credentialFields.map(f => (
+              <div key={f.key} className="grid gap-1.5">
+                <Label>{f.label}</Label>
+                <Input
+                  type={f.type === "password" ? "password" : "text"}
+                  placeholder={f.label}
+                  value={config[f.key] ?? ""}
+                  onChange={e => setConfig(c => ({ ...c, [f.key]: e.target.value }))}
+                />
+              </div>
+            ))}
             <p className="text-xs text-muted-foreground">
               As credenciais são salvas localmente neste dispositivo.
             </p>
-            <Button className="w-full" onClick={() => connect(config)} disabled={connecting}>
+            <Button className="w-full" onClick={() => connect(dialogProvider, config)} disabled={connecting}>
               {connecting
                 ? <RefreshCw className="h-4 w-4 animate-spin mr-2" />
                 : <Wifi className="h-4 w-4 mr-2" />}

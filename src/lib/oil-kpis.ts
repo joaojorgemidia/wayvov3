@@ -195,32 +195,39 @@ export function getOilStatus(
   const diasDesdeUltima = Math.floor(
     (Date.now() - new Date(last.data).getTime()) / msDia,
   );
+  const minTrocas = globalCfg.adaptiveMinTrocas ?? 3;
+  const pace = adaptivePace(m, rentals, cfg.oilKm, globalCfg.windowKm, minTrocas);
+
   let situation: OilSituation;
-  // Regra adicional: se faz mais dias que o configurado desde a última troca,
-  // considerar VENCIDA independente do KM (mesmo que registrada hoje com data antiga).
-  if (diasDesdeUltima > overdueDays) {
-    situation = "vencida";
-  } else
-  // Vencida quando passou do KM limite E:
-  //  - locatário tem últimas 3 trocas consecutivas DENTRO da tolerância:
-  //      usa km/dia adaptativo dele e só vence se projeção em `overdueDays` ultrapassar a tolerância
-  //  - caso contrário (sem 3 trocas consecutivas conformes / sem locatário / sem histórico):
-  //      aplica direto a regra "diasDesdeUltima > overdueDays"
-  if (kmAtraso > 0) {
-    const minTrocas = globalCfg.adaptiveMinTrocas ?? 3;
-    const adaptKpd = adaptiveKmPerDay(m, rentals, cfg.oilKm, globalCfg.windowKm, minTrocas);
-    if (adaptKpd != null) {
-      // locatário disciplinado: projeta consumo em overdueDays
-      const projecao = adaptKpd * overdueDays;
-      situation = projecao > globalCfg.windowKm ? "vencida" : "atencao";
+  if (pace == null) {
+    // Sem histórico confiável (locatário novo, ou sem `minTrocas` trocas
+    // consecutivas dentro da tolerância de km): usa o prazo fixo de dias como
+    // rede de segurança, já que não há ritmo próprio comprovado para confiar.
+    if (diasDesdeUltima > overdueDays) {
+      situation = "vencida";
+    } else if (kmAtraso > 0 || kmRestantes <= globalCfg.windowKm) {
+      situation = "atencao";
     } else {
-      // sem amostra confiável: usa critério de dias
-      situation = diasDesdeUltima > overdueDays ? "vencida" : "atencao";
+      situation = "ok";
     }
-  } else if (kmRestantes <= globalCfg.windowKm) {
-    situation = "atencao";
   } else {
-    situation = "ok";
+    // Locatário disciplinado: as últimas trocas sempre ficaram dentro da
+    // tolerância de km. Em vez do prazo fixo genérico, usa o ritmo real dele
+    // (km/dia e dias/troca) — assim quem só é mais devagar por rodar menos
+    // não é marcado como vencido apenas por ter passado o prazo padrão.
+    const toleranciaDias = globalCfg.windowKm / pace.kmPorDia;
+    const prazoAdaptado = pace.diasPorTroca + toleranciaDias;
+    if (kmAtraso > 0) {
+      // já passou do km limite: projeta o consumo dele em `overdueDays`
+      const projecao = pace.kmPorDia * overdueDays;
+      situation = projecao > globalCfg.windowKm ? "vencida" : "atencao";
+    } else if (diasDesdeUltima > prazoAdaptado) {
+      situation = "vencida";
+    } else if (kmRestantes <= globalCfg.windowKm || diasDesdeUltima > pace.diasPorTroca) {
+      situation = "atencao";
+    } else {
+      situation = "ok";
+    }
   }
   const label =
     situation === "vencida"
@@ -334,17 +341,23 @@ export interface NextChangeEstimate {
   fonte: "adaptativa" | "padrao" | "sem_dados";
 }
 
+export interface AdaptivePace {
+  kmPorDia: number;
+  diasPorTroca: number; // média de dias entre as últimas `minTrocas` trocas
+}
+
 /**
  * Verifica se as últimas N trocas do locatário ativo na moto foram feitas
- * dentro de ±windowKm do agendado. Se sim, calcula km/dia real do locatário.
+ * dentro de ±windowKm do agendado. Se sim, calcula o ritmo real dele
+ * (km/dia e dias/troca em média).
  */
-function adaptiveKmPerDay(
+function adaptivePace(
   m: Motorcycle,
   rentals: Rental[],
   oilKm: number,
   windowKm: number,
   minTrocas: number,
-): number | null {
+): AdaptivePace | null {
   const hist = sortedHistory(m);
   // Precisamos de pelo menos minTrocas intervalos (= minTrocas+1 trocas no histórico)
   if (hist.length < minTrocas + 1) return null;
@@ -372,7 +385,7 @@ function adaptiveKmPerDay(
     diasTotal += dias;
   }
   if (diasTotal <= 0) return null;
-  return kmTotal / diasTotal;
+  return { kmPorDia: kmTotal / diasTotal, diasPorTroca: diasTotal / minTrocas };
 }
 
 export function estimateNextChange(
@@ -395,8 +408,8 @@ export function estimateNextChange(
   }
   const proxOleoKm = last.km + cfg.oilKm;
   const proxFiltroKm = cfg.filterKm ? last.km + cfg.filterKm : null;
-  const adaptKpd = adaptiveKmPerDay(m, rentals, cfg.oilKm, globalCfg.windowKm, globalCfg.adaptiveMinTrocas ?? 3);
-  const kmPorDia = adaptKpd ?? defaultKmPerDayFor(m.modelo, brandCfg, globalCfg);
+  const pace = adaptivePace(m, rentals, cfg.oilKm, globalCfg.windowKm, globalCfg.adaptiveMinTrocas ?? 3);
+  const kmPorDia = pace?.kmPorDia ?? defaultKmPerDayFor(m.modelo, brandCfg, globalCfg);
   const kmAtual = m.kmAtual ?? last.km;
   const kmRestantes = Math.max(0, proxOleoKm - kmAtual);
   const diasRestantes = kmPorDia > 0 ? kmRestantes / kmPorDia : 0;
@@ -408,7 +421,7 @@ export function estimateNextChange(
     proxFiltroKm,
     proxOleoData,
     kmPorDia,
-    fonte: adaptKpd != null ? "adaptativa" : "padrao",
+    fonte: pace != null ? "adaptativa" : "padrao",
   };
 }
 

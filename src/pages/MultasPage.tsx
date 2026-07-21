@@ -201,7 +201,7 @@ export default function MultasPage() {
         motoId: finalForm.motoId, rentalId: finalForm.rentalId,
         clienteId: finalForm.clienteId, clienteNome: client?.nome || "",
         placa, natureza: "operacional", conta: "", tags: ["multa"],
-        recorrente: false,
+        recorrente: false, fineId: finalForm.id,
         descricao, observacao: partes || undefined,
       };
 
@@ -252,9 +252,37 @@ export default function MultasPage() {
     setSelectedIds(new Set());
   };
 
+  // Reflete o status da multa na despesa correspondente no Financeiro (vinculada por fineId).
+  // Só a despesa (o que a locadora paga ao órgão) é sincronizada — o repasse ao cliente
+  // (receita) tem cobrança própria e independente, já tratada em Cobranças.
+  const syncFineExpensePago = async (fineIds: string[], pago: boolean) => {
+    const idSet = new Set(fineIds);
+    const all = loadFinancial();
+    let changed = false;
+    const updated = all.map(e => {
+      if (e.tipo === "despesa" && e.fineId && idSet.has(e.fineId) && e.pago !== pago) {
+        changed = true;
+        return { ...e, pago };
+      }
+      return e;
+    });
+    if (changed) {
+      try { await saveFinancial(updated); }
+      catch { toast.error("Multa atualizada, mas houve erro ao sincronizar a despesa no financeiro."); }
+    }
+  };
+
   const handleBulkStatus = (status: Fine["status"]) => {
     persist(fines.map(f => selectedIds.has(f.id) ? { ...f, status } : f));
+    void syncFineExpensePago([...selectedIds], status === "paga");
     setSelectedIds(new Set());
+  };
+
+  const handleToggleStatus = (f: Fine) => {
+    const status: Fine["status"] = f.status === "paga" ? "pendente" : "paga";
+    persist(fines.map(x => x.id === f.id ? { ...x, status } : x));
+    void syncFineExpensePago([f.id], status === "paga");
+    toast.success(status === "paga" ? "Multa marcada como paga (despesa também atualizada)." : "Multa marcada como pendente.");
   };
 
   const handleMultaUpload = async (file: File) => {
@@ -570,6 +598,18 @@ export default function MultasPage() {
                     </td>
                     <td className="px-3 py-3">
                       <div className="flex justify-end gap-1">
+                        {canEdit && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => handleToggleStatus(f)}
+                            title={f.status === "paga" ? "Marcar como pendente" : "Marcar como paga"}
+                          >
+                            {f.status === "paga"
+                              ? <Circle className="h-4 w-4 text-muted-foreground" />
+                              : <CheckCheck className="h-4 w-4 text-success" />}
+                          </Button>
+                        )}
                         {canEdit && <Button variant="ghost" size="icon" onClick={() => { setForm({ ...f }); setValorStr(f.valor ? String(f.valor).replace(".", ",") : ""); setGerarEntrada(f.responsavel === "cliente"); setNaoGerarSaida(false); setMode("edit"); setFormStep(2); setDialogOpen(true); }}><Pencil className="h-4 w-4" /></Button>}
                         {canDelete && <Button variant="ghost" size="icon" onClick={() => handleDelete(f.id)}><Trash2 className="h-4 w-4 text-destructive" /></Button>}
                       </div>

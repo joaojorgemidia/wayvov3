@@ -125,6 +125,9 @@ export interface Rental {
   checklistDevolucao: ChecklistItem[];
   observacoes: string;
   createdAt: string;
+  /** Oculta manualmente as cobranças em aberto desse contrato da fila de Pagamentos
+   *  (continuam contabilizadas e visíveis no detalhe do cliente e em Locações). */
+  pagamentosOcultos?: boolean;
 }
 
 export interface ChecklistItem {
@@ -227,6 +230,7 @@ export interface FinancialEntry {
   asaasBoletoUrl?: string | null;
   asaasInvoiceUrl?: string | null;
   sicoobTransactionId?: string | null; // vincula o lançamento à transação importada do extrato Sicoob
+  fineId?: string | null; // vincula o lançamento à multa de origem (Multas)
 }
 
 export interface BudgetEntry {

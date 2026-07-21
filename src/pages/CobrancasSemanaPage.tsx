@@ -1,5 +1,5 @@
 import React, { useMemo, useState, useEffect } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -21,11 +21,11 @@ import {
   Bell, Wrench, MoreHorizontal, Phone, Copy,
   CalendarClock, ExternalLink, Search, TrendingUp,
   LayoutDashboard, SlidersHorizontal, Check, ChevronDown, ChevronUp, AlertCircle,
-  Scissors, X, Pencil, Loader2, FileText, Handshake,
+  Scissors, X, Pencil, Loader2, FileText, Handshake, EyeOff,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useDataCacheSnapshot } from "@/lib/data-cache";
-import { saveFinancial, loadFinancial } from "@/lib/store";
+import { saveFinancial, loadFinancial, loadRentals, saveRentals } from "@/lib/store";
 import { supabase } from "@/integrations/supabase/client";
 import { FinancialEntry } from "@/lib/types";
 import { MessagePopup } from "@/components/MessagePopup";
@@ -205,6 +205,7 @@ export default function CobrancasSemanaPage() {
   const [missingExpanded, setMissingExpanded] = useState(false);
   const [snoozedExpanded, setSnoozedExpanded] = useState(false);
   const [debtDetailClientId, setDebtDetailClientId] = useState<string | null>(null);
+  const [searchParams, setSearchParams] = useSearchParams();
   const [adiarEntry, setAdiarEntry] = useState<FinancialEntry | null>(null);
   const [adiarDate, setAdiarDate] = useState("");
   const [adiarAtrasadas, setAdiarAtrasadas] = useState<FinancialEntry[]>([]);
@@ -286,6 +287,18 @@ export default function CobrancasSemanaPage() {
     }
   };
 
+  // Deep-link vindo de Locações (selo de cobrança oculta em contrato encerrado):
+  // abre direto o detalhe do cliente e limpa o parâmetro da URL.
+  React.useEffect(() => {
+    const clienteId = searchParams.get("cliente");
+    if (!clienteId) return;
+    setDebtDetailClientId(clienteId);
+    const next = new URLSearchParams(searchParams);
+    next.delete("cliente");
+    setSearchParams(next, { replace: true });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
+
   const [today, setToday] = useState(() => startOfDay(new Date()));
   // Atualiza `today` automaticamente no 1º minuto de cada dia
   React.useEffect(() => {
@@ -363,10 +376,15 @@ export default function CobrancasSemanaPage() {
   };
 
   const pending: RowItem[] = useMemo(() => {
+    // Contratos com cobrança oculta manualmente da fila de Pagamentos (ver botão "Ocultar"
+    // nos grupos de dívida de locação encerrada). Continuam contabilizados e visíveis no
+    // detalhe do cliente (debtDetailEntries) e em Locações — só somem daqui.
+    const isRentalHidden = (rentalId: string | null) => !!rentalId && !!rentalsById.get(rentalId)?.pagamentosOcultos;
+
     // Passo 1: estatísticas por locação (dívida total, semanas em atraso, último pagamento)
     const rentalStats = new Map<string, { totalPendente: number; semanasEmAtraso: number; pendingCount: number; ultimoPagamento: string | null }>();
     for (const e of cache.financial) {
-      if (!e.rentalId || e.ignorada) continue;
+      if (!e.rentalId || e.ignorada || isRentalHidden(e.rentalId)) continue;
       if (e.tipo === "receita" && !e.pago) {
         const st = rentalStats.get(e.rentalId) || { totalPendente: 0, semanasEmAtraso: 0, pendingCount: 0, ultimoPagamento: null };
         st.totalPendente += e.valor || 0;
@@ -386,7 +404,7 @@ export default function CobrancasSemanaPage() {
     const out: RowItem[] = [];
     for (const e of cache.financial) {
       if (e.tipo !== "receita") continue;
-      if (e.pago || e.ignorada) continue;
+      if (e.pago || e.ignorada || isRentalHidden(e.rentalId)) continue;
       // Se houver data de adiamento no localStorage, usa ela como data de exibição
       const snoozeDate = snoozeMap[e.id];
       const dueISO = snoozeDate || e.dataPrevista || e.data;
@@ -950,6 +968,20 @@ export default function CobrancasSemanaPage() {
     setSnoozeMap(newMap);
     toast.success(`Cobrança adiada para ${new Date(newDate + "T00:00:00").toLocaleDateString("pt-BR")}`);
     setReschedItem(null);
+  };
+
+  // Oculta (ou mostra de volta) as cobranças de contrato(s) encerrado(s) na fila de
+  // Pagamentos. Não apaga nem "resolve" a dívida — ela continua contabilizada e
+  // aparece em Locações (aba Finalizadas) e no detalhe do cliente aqui mesmo.
+  const handleToggleHideRentals = (rentalIds: string[], hide: boolean) => {
+    const idSet = new Set(rentalIds.filter(Boolean));
+    if (!idSet.size) return;
+    const all = loadRentals();
+    const updated = all.map(r => idSet.has(r.id) ? { ...r, pagamentosOcultos: hide } : r);
+    saveRentals(updated);
+    toast.success(hide
+      ? "Cobranças ocultadas da lista de Pagamentos. Continuam em Locações."
+      : "Cobranças voltaram a aparecer em Pagamentos.");
   };
 
   const quickReschedule = (item: RowItem, deltaDays: number) => {
@@ -1712,6 +1744,18 @@ export default function CobrancasSemanaPage() {
                           >
                             <CalendarClock className="h-3.5 w-3.5" />
                           </button>
+                          {hasEncerrada && (
+                            <button
+                              title="Ocultar da lista de Pagamentos (locação encerrada — continua em Locações)"
+                              onClick={() => handleToggleHideRentals(
+                                [...new Set(items.map(i => i.entry.rentalId).filter((id): id is string => !!id))],
+                                true,
+                              )}
+                              className="p-1.5 rounded text-muted-foreground hover:text-purple-600 hover:bg-purple-50 transition-colors flex-shrink-0"
+                            >
+                              <EyeOff className="h-3.5 w-3.5" />
+                            </button>
+                          )}
                         </div>
                       );
                     })}
@@ -1768,30 +1812,43 @@ export default function CobrancasSemanaPage() {
                   const placas = [...new Set(items.map(i => i.entry.placa).filter(Boolean))];
                   const hasEncerrada = items.some(i => i.entry.rentalId && rentalsById.get(i.entry.rentalId)?.status !== "ativa");
                   return (
-                    <button
-                      key={key}
-                      className="w-full px-3.5 py-2.5 flex items-center justify-between gap-3 hover:bg-muted/30 transition-colors text-left"
-                      onClick={() => clienteId && setDebtDetailClientId(clienteId)}
-                    >
-                      <div className="flex items-center gap-2 min-w-0 flex-1">
-                        <span className={`h-2 w-2 rounded-full flex-shrink-0 ${dot}`} />
-                        <span className={`text-[12px] font-bold truncate ${textCls}`}>{items[0].clienteNome}</span>
-                        {placas.map(p => (
-                          <span key={p} className="font-mono text-[10px] bg-muted border border-border/50 rounded px-1.5 py-px text-muted-foreground flex-shrink-0">{p}</span>
-                        ))}
-                        {hasEncerrada && (
-                          <span className="text-[10px] font-bold bg-purple-600 text-white rounded-full px-1.5 py-px flex-shrink-0">
-                            Locação encerrada
+                    <div key={key} className="flex items-center gap-1 pr-1 hover:bg-muted/30 transition-colors">
+                      <button
+                        className="flex-1 px-3.5 py-2.5 flex items-center justify-between gap-3 text-left min-w-0"
+                        onClick={() => clienteId && setDebtDetailClientId(clienteId)}
+                      >
+                        <div className="flex items-center gap-2 min-w-0 flex-1">
+                          <span className={`h-2 w-2 rounded-full flex-shrink-0 ${dot}`} />
+                          <span className={`text-[12px] font-bold truncate ${textCls}`}>{items[0].clienteNome}</span>
+                          {placas.map(p => (
+                            <span key={p} className="font-mono text-[10px] bg-muted border border-border/50 rounded px-1.5 py-px text-muted-foreground flex-shrink-0">{p}</span>
+                          ))}
+                          {hasEncerrada && (
+                            <span className="text-[10px] font-bold bg-purple-600 text-white rounded-full px-1.5 py-px flex-shrink-0">
+                              Locação encerrada
+                            </span>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-2 flex-shrink-0">
+                          <span className={`text-[10px] font-bold ${badgeCls} rounded-full px-2 py-px ${textCls}`}>
+                            {items.length} pendente{items.length !== 1 ? "s" : ""} · {maxDays}d
                           </span>
-                        )}
-                      </div>
-                      <div className="flex items-center gap-2 flex-shrink-0">
-                        <span className={`text-[10px] font-bold ${badgeCls} rounded-full px-2 py-px ${textCls}`}>
-                          {items.length} pendente{items.length !== 1 ? "s" : ""} · {maxDays}d
-                        </span>
-                        <span className={`text-[13px] font-bold tabular-nums ${textCls}`}>{fmtBRL(total)}</span>
-                      </div>
-                    </button>
+                          <span className={`text-[13px] font-bold tabular-nums ${textCls}`}>{fmtBRL(total)}</span>
+                        </div>
+                      </button>
+                      {hasEncerrada && (
+                        <button
+                          title="Ocultar da lista de Pagamentos (locação encerrada — continua em Locações)"
+                          onClick={() => handleToggleHideRentals(
+                            [...new Set(items.map(i => i.entry.rentalId).filter((id): id is string => !!id))],
+                            true,
+                          )}
+                          className="p-1.5 rounded text-muted-foreground hover:text-purple-600 hover:bg-purple-50 transition-colors flex-shrink-0"
+                        >
+                          <EyeOff className="h-3.5 w-3.5" />
+                        </button>
+                      )}
+                    </div>
                   );
                 })}
               </div>
@@ -2533,7 +2590,10 @@ export default function CobrancasSemanaPage() {
 
             const clientePlacas = [...new Set(debtDetailEntries.map(e => e.placa).filter(Boolean))];
             const temParcelamentos = debtDetailEntries.some(e => e.subcategoria === "Parcelamento" && e.fixedOriginId);
-            const temLocacaoEncerrada = debtDetailEntries.some(e => e.rentalId && rentalsById.get(e.rentalId)?.status !== "ativa");
+            const rentalIdsEncerrados = [...new Set(debtDetailEntries.map(e => e.rentalId).filter((id): id is string => !!id))]
+              .filter(id => rentalsById.get(id)?.status !== "ativa");
+            const temLocacaoEncerrada = rentalIdsEncerrados.length > 0;
+            const algumOculto = rentalIdsEncerrados.some(id => rentalsById.get(id)?.pagamentosOcultos);
             const clienteTelefone = debtDetailClientId ? clientsById.get(debtDetailClientId)?.telefone ?? null : null;
 
             return (
@@ -2543,7 +2603,9 @@ export default function CobrancasSemanaPage() {
                   {/* Nome + placa + config */}
                   <div className="flex items-center justify-between gap-2 min-w-0">
                     <div className="min-w-0 flex-1">
-                      <h2 className="text-[16px] font-bold leading-tight tracking-tight truncate">{debtDetailItem?.clienteNome || "—"}</h2>
+                      <h2 className="text-[16px] font-bold leading-tight tracking-tight truncate">
+                        {(debtDetailClientId ? clientsById.get(debtDetailClientId)?.nome : null) || debtDetailItem?.clienteNome || debtDetailEntries[0]?.clienteNome || "—"}
+                      </h2>
                       <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
                         {clientePlacas.map(p => (
                           <span key={p} className="font-mono text-[10px] font-semibold text-foreground/60 bg-muted border border-border/60 rounded px-1.5 py-px tracking-wider">{p}</span>
@@ -2564,7 +2626,7 @@ export default function CobrancasSemanaPage() {
                   </div>
 
                   {/* Barra de ação: telefone + copiar + adiar */}
-                  <div className="flex items-center gap-2 mt-2.5 p-2 rounded-xl bg-muted/40 border border-border/50">
+                  <div className="flex items-center flex-wrap gap-2 mt-2.5 p-2 rounded-xl bg-muted/40 border border-border/50">
                     <Phone className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400 flex-shrink-0" />
                     <span className="text-[13px] font-bold tabular-nums flex-1 text-foreground">
                       {clienteTelefone || <span className="text-muted-foreground font-normal text-[12px]">Sem telefone</span>}
@@ -2612,6 +2674,16 @@ export default function CobrancasSemanaPage() {
                       >
                         <Handshake className="h-3.5 w-3.5" />
                         Parcelar dívida
+                      </button>
+                    )}
+                    {temLocacaoEncerrada && (
+                      <button
+                        title={algumOculto ? "Mostrar de volta na lista de Pagamentos" : "Ocultar da lista de Pagamentos (continua em Locações)"}
+                        onClick={() => handleToggleHideRentals(rentalIdsEncerrados, !algumOculto)}
+                        className="flex items-center gap-1.5 text-[11px] font-semibold text-purple-700 dark:text-purple-400 bg-purple-100 dark:bg-purple-950/40 hover:bg-purple-200 dark:hover:bg-purple-900/50 border border-purple-300 dark:border-purple-700 rounded-lg px-2.5 py-1.5 transition-colors"
+                      >
+                        <EyeOff className="h-3.5 w-3.5" />
+                        {algumOculto ? "Mostrar em Pagamentos" : "Ocultar de Pagamentos"}
                       </button>
                     )}
                   </div>
