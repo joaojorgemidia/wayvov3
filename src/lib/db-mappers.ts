@@ -156,6 +156,8 @@ export function dbToFine(r: any): Fine {
     orgaoCompetencia: r.orgao_competencia || null,
     horaInfracao: r.hora_infracao || null,
     localInfracao: r.local_infracao || null,
+    naoGerarSaida: r.nao_gerar_saida || false,
+    pagamentoDireto: r.pagamento_direto || false,
   };
 }
 
@@ -173,6 +175,8 @@ export function fineToDb(f: Fine): any {
     orgao_competencia: f.orgaoCompetencia || null,
     hora_infracao: f.horaInfracao || null,
     local_infracao: f.localInfracao || null,
+    nao_gerar_saida: f.naoGerarSaida || false,
+    pagamento_direto: f.pagamentoDireto || false,
   };
 }
 

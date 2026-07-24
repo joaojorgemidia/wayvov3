@@ -102,6 +102,10 @@ export default function MultasPage() {
   const motos = cache.motos;
   const clients = cache.clients;
   const rentals = cache.rentals as Rental[];
+  const CONTAS = useMemo(
+    () => cache.bankAccounts.filter(a => a.tipo !== "cartao").map(a => a.nome).sort((a, b) => a.localeCompare(b, "pt-BR")),
+    [cache.bankAccounts],
+  );
   useEffect(() => { setFines(cache.fines); }, [cache.fines]);
 
   const detranConfigurado = !!activeCompany?.detranConfig?.login;
@@ -119,7 +123,6 @@ export default function MultasPage() {
   const [isDragActive, setIsDragActive] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [gerarEntrada, setGerarEntrada] = useState(true);
-  const [naoGerarSaida, setNaoGerarSaida] = useState(false);
 
   // DETRAN sheet state
   const [detranOpen, setDetranOpen] = useState(false);
@@ -161,8 +164,27 @@ export default function MultasPage() {
     return "Já existe uma multa cadastrada para essa moto, nessa data e com esse valor.";
   };
 
+  // Descrição/observação padrão dos lançamentos financeiros gerados a partir de uma multa
+  // (receita no cadastro, despesa na confirmação de pagamento) — mesmo formato nos dois casos.
+  const buildMultaDescObs = (fine: Fine, placa: string) => {
+    const dataMultaFmt = fine.dataMulta ? fine.dataMulta.split("-").reverse().join("/") : null;
+    const partes = [
+      dataMultaFmt ? `Cometimento: ${dataMultaFmt}` : null,
+      fine.autoInfracao ? `Auto: ${fine.autoInfracao}` : null,
+      fine.descricao || null,
+      fine.codigoInfracao ? `Cód: ${fine.codigoInfracao}` : null,
+      fine.numeroRenainf ? `RENAINF: ${fine.numeroRenainf}` : null,
+      fine.orgaoCompetencia ? `Órgão: ${fine.orgaoCompetencia}` : null,
+    ].filter(Boolean).join(" | ");
+    return { descricao: `Multa — ${placa}${partes ? ` | ${partes}` : ""}`, observacao: partes || undefined };
+  };
+
   const handleSave = async () => {
     if (!form.motoId) return;
+    if (!form.dataVencimento) {
+      toast.error("Informe a Data de Vencimento — sem ela, não dá pra saber quando a despesa vence ao confirmar o pagamento.");
+      return;
+    }
     const valor = parseFloat(valorStr.replace(/\./g, "").replace(",", ".")) || 0;
     const responsavel: Fine["responsavel"] = gerarEntrada ? "cliente" : "locadora";
     const finalForm = { ...form, valor, responsavel };
@@ -176,64 +198,36 @@ export default function MultasPage() {
     if (isNew) persist([...fines, finalForm]);
     else persist(fines.map(f => f.id === form.id ? finalForm : f));
 
-    const gerarSaida = !naoGerarSaida;
-    const deveGerarFinanceiro = isNew && valor > 0 && finalForm.dataVencimento && (gerarEntrada || gerarSaida);
+    // No cadastro, só a receita (cobrança ao locatário) é lançada — quem paga o órgão (a
+    // locadora ou o próprio locatário direto), com qual valor/data/conta, só é decidido na
+    // hora de confirmar o pagamento (handleConfirmPagaMulta), não aqui.
+    const deveGerarReceita = isNew && valor > 0 && gerarEntrada;
 
-    if (deveGerarFinanceiro) {
+    if (deveGerarReceita) {
       const moto = motos.find(m => m.id === finalForm.motoId);
       const client = finalForm.clienteId ? clients.find(c => c.id === finalForm.clienteId) : null;
       const placa = moto?.placa || finalForm.motoId;
-      const dataMultaFmt = finalForm.dataMulta
-        ? finalForm.dataMulta.split("-").reverse().join("/")
-        : null;
-      const partes = [
-        dataMultaFmt ? `Cometimento: ${dataMultaFmt}` : null,
-        finalForm.autoInfracao ? `Auto: ${finalForm.autoInfracao}` : null,
-        finalForm.descricao || null,
-        finalForm.codigoInfracao ? `Cód: ${finalForm.codigoInfracao}` : null,
-        finalForm.numeroRenainf ? `RENAINF: ${finalForm.numeroRenainf}` : null,
-        finalForm.orgaoCompetencia ? `Órgão: ${finalForm.orgaoCompetencia}` : null,
-      ].filter(Boolean).join(" | ");
-      const descricao = `Multa — ${placa}${partes ? ` | ${partes}` : ""}`;
-
-      const hoje = localToday();
-      const baseComum: Partial<FinancialEntry> = {
-        motoId: finalForm.motoId, rentalId: finalForm.rentalId,
-        clienteId: finalForm.clienteId, clienteNome: client?.nome || "",
-        placa, natureza: "operacional", conta: "", tags: ["multa"],
-        recorrente: false, fineId: finalForm.id,
-        descricao, observacao: partes || undefined,
-      };
-
-      const newEntries: FinancialEntry[] = [];
-
-      if (gerarEntrada) {
-        newEntries.push({
-          ...(baseComum as FinancialEntry),
-          id: crypto.randomUUID(), tipo: "receita",
-          categoria: "multa_transito_receita", subcategoria: "Repasse de multa",
-          data: hoje, dataPrevista: hoje,
-          valor, pago: false,
-        });
-      }
-
-      if (gerarSaida) {
-        newEntries.push({
-          ...(baseComum as FinancialEntry),
-          id: crypto.randomUUID(), tipo: "despesa",
-          categoria: "multa_transito",
-          subcategoria: gerarEntrada ? "Repasse cliente" : "Locadora",
-          data: finalForm.dataVencimento!, dataPrevista: finalForm.dataVencimento!,
-          valor, pago: false,
-        });
-      }
+      const { descricao, observacao } = buildMultaDescObs(finalForm, placa);
+      // Vence junto com a multa (Data de Vencimento), não no dia do cadastro — cobrar o
+      // locatário antes da própria multa vencer não faz sentido, e é essa data que o
+      // asaas-auto-boleto usa pra decidir quando emitir o boleto.
+      const vencimento = finalForm.dataVencimento!;
 
       try {
-        await saveFinancial([...loadFinancial(), ...newEntries]);
-        const partes_msg = [gerarEntrada && "entrada", gerarSaida && "saída"].filter(Boolean).join(" e ");
-        toast.success(`Multa salva. ${partes_msg ? `Gerado no financeiro: ${partes_msg}.` : ""}`);
+        await saveFinancial([...loadFinancial(), {
+          id: crypto.randomUUID(), tipo: "receita",
+          categoria: "multa_transito_receita", subcategoria: "Repasse de multa",
+          motoId: finalForm.motoId, rentalId: finalForm.rentalId,
+          clienteId: finalForm.clienteId, clienteNome: client?.nome || "",
+          placa, natureza: "operacional", conta: "", tags: ["multa"],
+          recorrente: false, fineId: finalForm.id,
+          descricao, observacao,
+          data: vencimento, dataPrevista: vencimento,
+          valor, pago: false,
+        } as FinancialEntry]);
+        toast.success("Multa salva. Gerado no financeiro: entrada (cobrança ao locatário).");
       } catch {
-        toast.error("Multa salva, mas erro ao gerar lançamentos financeiros.");
+        toast.error("Multa salva, mas erro ao gerar a cobrança no financeiro.");
       }
     } else {
       toast.success("Multa salva!");
@@ -255,19 +249,60 @@ export default function MultasPage() {
   // Reflete o status da multa na despesa correspondente no Financeiro (vinculada por fineId).
   // Só a despesa (o que a locadora paga ao órgão) é sincronizada — o repasse ao cliente
   // (receita) tem cobrança própria e independente, já tratada em Cobranças.
-  const syncFineExpensePago = async (fineIds: string[], pago: boolean) => {
+  // Ao marcar como paga, `pagamento` traz o valor/data reais informados — sem isso a
+  // despesa ficava só com pago=true, mas com a data/valor antigos (parecia "sumida"
+  // de qualquer lista organizada por data de pagamento).
+  // A despesa não existe desde o cadastro (ver handleSave) — ela só nasce aqui, na hora em
+  // que o pagamento é confirmado pela primeira vez, a menos que a multa tenha marcado
+  // "Não gerar saída no financeiro".
+  const syncFineExpensePago = async (
+    fineIds: string[],
+    pago: boolean,
+    pagamento?: { valor: number; data: string; conta: string },
+  ) => {
     const idSet = new Set(fineIds);
     const all = loadFinancial();
+    const existingFineIds = new Set(all.filter(e => e.tipo === "despesa" && e.fineId).map(e => e.fineId as string));
     let changed = false;
     const updated = all.map(e => {
-      if (e.tipo === "despesa" && e.fineId && idSet.has(e.fineId) && e.pago !== pago) {
+      if (e.tipo === "despesa" && e.fineId && idSet.has(e.fineId) && (e.pago !== pago || pagamento)) {
         changed = true;
-        return { ...e, pago };
+        return pago && pagamento
+          ? { ...e, pago, valor: pagamento.valor, data: pagamento.data, dataPrevista: pagamento.data, conta: pagamento.conta }
+          : { ...e, pago };
       }
       return e;
     });
-    if (changed) {
-      try { await saveFinancial(updated); }
+
+    const newEntries: FinancialEntry[] = [];
+    if (pago) {
+      for (const fineId of fineIds) {
+        if (existingFineIds.has(fineId)) continue;
+        const fine = fines.find(f => f.id === fineId);
+        if (!fine || fine.naoGerarSaida) continue;
+        const moto = motos.find(m => m.id === fine.motoId);
+        const client = fine.clienteId ? clients.find(c => c.id === fine.clienteId) : null;
+        const placa = moto?.placa || fine.motoId;
+        const { descricao, observacao } = buildMultaDescObs(fine, placa);
+        const valor = pagamento?.valor ?? fine.valor;
+        const data = pagamento?.data ?? localToday();
+        newEntries.push({
+          id: crypto.randomUUID(), tipo: "despesa",
+          categoria: "multa_transito",
+          subcategoria: fine.responsavel === "cliente" ? "Repasse cliente" : "Locadora",
+          motoId: fine.motoId, rentalId: fine.rentalId,
+          clienteId: fine.clienteId, clienteNome: client?.nome || "",
+          placa, natureza: "operacional", conta: pagamento?.conta || "", tags: ["multa"],
+          recorrente: false, fineId: fine.id,
+          descricao, observacao,
+          data, dataPrevista: data,
+          valor, pago: true,
+        } as FinancialEntry);
+      }
+    }
+
+    if (changed || newEntries.length > 0) {
+      try { await saveFinancial([...updated, ...newEntries]); }
       catch { toast.error("Multa atualizada, mas houve erro ao sincronizar a despesa no financeiro."); }
     }
   };
@@ -278,11 +313,49 @@ export default function MultasPage() {
     setSelectedIds(new Set());
   };
 
+  // Desmarcar (paga → pendente) não precisa perguntar nada — só volta o status.
+  // Marcar como paga abre um mini-formulário pra registrar valor e data reais do
+  // pagamento, que são aplicados na despesa vinculada.
+  const [confirmPagaFine, setConfirmPagaFine] = useState<Fine | null>(null);
+  const [confirmPagaValor, setConfirmPagaValor] = useState("");
+  const [confirmPagaData, setConfirmPagaData] = useState("");
+  const [confirmPagaConta, setConfirmPagaConta] = useState("");
+  const [confirmPagaDireto, setConfirmPagaDireto] = useState(false);
+
   const handleToggleStatus = (f: Fine) => {
-    const status: Fine["status"] = f.status === "paga" ? "pendente" : "paga";
-    persist(fines.map(x => x.id === f.id ? { ...x, status } : x));
-    void syncFineExpensePago([f.id], status === "paga");
-    toast.success(status === "paga" ? "Multa marcada como paga (despesa também atualizada)." : "Multa marcada como pendente.");
+    if (f.status === "paga") {
+      persist(fines.map(x => x.id === f.id ? { ...x, status: "pendente" } : x));
+      void syncFineExpensePago([f.id], false);
+      toast.success("Multa marcada como pendente.");
+      return;
+    }
+    setConfirmPagaFine(f);
+    setConfirmPagaValor(f.valor ? String(f.valor).replace(".", ",") : "");
+    setConfirmPagaData(localToday());
+    setConfirmPagaConta("");
+    setConfirmPagaDireto(false);
+  };
+
+  const handleConfirmPagaMulta = () => {
+    if (!confirmPagaFine) return;
+    // Locatário pagou o órgão direto: não desembolsa nada, só confirma o status — sem
+    // valor/data/conta, porque não há despesa nenhuma pra lançar.
+    if (confirmPagaDireto) {
+      persist(fines.map(x => x.id === confirmPagaFine.id ? { ...x, status: "paga", pagamentoDireto: true, naoGerarSaida: true } : x));
+      toast.success("Multa marcada como paga — locatário pagou direto ao órgão.");
+      setConfirmPagaFine(null);
+      return;
+    }
+    if (!confirmPagaConta) {
+      toast.error("Selecione a conta usada no pagamento.");
+      return;
+    }
+    const valor = parseFloat(confirmPagaValor.replace(/\./g, "").replace(",", ".")) || confirmPagaFine.valor || 0;
+    const data = confirmPagaData || localToday();
+    persist(fines.map(x => x.id === confirmPagaFine.id ? { ...x, status: "paga", pagamentoDireto: false, naoGerarSaida: false } : x));
+    void syncFineExpensePago([confirmPagaFine.id], true, { valor, data, conta: confirmPagaConta });
+    toast.success("Multa marcada como paga — despesa lançada com valor, data e conta informados.");
+    setConfirmPagaFine(null);
   };
 
   const handleMultaUpload = async (file: File) => {
@@ -343,10 +416,12 @@ export default function MultasPage() {
       const candidato = { id: form.id, motoId: motoId || form.motoId, dataMulta: dataMultaFinal, valor: novoValor || form.valor, autoInfracao: autoInfracaoFinal, numeroRenainf: numeroRenainfFinal };
       const duplicate = (normAuto(autoInfracaoFinal) || normAuto(numeroRenainfFinal) || motoId || form.motoId) && findDuplicateFine(candidato);
       if (duplicate) {
+        // Trava na 1ª etapa — sem isso o usuário preenchia o formulário inteiro pra só
+        // descobrir a duplicidade ao tentar salvar.
         toast.warning(`Multa repetida! ${duplicateFineMessage(candidato)}`, { duration: 8000 });
-      } else {
-        toast.success("Dados da multa extraídos com sucesso!");
+        return;
       }
+      toast.success("Dados da multa extraídos com sucesso!");
       setFormStep(2);
     } catch (err: any) {
       toast.error(err.message || "Erro ao ler a multa");
@@ -525,7 +600,7 @@ export default function MultasPage() {
             </div>
           )}
           {canCreate && (
-            <Button onClick={() => { setForm(emptyFine()); setValorStr(""); setGerarEntrada(false); setNaoGerarSaida(false); setMode("add"); setFormStep(1); setDialogOpen(true); }} className="gap-2">
+            <Button onClick={() => { setForm(emptyFine()); setValorStr(""); setGerarEntrada(false); setMode("add"); setFormStep(1); setDialogOpen(true); }} className="gap-2">
               <Plus className="h-4 w-4" /> Nova Multa
             </Button>
           )}
@@ -603,14 +678,14 @@ export default function MultasPage() {
                             variant="ghost"
                             size="icon"
                             onClick={() => handleToggleStatus(f)}
-                            title={f.status === "paga" ? "Marcar como pendente" : "Marcar como paga"}
+                            title={f.status === "paga" ? "Marcar como pendente" : "Confirmar pagamento (valor e data)"}
                           >
                             {f.status === "paga"
                               ? <Circle className="h-4 w-4 text-muted-foreground" />
                               : <CheckCheck className="h-4 w-4 text-success" />}
                           </Button>
                         )}
-                        {canEdit && <Button variant="ghost" size="icon" onClick={() => { setForm({ ...f }); setValorStr(f.valor ? String(f.valor).replace(".", ",") : ""); setGerarEntrada(f.responsavel === "cliente"); setNaoGerarSaida(false); setMode("edit"); setFormStep(2); setDialogOpen(true); }}><Pencil className="h-4 w-4" /></Button>}
+                        {canEdit && <Button variant="ghost" size="icon" onClick={() => { setForm({ ...f }); setValorStr(f.valor ? String(f.valor).replace(".", ",") : ""); setGerarEntrada(f.responsavel === "cliente"); setMode("edit"); setFormStep(2); setDialogOpen(true); }}><Pencil className="h-4 w-4" /></Button>}
                         {canDelete && <Button variant="ghost" size="icon" onClick={() => handleDelete(f.id)}><Trash2 className="h-4 w-4 text-destructive" /></Button>}
                       </div>
                     </td>
@@ -633,6 +708,72 @@ export default function MultasPage() {
           ]}
         />
       )}
+
+      {/* ── Confirmar pagamento da multa (valor e data reais) ───────────────────── */}
+      <Dialog open={!!confirmPagaFine} onOpenChange={(o) => !o && setConfirmPagaFine(null)}>
+        <DialogContent className="sm:max-w-xs">
+          <DialogHeader>
+            <DialogTitle>Confirmar pagamento</DialogTitle>
+          </DialogHeader>
+          <div className="grid gap-4 py-2">
+            <label className="flex items-center gap-2.5 cursor-pointer select-none">
+              <Checkbox
+                checked={confirmPagaDireto}
+                onCheckedChange={v => setConfirmPagaDireto(!!v)}
+              />
+              <span className="text-sm">Locatário pagou a multa diretamente ao órgão (não gera despesa)</span>
+            </label>
+            {!confirmPagaDireto && (
+              <>
+                <div className="grid gap-2">
+                  <Label>Valor pago</Label>
+                  <div className="relative">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground pointer-events-none">R$</span>
+                    <Input
+                      className="pl-8"
+                      inputMode="decimal"
+                      placeholder="0,00"
+                      value={confirmPagaValor}
+                      onChange={e => setConfirmPagaValor(e.target.value)}
+                      autoFocus
+                    />
+                  </div>
+                </div>
+                <div className="grid gap-2">
+                  <Label>Data do pagamento</Label>
+                  <Input
+                    type="date"
+                    value={confirmPagaData}
+                    onChange={e => setConfirmPagaData(e.target.value)}
+                  />
+                </div>
+                <div className="grid gap-2">
+                  <Label>Conta <span className="text-destructive">*</span></Label>
+                  <SearchableSelect
+                    options={CONTAS.map(c => ({ value: c, label: c }))}
+                    value={confirmPagaConta}
+                    onValueChange={setConfirmPagaConta}
+                    placeholder="Selecione a conta..."
+                    searchPlaceholder="Buscar conta..."
+                  />
+                </div>
+                <p className="text-[11px] text-muted-foreground">
+                  A despesa da multa é lançada (ou atualizada) no Financeiro com esse valor, data e conta.
+                </p>
+              </>
+            )}
+            {confirmPagaDireto && (
+              <p className="text-[11px] text-muted-foreground">
+                Nenhuma despesa é lançada — o locatário resolveu direto com o órgão.
+              </p>
+            )}
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={() => setConfirmPagaFine(null)}>Cancelar</Button>
+            <Button onClick={handleConfirmPagaMulta} disabled={!confirmPagaDireto && !confirmPagaConta}>Confirmar</Button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* ── Formulário manual ─────────────────────────────────────────────────── */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
@@ -777,67 +918,9 @@ export default function MultasPage() {
               </div>
             </div>
 
-            {/* Financeiro — status, vencimento e o que gerar no Financeiro */}
+            {/* Financeiro — valor, status, vencimento e o que gerar no Financeiro */}
             <div className="rounded-lg border border-border/50 bg-muted/20 p-3 space-y-3">
               <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Financeiro</p>
-              <div className="grid grid-cols-2 gap-3">
-                <div className="grid gap-2">
-                  <Label>Status</Label>
-                  <SearchableSelect
-                    options={Object.entries(statusLabel).map(([k, v]) => ({ value: k, label: v }))}
-                    value={form.status}
-                    onValueChange={v => setForm({ ...form, status: v as Fine["status"] })}
-                  />
-                </div>
-                <div className="grid gap-2">
-                  <Label>Data de Vencimento</Label>
-                  <Input type="date" value={form.dataVencimento || ""} onChange={e => setForm({ ...form, dataVencimento: e.target.value || null })} />
-                </div>
-              </div>
-              <label className="flex items-center gap-2.5 cursor-pointer select-none">
-                <Checkbox
-                  checked={naoGerarSaida}
-                  onCheckedChange={v => setNaoGerarSaida(!!v)}
-                />
-                <span className="text-sm">Não gerar saída no financeiro</span>
-              </label>
-              {/* Info sobre lançamentos automáticos */}
-              {mode === "add" && form.dataVencimento && (gerarEntrada || !naoGerarSaida) && (
-                <p className="text-[11px] text-muted-foreground bg-background/60 rounded-md px-3 py-2 leading-snug">
-                  {gerarEntrada && !naoGerarSaida
-                    ? "Ao salvar: será gerada uma entrada (cobrança ao locatário) e uma saída (despesa no vencimento)."
-                    : gerarEntrada
-                    ? "Ao salvar: será gerada apenas uma entrada (cobrança ao locatário)."
-                    : "Ao salvar: será gerada apenas uma saída (despesa no vencimento)."}
-                </p>
-              )}
-            </div>
-
-            {/* Dados da infração — só relevantes para consulta/comprovação, agrupados à parte */}
-            <div className="rounded-lg border border-border/50 bg-muted/20 p-3 space-y-3">
-              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Dados da infração</p>
-              <div className="grid grid-cols-2 gap-3">
-                <div className="grid gap-2">
-                  <Label>Nº RENAINF</Label>
-                  <Input
-                    value={form.numeroRenainf || ""}
-                    onChange={e => setForm({ ...form, numeroRenainf: e.target.value || null })}
-                    placeholder="000000000"
-                  />
-                </div>
-                <div className="grid gap-2">
-                  <Label>Código da infração</Label>
-                  <Input
-                    value={form.codigoInfracao || ""}
-                    onChange={e => setForm({ ...form, codigoInfracao: e.target.value || null })}
-                    placeholder="Ex: 74550"
-                  />
-                </div>
-              </div>
-              <div className="grid gap-2">
-                <Label>Descrição da infração</Label>
-                <Input value={form.descricao} onChange={e => setForm({ ...form, descricao: e.target.value })} placeholder="Ex: Transitar velocidade superior máx permitida" />
-              </div>
               <div className="grid gap-2">
                 <Label>Valor</Label>
                 <div className="relative">
@@ -856,33 +939,41 @@ export default function MultasPage() {
                   />
                 </div>
               </div>
-              <div className="grid grid-cols-3 gap-3">
-                <div className="grid gap-2 col-span-2">
-                  <Label>Órgão competência</Label>
-                  <Input
-                    value={form.orgaoCompetencia || ""}
-                    onChange={e => setForm({ ...form, orgaoCompetencia: e.target.value || null })}
-                    placeholder="Ex: PREF. DE: GO – SENADOR CANEDO"
+              <div className="grid grid-cols-2 gap-3">
+                <div className="grid gap-2">
+                  <Label>Status</Label>
+                  <SearchableSelect
+                    options={Object.entries(statusLabel).map(([k, v]) => ({ value: k, label: v }))}
+                    value={form.status}
+                    onValueChange={v => setForm({ ...form, status: v as Fine["status"] })}
                   />
                 </div>
                 <div className="grid gap-2">
-                  <Label>Hora da infração</Label>
-                  <Input
-                    value={form.horaInfracao || ""}
-                    onChange={e => setForm({ ...form, horaInfracao: e.target.value || null })}
-                    placeholder="12:33"
-                  />
+                  <Label>Data de Vencimento <span className="text-destructive">*</span></Label>
+                  <Input type="date" value={form.dataVencimento || ""} onChange={e => setForm({ ...form, dataVencimento: e.target.value || null })} />
                 </div>
               </div>
-              <div className="grid gap-2">
-                <Label>Local da infração</Label>
-                <Input
-                  value={form.localInfracao || ""}
-                  onChange={e => setForm({ ...form, localInfracao: e.target.value || null })}
-                  placeholder="Ex: Av. Anuar Auad x Rua 36, Sentido bairro residencial..."
-                />
-              </div>
+              {!form.dataVencimento ? (
+                <p className="text-[11px] text-destructive">
+                  Obrigatória — é o prazo que o locatário tem para pagar a cobrança gerada.
+                </p>
+              ) : (
+                <p className="text-[11px] text-muted-foreground">
+                  Prazo para o locatário pagar. É o vencimento da cobrança gerada agora e, se o Asaas
+                  estiver ativo, a referência usada pra emitir o boleto automaticamente perto dessa data.
+                </p>
+              )}
+              {/* A despesa (quem pagou o órgão, valor, data, conta) nunca é decidida aqui no
+                  cadastro — só na hora de confirmar o pagamento, na listagem (botão de check). */}
+              {mode === "add" && (
+                <p className="text-[11px] text-muted-foreground bg-background/60 rounded-md px-3 py-2 leading-snug">
+                  {gerarEntrada
+                    ? "Ao salvar: gera a cobrança (entrada) ao locatário agora. A despesa só é lançada quando você confirmar o pagamento na listagem."
+                    : "Ao salvar: nenhum lançamento é gerado agora. A despesa só é lançada quando você confirmar o pagamento na listagem."}
+                </p>
+              )}
             </div>
+
               </>
             )}
           </div>
@@ -891,7 +982,7 @@ export default function MultasPage() {
               <Button variant="ghost" className="mr-auto" onClick={() => setFormStep(1)}>← Voltar</Button>
             )}
             <Button variant="outline" onClick={() => setDialogOpen(false)}>Cancelar</Button>
-            {formStep === 2 && <Button onClick={handleSave}>Salvar</Button>}
+            {formStep === 2 && <Button onClick={handleSave} disabled={!form.dataVencimento}>Salvar</Button>}
           </div>
         </DialogContent>
       </Dialog>

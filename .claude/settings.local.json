@@ -57,7 +57,10 @@
       "mcp__plugin_supabase_supabase__get_edge_function",
       "Bash(node *)",
       "Bash(Get-Content \"supabase\\\\functions\\\\asaas-sync-fees\\\\index.ts\" -Raw)",
-      "Bash(Get-Content \"supabase\\\\functions\\\\asaas-webhook\\\\index.ts\" -Raw)"
+      "Bash(Get-Content \"supabase\\\\functions\\\\asaas-webhook\\\\index.ts\" -Raw)",
+      "WebFetch(domain:api-velotrack.s3-website-sa-east-1.amazonaws.com)",
+      "Bash(echo \"EXIT:$?\")",
+      "Bash(npx eslint *)"
     ]
   },
   "hooks": {

@@ -1819,26 +1819,50 @@ export default function LocacoesPage() {
           persist(updatedRentals);
 
           const correctionId = pendingEntries[0].id;
+          const correctionEntry = updatedFinancial.find(e => e.id === correctionId);
           const asaasEnabled = activeCompany?.asaasConfig?.enabled && activeCompany?.asaasConfig?.apiKey;
           if (asaasEnabled) {
-            try {
-              const { data: asaasData, error: asaasError } = await supabase.functions.invoke("asaas-charge", {
-                body: { entryId: correctionId },
-              });
-              if (!asaasError && asaasData && !asaasData.error) {
-                const withAsaas = updatedFinancial.map(e =>
-                  e.id === correctionId
-                    ? { ...e, asaasPaymentId: asaasData.paymentId, asaasStatus: asaasData.status, asaasBoletoUrl: asaasData.boletoUrl, asaasInvoiceUrl: asaasData.invoiceUrl }
-                    : e
-                );
-                await saveFinancial(withAsaas);
-                toast.success("Troca aplicada e cobrança enviada ao cliente!");
-              } else {
-                toast.success("Troca aplicada. Não foi possível enviar a cobrança Asaas.");
+            // Boletos que já existem no Asaas (correção ou semanas futuras já emitidas
+            // antecipadamente) precisam ser ATUALIZADOS lá — gerar um boleto novo pra eles
+            // é rejeitado pelo Asaas ("boleto já gerado") e a data de vencimento antiga fica
+            // parada no boleto real, mesmo com o app já mostrando a data nova.
+            const withExistingBoleto = updatedFinancial.filter(
+              e => pendingIds.has(e.id) && !!e.asaasPaymentId && !ASAAS_TERMINAL.includes(e.asaasStatus || ""),
+            );
+            const updateResults = await Promise.allSettled(
+              withExistingBoleto.map(e => {
+                const dueDate = e.dataPrevista || e.data;
+                const body: Record<string, unknown> = { asaasPaymentId: e.asaasPaymentId, dueDate, companyId: activeCompany?.id };
+                if (e.id === correctionId) body.value = e.valor;
+                return supabase.functions.invoke("asaas-update-payment", { body });
+              }),
+            );
+            const updateFailed = updateResults.some(res => res.status === "rejected" || (res.status === "fulfilled" && res.value.error));
+
+            let asaasOk = !updateFailed;
+            if (correctionEntry && !correctionEntry.asaasPaymentId) {
+              try {
+                const { data: asaasData, error: asaasError } = await supabase.functions.invoke("asaas-charge", {
+                  body: { entryId: correctionId },
+                });
+                if (!asaasError && asaasData && !asaasData.error) {
+                  const withAsaas = updatedFinancial.map(e =>
+                    e.id === correctionId
+                      ? { ...e, asaasPaymentId: asaasData.paymentId, asaasStatus: asaasData.status, asaasBoletoUrl: asaasData.boletoUrl, asaasInvoiceUrl: asaasData.invoiceUrl }
+                      : e
+                  );
+                  await saveFinancial(withAsaas);
+                } else {
+                  asaasOk = false;
+                }
+              } catch {
+                asaasOk = false;
               }
-            } catch {
-              toast.success("Troca aplicada. Não foi possível enviar a cobrança Asaas.");
             }
+
+            toast.success(
+              asaasOk ? "Troca aplicada e cobrança atualizada no Asaas!" : "Troca aplicada. Não foi possível atualizar a cobrança no Asaas.",
+            );
           } else {
             toast.success("Troca de vencimento aplicada com sucesso");
           }

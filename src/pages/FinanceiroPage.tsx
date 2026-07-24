@@ -4164,24 +4164,35 @@ export default function FinanceiroPage() {
                       value={categoriaFilter}
                       onValueChange={setCategoriaFilter}
                       placeholder="Todas"
-                      options={[
-                        { value: "all", label: "Todas" },
-                        ...[...CATEGORIAS.receita, ...CATEGORIAS.despesa]
-                          .filter((c, i, arr) => arr.findIndex(x => x.label === c.label) === i)
-                          .flatMap(c => {
-                            const subs = SUBCATEGORIAS[c.value] || [];
-                            // Also include subcategories from sibling category values
-                            const siblingValues = CATEGORY_SIBLINGS[c.value] || [c.value];
-                            const allSubs = [...new Set([
-                              ...subs,
-                              ...siblingValues.flatMap(sv => SUBCATEGORIAS[sv] || [])
-                            ])];
-                            return [
-                              { value: c.value, label: c.label },
-                              ...allSubs.map(sub => ({ value: `${c.value}::${sub}`, label: `  ↳ ${sub}` }))
-                            ];
-                          })
-                      ]}
+                      options={(() => {
+                        const baseCats = [...CATEGORIAS.receita, ...CATEGORIAS.despesa]
+                          .filter((c, i, arr) => arr.findIndex(x => x.label === c.label) === i);
+                        const groups = baseCats.map(c => {
+                          const subs = SUBCATEGORIAS[c.value] || [];
+                          // Also include subcategories from sibling category values
+                          const siblingValues = CATEGORY_SIBLINGS[c.value] || [c.value];
+                          const allSubs = [...new Set([
+                            ...subs,
+                            ...siblingValues.flatMap(sv => SUBCATEGORIAS[sv] || [])
+                          ])];
+                          return { c, allSubs };
+                        });
+                        // Mesma subcategoria pode existir em categorias diferentes sem relação entre si
+                        // (ex.: "Parcelamento" em Compra de Moto e em Outros) — sem indicar a categoria
+                        // pai, essas opções aparecem como itens idênticos e duplicados na lista.
+                        const subCounts = new Map<string, number>();
+                        groups.forEach(({ allSubs }) => allSubs.forEach(sub => subCounts.set(sub, (subCounts.get(sub) || 0) + 1)));
+                        return [
+                          { value: "all", label: "Todas" },
+                          ...groups.flatMap(({ c, allSubs }) => [
+                            { value: c.value, label: c.label },
+                            ...allSubs.map(sub => ({
+                              value: `${c.value}::${sub}`,
+                              label: (subCounts.get(sub) || 0) > 1 ? `  ↳ ${sub} (${c.label})` : `  ↳ ${sub}`,
+                            })),
+                          ]),
+                        ];
+                      })()}
                     />
                   </div>
                   <div>

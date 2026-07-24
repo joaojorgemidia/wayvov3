@@ -18,7 +18,36 @@ serve(async (req) => {
 
   const results = { generated: 0, skipped: 0, failed: 0, errors: [] as string[] };
 
-  // Busca todas as empresas com asaas habilitado e gerarBoletoXDiasAntes > 0
+  const chargeEntries = async (entryIds: string[]) => {
+    for (const entryId of entryIds) {
+      try {
+        const res = await fetch(
+          `${Deno.env.get("SUPABASE_URL")}/functions/v1/asaas-charge`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+            },
+            body: JSON.stringify({ entryId }),
+          },
+        );
+
+        const body = await res.json();
+        if (!res.ok || body.error) {
+          results.failed++;
+          results.errors.push(`${entryId}: ${body.error ?? res.status}`);
+        } else {
+          results.generated++;
+        }
+      } catch (e) {
+        results.failed++;
+        results.errors.push(`${entryId}: ${e instanceof Error ? e.message : "erro"}`);
+      }
+    }
+  };
+
+  // Busca todas as empresas com asaas habilitado
   const { data: companies, error: compErr } = await supabase
     .from("companies")
     .select("id, asaas_config")
@@ -32,55 +61,68 @@ serve(async (req) => {
 
   const today = new Date();
   today.setUTCHours(0, 0, 0, 0);
+  const todayStr = today.toISOString().split("T")[0];
+
+  // Multas: janela fixa de 2 dias antes do vencimento real da multa (fines.data_vencimento),
+  // independente do gerarBoletoXDiasAntes configurado pra aluguel/caução — a cobrança da
+  // multa (financial_entries.data_prevista) já nasce "vencendo hoje" no cadastro (ver
+  // MultasPage.handleSave), então usar esse campo aqui geraria o boleto sempre no dia do
+  // cadastro, não perto do vencimento real da multa.
+  const multaTargetDate = new Date(today);
+  multaTargetDate.setDate(multaTargetDate.getDate() + 2);
+  const multaTargetDateStr = multaTargetDate.toISOString().split("T")[0];
 
   for (const company of (companies || [])) {
     const cfg = company.asaas_config;
-    if (!cfg?.enabled || !cfg?.gerarBoletoXDiasAntes) continue;
+    if (!cfg?.enabled) continue;
 
-    const targetDate = new Date(today);
-    targetDate.setDate(targetDate.getDate() + Number(cfg.gerarBoletoXDiasAntes));
-    const targetDateStr = targetDate.toISOString().split("T")[0];
+    if (cfg.gerarBoletoXDiasAntes) {
+      const targetDate = new Date(today);
+      targetDate.setDate(targetDate.getDate() + Number(cfg.gerarBoletoXDiasAntes));
+      const targetDateStr = targetDate.toISOString().split("T")[0];
 
-    // Entradas de aluguel/caução OU parcela de acordo de dívida (categoria "outro_receita"
-    // com subcategoria "Parcelamento" — criada ao agrupar cobranças em atraso num acordo)
-    // sem boleto, não pagas, com vencimento até a data alvo. Usa "<=" (não "=") para
-    // recuperar entradas que ficaram sem boleto por falha pontual num dia anterior — com
-    // "=" elas nunca mais seriam pegas, já que no dia seguinte a data alvo já é outra.
-    const { data: entries } = await supabase
-      .from("financial_entries")
+      // Entradas de aluguel/caução OU parcela de acordo de dívida (categoria "outro_receita"
+      // com subcategoria "Parcelamento" — criada ao agrupar cobranças em atraso num acordo)
+      // sem boleto, não pagas, com vencimento até a data alvo. Usa "<=" (não "=") para
+      // recuperar entradas que ficaram sem boleto por falha pontual num dia anterior — com
+      // "=" elas nunca mais seriam pegas, já que no dia seguinte a data alvo já é outra.
+      const { data: entries } = await supabase
+        .from("financial_entries")
+        .select("id")
+        .eq("company_id", company.id)
+        .or("categoria.in.(aluguel,caucao),and(categoria.eq.outro_receita,subcategoria.eq.Parcelamento)")
+        .is("asaas_payment_id", null)
+        .eq("pago", false)
+        .is("deleted_at", null)
+        .lte("data_prevista", targetDateStr);
+
+      await chargeEntries((entries || []).map(e => e.id));
+    }
+
+    // Multas: acha as multas dessa empresa com vencimento até 2 dias à frente (ou já hoje/
+    // vencidas — "<=", mesmo raciocínio do "<=" acima) e busca a receita (cobrança ao
+    // locatário) vinculada a cada uma que ainda não tem boleto.
+    const { data: duefines } = await supabase
+      .from("fines")
       .select("id")
       .eq("company_id", company.id)
-      .or("categoria.in.(aluguel,caucao),and(categoria.eq.outro_receita,subcategoria.eq.Parcelamento)")
-      .is("asaas_payment_id", null)
-      .eq("pago", false)
-      .is("deleted_at", null)
-      .lte("data_prevista", targetDateStr);
+      .not("data_vencimento", "is", null)
+      .lte("data_vencimento", multaTargetDateStr)
+      .is("deleted_at", null);
 
-    for (const entry of (entries || [])) {
-      try {
-        const res = await fetch(
-          `${Deno.env.get("SUPABASE_URL")}/functions/v1/asaas-charge`,
-          {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "Authorization": `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
-            },
-            body: JSON.stringify({ entryId: entry.id }),
-          },
-        );
+    const fineIds = (duefines || []).map(f => f.id);
+    if (fineIds.length > 0) {
+      const { data: multaEntries } = await supabase
+        .from("financial_entries")
+        .select("id")
+        .eq("company_id", company.id)
+        .eq("categoria", "multa_transito_receita")
+        .in("fine_id", fineIds)
+        .is("asaas_payment_id", null)
+        .eq("pago", false)
+        .is("deleted_at", null);
 
-        const body = await res.json();
-        if (!res.ok || body.error) {
-          results.failed++;
-          results.errors.push(`${entry.id}: ${body.error ?? res.status}`);
-        } else {
-          results.generated++;
-        }
-      } catch (e) {
-        results.failed++;
-        results.errors.push(`${entry.id}: ${e instanceof Error ? e.message : "erro"}`);
-      }
+      await chargeEntries((multaEntries || []).map(e => e.id));
     }
   }
 

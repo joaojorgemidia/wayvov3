@@ -159,17 +159,22 @@ export default function RentalWizard({ rental, onSave, onCancel, motos, activeRe
       if (error) throw error;
       if (!data?.success) throw new Error(data?.error || "Falha na extração");
       const d = data.data;
+      const extractedCpf = d.cpf ? maskCpf(d.cpf) : "";
       setClientForm(prev => ({
         ...prev,
         nome: d.nome || prev.nome,
-        cpf: d.cpf ? maskCpf(d.cpf) : prev.cpf,
+        cpf: extractedCpf || prev.cpf,
         cnh: d.numeroCnh || prev.cnh,
         cnhCategoria: d.categoria || prev.cnhCategoria,
         cnhValidade: d.validade || prev.cnhValidade,
         cnhPdfName: file.name,
         cnhPdfData: base64,
       }));
-      toast.success("Dados da CNH extraídos!");
+      if (extractedCpf && !isValidCpf(extractedCpf)) {
+        toast.warning("CPF extraído da CNH parece incorreto (dígito verificador inválido). Confira o campo antes de continuar.");
+      } else {
+        toast.success("Dados da CNH extraídos!");
+      }
     } catch (err: any) {
       console.error(err);
       toast.error(err.message || "Erro ao extrair CNH");

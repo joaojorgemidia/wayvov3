@@ -156,6 +156,12 @@ export interface Fine {
   orgaoCompetencia?: string | null;
   horaInfracao?: string | null;
   localInfracao?: string | null;
+  // Se true, ao confirmar o pagamento não gera a despesa (custo pago ao órgão de trânsito)
+  // no financeiro — para casos em que esse pagamento é controlado fora do Wayvo.
+  naoGerarSaida?: boolean;
+  // Se true, o locatário pagou a multa diretamente ao órgão de trânsito — a locadora nunca
+  // desembolsa nem cobra nada, então nem receita nem despesa são geradas no financeiro.
+  pagamentoDireto?: boolean;
 }
 
 export interface MaintenanceItem {
