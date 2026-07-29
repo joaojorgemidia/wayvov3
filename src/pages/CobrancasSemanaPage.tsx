@@ -2327,7 +2327,11 @@ export default function CobrancasSemanaPage() {
       <Dialog open={!!debtDetailClientId} onOpenChange={(o) => !o && setDebtDetailClientId(null)}>
         <DialogContent className="sm:max-w-lg max-h-[90vh] flex flex-col p-0 gap-0 overflow-hidden rounded-2xl">
           {(() => {
-            const isOv = (e: FinancialEntry) => { const d = parseISO(e.dataPrevista || e.data); return !!(d && diffDays(today, d) > 0); };
+            const isOv = (e: FinancialEntry) => {
+              if (isSnoozed(e.id)) return false;
+              const d = parseISO(e.dataPrevista || e.data);
+              return !!(d && diffDays(today, d) > 0);
+            };
             const atrasadas = debtDetailEntries.filter(e => !e.pago && isOv(e));
             const futuras   = debtDetailEntries.filter(e => !e.pago && !isOv(e));
             const pagas     = debtDetailEntries.filter(e => e.pago);
@@ -2530,6 +2534,7 @@ export default function CobrancasSemanaPage() {
               const due = parseISO(e.dataPrevista || e.data);
               const periodo = buildPeriodo(e);
               const hasBoletoSimple = !e.pago && !!e.asaasPaymentId;
+              const snoozedUntil = !e.pago ? snoozeMap[e.id] : undefined;
               const dateStr = e.pago
                 ? new Date(e.data + "T00:00:00").toLocaleDateString("pt-BR")
                 : due ? due.toLocaleDateString("pt-BR") : "—";

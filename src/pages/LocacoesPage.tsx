@@ -83,8 +83,23 @@ function totalPagamentosEsperados(rental: Rental): number | null {
 function computeContratoAlerta(
   rental: Rental,
   pagas: number,
-): { tipo: "periodo_encerrado" | "ultima_parcela" | "plano_concluido"; texto: string; diasExpirado?: number } | null {
+  proximaPendenteAluguel?: string | null,
+): { tipo: "cobranca_futura_ausente" | "periodo_encerrado" | "ultima_parcela" | "plano_concluido"; texto: string; diasExpirado?: number } | null {
   const today = new Date().toISOString().slice(0, 10);
+
+  // Cobrança futura sumida: locação ativa com cobrança automática ligada, mas sem
+  // nenhuma parcela pendente vencendo dentro de um horizonte razoável (2x o período de
+  // cobrança). É o sintoma de cobranças excluídas e nunca regeneradas (ex.: um encerramento
+  // que mexeu só no financeiro sem realmente fechar o contrato) — checa antes de qualquer
+  // outro alerta porque, sem isso, o cliente simplesmente para de ser cobrado sem aviso.
+  if (rental.gerarCobrancaPagamento && (rental.valorDiario || 0) > 0) {
+    const periodDays = rental.frequenciaPagamento === "quinzenal" ? 15 : rental.frequenciaPagamento === "mensal" ? 30 : 7;
+    const limite = addDays(new Date(today + "T00:00:00"), periodDays * 2);
+    const semCobranca = !proximaPendenteAluguel || parseISO(proximaPendenteAluguel) > limite;
+    if (semCobranca) {
+      return { tipo: "cobranca_futura_ausente", texto: "Sem cobrança futura gerada" };
+    }
+  }
 
   if (rental.plano === "aluguel" || !rental.plano || (rental.plano !== "moto_no_final" && rental.plano !== "aluguel")) {
     // Só Aluguel (e qualquer plano não reconhecido): avisa quando período contratado terminou
@@ -924,6 +939,19 @@ export default function LocacoesPage() {
       }
       return m;
     })();
+    // Data da próxima cobrança de aluguel pendente por locação — usado por
+    // computeContratoAlerta para detectar cobranças futuras que sumiram.
+    const proximaAluguelPorRental = (() => {
+      const m = new Map<string, string>();
+      for (const e of cache.financial) {
+        if (e.categoria !== "aluguel" || e.pago || !e.rentalId) continue;
+        const due = e.dataPrevista || e.data;
+        if (!due) continue;
+        const cur = m.get(e.rentalId);
+        if (!cur || due < cur) m.set(e.rentalId, due);
+      }
+      return m;
+    })();
     // Total pendente por locação — usado no selo de contratos encerrados com cobranças
     // ocultadas da fila de Pagamentos (ver CobrancasSemanaPage.tsx).
     const pendenteTotalPorRental = (() => {
@@ -978,11 +1006,12 @@ export default function LocacoesPage() {
                     <div>{planoLabel[r.plano] || r.plano || "—"}</div>
                     {r.status === "ativa" && (() => {
                       const s = semanasPorRental.get(r.id) || { pagas: 0, pendentes: 0 };
-                      const alerta = computeContratoAlerta(r, s.pagas);
+                      const alerta = computeContratoAlerta(r, s.pagas, proximaAluguelPorRental.get(r.id));
                       if (!alerta) return null;
+                      const isCritico = alerta.tipo === "cobranca_futura_ausente";
                       const isRed = alerta.tipo === "plano_concluido" || alerta.tipo === "ultima_parcela";
                       return (
-                        <div className={`flex items-center gap-1 text-[10px] font-medium ${isRed ? "text-amber-600" : "text-orange-600"}`}>
+                        <div className={`flex items-center gap-1 text-[10px] font-medium ${isCritico ? "text-destructive" : isRed ? "text-amber-600" : "text-orange-600"}`}>
                           {alerta.tipo === "ultima_parcela" || alerta.tipo === "plano_concluido"
                             ? <Flag className="h-3 w-3 shrink-0" />
                             : <AlertTriangle className="h-3 w-3 shrink-0" />}
@@ -1560,11 +1589,17 @@ export default function LocacoesPage() {
                   {viewRental.status === "ativa" && (() => {
                     const financial = cache.financial;
                     const pagasView = financial.filter(e => e.categoria === "aluguel" && e.rentalId === viewRental.id && e.pago).length;
-                    const alerta = computeContratoAlerta(viewRental, pagasView);
+                    const proximaView = financial
+                      .filter(e => e.categoria === "aluguel" && e.rentalId === viewRental.id && !e.pago)
+                      .map(e => e.dataPrevista || e.data)
+                      .filter((d): d is string => !!d)
+                      .sort()[0];
+                    const alerta = computeContratoAlerta(viewRental, pagasView, proximaView);
                     if (!alerta) return null;
+                    const isCritico = alerta.tipo === "cobranca_futura_ausente";
                     const isFlag = alerta.tipo === "ultima_parcela" || alerta.tipo === "plano_concluido";
                     return (
-                      <span className={`ml-2 inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded ${isFlag ? "bg-amber-100 text-amber-700" : "bg-orange-100 text-orange-700"}`}>
+                      <span className={`ml-2 inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded ${isCritico ? "bg-red-100 text-destructive" : isFlag ? "bg-amber-100 text-amber-700" : "bg-orange-100 text-orange-700"}`}>
                         {isFlag ? <Flag className="h-3 w-3" /> : <AlertTriangle className="h-3 w-3" />}
                         {alerta.texto}
                         {alerta.diasExpirado != null && alerta.diasExpirado > 0 && ` · ${alerta.diasExpirado}d`}

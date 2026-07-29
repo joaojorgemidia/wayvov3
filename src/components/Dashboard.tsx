@@ -211,6 +211,25 @@ export const Dashboard = memo(function Dashboard() {
       return d >= hoje && d <= em7d;
     }).length;
 
+    // Data da próxima cobrança de aluguel pendente por locação — usada abaixo para
+    // detectar contratos ativos cujas cobranças futuras sumiram (excluídas e nunca
+    // regeneradas), em vez de esperar o cliente reclamar que parou de ser cobrado.
+    const proximaAluguelPorRental = new Map<string, string>();
+    for (const e of financial) {
+      if (e.categoria !== "aluguel" || e.pago || !e.rentalId) continue;
+      const due = e.dataPrevista || e.data;
+      if (!due) continue;
+      const cur = proximaAluguelPorRental.get(e.rentalId);
+      if (!cur || due < cur) proximaAluguelPorRental.set(e.rentalId, due);
+    }
+    const semCobranca = contratosAtivos.filter(r => {
+      if (!r.gerarCobrancaPagamento || !((r.valorDiario || 0) > 0)) return false;
+      const periodDays = r.frequenciaPagamento === "quinzenal" ? 15 : r.frequenciaPagamento === "mensal" ? 30 : 7;
+      const limite = new Date(hoje); limite.setDate(hoje.getDate() + periodDays * 2);
+      const proxima = proximaAluguelPorRental.get(r.id);
+      return !proxima || new Date(proxima + "T00:00:00") > limite;
+    }).length;
+
     return {
       inad: {
         total: inadTotal, clientes: clientesInad,
@@ -222,7 +241,7 @@ export const Dashboard = memo(function Dashboard() {
       oil: { vencidas: oilVencidas, atencao: oilAtencao, total: motosOp.length },
       man: { pendentes: manPend.length, paradas: manParadas.length },
       ociosas: { ociosas7, ociosas15, total: motosDisp.length },
-      contratos: { ativos: contratosAtivos.length, vencidos, renovar },
+      contratos: { ativos: contratosAtivos.length, vencidos, renovar, semCobranca },
     };
   }, [financial, fines, maintenance, motos, rentals]);
 
@@ -234,7 +253,9 @@ export const Dashboard = memo(function Dashboard() {
   const oilGravity: "danger" | "warn" | "ok" = operacional.oil.vencidas > 0 ? "danger" : operacional.oil.atencao > 0 ? "warn" : "ok";
   const manGravity: "danger" | "warn" | "ok" = operacional.man.paradas > 0 ? "danger" : operacional.man.pendentes > 0 ? "warn" : "ok";
   const ociosaGravity: "danger" | "warn" | "ok" = operacional.ociosas.ociosas15 > 0 ? "danger" : operacional.ociosas.ociosas7 > 0 ? "warn" : "ok";
-  const contratoGravity: "danger" | "warn" | "ok" = operacional.contratos.vencidos > 0 ? "danger" : operacional.contratos.renovar > 0 ? "warn" : "ok";
+  const contratoGravity: "danger" | "warn" | "ok" =
+    (operacional.contratos.vencidos > 0 || operacional.contratos.semCobranca > 0) ? "danger"
+    : operacional.contratos.renovar > 0 ? "warn" : "ok";
 
   const isPositive = stats.lucro >= 0;
   const deltaPositive = growth.lucroDelta >= 0;
@@ -729,6 +750,7 @@ export const Dashboard = memo(function Dashboard() {
             title="Contratos"
             detail={`${operacional.contratos.ativos} ativo${operacional.contratos.ativos !== 1 ? "s" : ""} · ${operacional.contratos.renovar} vencem em 7 dias`}
             tags={[
+              operacional.contratos.semCobranca > 0 ? { label: `${operacional.contratos.semCobranca} sem cobrança futura`, color: "text-destructive bg-red-50" } : null,
               operacional.contratos.vencidos > 0 ? { label: `${operacional.contratos.vencidos} vencido${operacional.contratos.vencidos !== 1 ? "s" : ""}`, color: "text-destructive bg-red-50" } : null,
               operacional.contratos.renovar > 0 ? { label: `${operacional.contratos.renovar} renovar`, color: "text-yellow-700 bg-yellow-50" } : null,
             ].filter(Boolean) as Tag[]}
