@@ -807,8 +807,11 @@ export default function CobrancasSemanaPage() {
           body: { asaasPaymentId: item.entry.asaasPaymentId, paymentDate: payDate, value: valor, companyId: activeCompany.id },
         }).then(async ({ data, error }) => {
           if (error || data?.error) { console.error("[asaas-receive-in-cash]", data?.error || error); return; }
-          const updated = loadFinancial().map(e => e.id === item.entry.id ? { ...e, asaasStatus: data.status || "RECEIVED_IN_CASH" } : e);
-          await saveFinancial(updated);
+          // Update direto na coluna, nunca via saveFinancial(array inteiro): isso roda
+          // segundos depois da confirmação (só depois da chamada ao Asaas responder), e um
+          // loadFinancial() nesse instante pode pegar um snapshot desatualizado — reverteria
+          // o pago:true que acabou de ser confirmado ao resalvar a linha inteira por cima.
+          await supabase.from("financial_entries").update({ asaas_status: data.status || "RECEIVED_IN_CASH" }).eq("id", item.entry.id);
         }).catch(() => {});
       }
 

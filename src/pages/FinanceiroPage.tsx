@@ -2943,9 +2943,12 @@ export default function FinanceiroPage() {
         body: { asaasPaymentId: confirmToggleEntry.asaasPaymentId, paymentDate: payDate, value: finalValor, companyId: currentCompanyId },
       }).then(async ({ data, error }) => {
         if (error || data?.error) { console.error("[asaas-receive-in-cash]", data?.error || error); return; }
-        const updated = loadFinancial().map(e => e.id === entryId ? { ...e, asaasStatus: data.status || "RECEIVED_IN_CASH" } : e);
-        setEntries(updated);
-        await saveFinancial(updated);
+        // Update direto na coluna, nunca via saveFinancial(array inteiro): isso roda
+        // segundos depois da confirmação (só depois da chamada ao Asaas responder), e um
+        // loadFinancial()/entries nesse instante pode estar desatualizado — resalvar a linha
+        // inteira por cima reverteria o pago:true que acabou de ser confirmado.
+        await supabase.from("financial_entries").update({ asaas_status: data.status || "RECEIVED_IN_CASH" }).eq("id", entryId);
+        setEntries(prev => prev.map(e => e.id === entryId ? { ...e, asaasStatus: data.status || "RECEIVED_IN_CASH" } : e));
       }).catch(() => {});
     } else if (confirmToggleEntry.pago && confirmToggleEntry.asaasPaymentId && currentCompanyId && confirmToggleEntry.asaasStatus === "RECEIVED_IN_CASH") {
       // Desfazendo uma confirmação que tinha marcado o boleto como recebido em dinheiro
@@ -2956,9 +2959,10 @@ export default function FinanceiroPage() {
         body: { asaasPaymentId: confirmToggleEntry.asaasPaymentId, companyId: currentCompanyId, action: "undo" },
       }).then(async ({ data, error }) => {
         if (error || data?.error) { console.error("[asaas-receive-in-cash undo]", data?.error || error); return; }
-        const updated = loadFinancial().map(e => e.id === entryId ? { ...e, asaasStatus: data.status || null } : e);
-        setEntries(updated);
-        await saveFinancial(updated);
+        // Update direto na coluna — mesmo motivo do bloco de confirmação acima: evita
+        // resalvar a linha inteira a partir de um snapshot que pode estar desatualizado.
+        await supabase.from("financial_entries").update({ asaas_status: data.status || null }).eq("id", entryId);
+        setEntries(prev => prev.map(e => e.id === entryId ? { ...e, asaasStatus: data.status || null } : e));
       }).catch(() => {});
     }
 
