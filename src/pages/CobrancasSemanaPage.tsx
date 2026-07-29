@@ -35,6 +35,7 @@ import { useCompany } from "@/contexts/CompanyContext";
 import { DEFAULT_COBRANCA_CONFIG } from "@/lib/companies";
 import { buildWhatsAppUrl } from "@/lib/whatsapp";
 import { localToday } from "@/lib/utils";
+import { cancelAsaasEntries } from "@/lib/asaas";
 
 const SNOOZE_LS_KEY = "wayvo-cobranca-snooze";
 function readSnoozeMap(): Record<string, string> {
@@ -1084,8 +1085,13 @@ export default function CobrancasSemanaPage() {
     try {
       const all = loadFinancial();
       const remaining = all.filter(e => e.id !== parcelandoEntry.id);
+      // Cancela o boleto da cobrança original no Asaas antes de descartá-la — senão ele
+      // continua aberto e pagável por lá, e um pagamento nesse boleto "órfão" nunca aparece
+      // no sistema (a cobrança já não existe mais pra ninguém reconciliar contra ela).
+      const falhas = await cancelAsaasEntries([parcelandoEntry], activeCompany?.id);
       await saveFinancial([...remaining, ...newEntries]);
       toast.success(`Parcelamento criado: ${nParcelas} parcela${nParcelas !== 1 ? "s" : ""}${entrada > 0 ? " + entrada" : ""}`);
+      if (falhas > 0) toast.warning("O boleto original não pôde ser cancelado no Asaas — cancele manualmente lá.");
       setParcelandoEntry(null);
     } finally {
       setParcelSalvando(false);
@@ -1155,8 +1161,13 @@ export default function CobrancasSemanaPage() {
       const all = loadFinancial();
       const idsSel = new Set(selecionadas.map(e => e.id));
       const remaining = all.filter(e => !idsSel.has(e.id));
+      // Cancela os boletos das cobranças agrupadas no Asaas antes de descartá-las — senão
+      // continuam abertas e pagáveis por lá, e um pagamento em uma delas nunca aparece no
+      // sistema (a cobrança já não existe mais pra ninguém reconciliar contra ela).
+      const falhas = await cancelAsaasEntries(selecionadas, activeCompany?.id);
       await saveFinancial([...remaining, ...newEntries]);
       toast.success(`Acordo criado: ${nParcelas} parcela${nParcelas !== 1 ? "s" : ""}${entrada > 0 ? " + entrada" : ""}`);
+      if (falhas > 0) toast.warning(`${falhas} boleto(s) original(is) não puderam ser cancelados no Asaas — cancele manualmente lá.`);
       setParcelandoGrupo(null);
     } finally {
       setParcelGrupoSalvando(false);
