@@ -2774,16 +2774,16 @@ export default function FinanceiroPage() {
     }
 
     // ── Cria entrada pendente de juros/multa quando houver saldo devedor ────
-    // Remove stale juros_atraso desta locação/período (tentativas anteriores que falharam).
-    // Filtra tanto por dataPrevista === payDate (caso mais comum) quanto por fixedOriginId
-    // apontando para este aluguel — necessário quando o usuário retenta com data diferente.
+    // Remove stale juros_atraso desta locação (tentativas anteriores que falharam ao
+    // confirmar esta mesma cobrança). Filtra só por fixedOriginId apontando para este
+    // aluguel — nunca por dataPrevista === payDate, porque o payDate de uma confirmação
+    // pode coincidir, por acaso, com a dataPrevista de um juros legítimo de OUTRA semana
+    // da mesma locação, apagando uma dívida real que nunca foi paga (caso do Khaynan:
+    // juros da semana 37 apagado ao confirmar a semana 38 porque ambos caíram em 28/07).
     const aluguelOrigemId = confirmToggleEntry.id;
-    // Limpeza de juros obsoletos só faz sentido ao confirmar um aluguel —
-    // nunca ao confirmar um juros_atraso direto, pois o payDate coincidiria
-    // com o dataPrevista de outros juros legítimos do mesmo cliente.
     const isStaleFee = (e: FinancialEntry) =>
       e.categoria === "juros_atraso" && e.rentalId === confirmToggleEntry.rentalId && !e.pago &&
-      (e.dataPrevista === payDate || e.fixedOriginId === aluguelOrigemId);
+      e.fixedOriginId === aluguelOrigemId;
     if (isRentalPayment) entriesToCancelInAsaas.push(...entriesAfterUndo.filter(isStaleFee));
     const entriesWithoutStaleFee = isRentalPayment ? entriesAfterUndo.filter(e => !isStaleFee(e)) : entriesAfterUndo;
     // Deduplicar por id para evitar conflito de upsert
