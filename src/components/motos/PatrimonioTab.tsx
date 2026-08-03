@@ -29,7 +29,7 @@ interface PatrimonioTabProps {
 }
 
 export function PatrimonioTab({ motos, onEdit }: PatrimonioTabProps) {
-  const patrimonyMotos = useMemo(() => motos.filter(m => m.tipo === "propria" && m.valorCompra != null), [motos]);
+  const patrimonyMotos = useMemo(() => motos.filter(m => m.tipo === "propria" && m.valorCompra != null && m.status !== "vendida"), [motos]);
   const totalCompra = patrimonyMotos.reduce((s, m) => s + (m.valorCompra || 0), 0);
   const totalFipe = patrimonyMotos.reduce((s, m) => s + (m.valorFipe || 0), 0);
   const valorizacao = totalFipe - totalCompra;
