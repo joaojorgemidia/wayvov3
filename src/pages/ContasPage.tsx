@@ -29,7 +29,9 @@ const bankOptions = [
 const bandeiraOptions = ["Visa", "Mastercard", "Elo", "American Express", "Hipercard", "Diners", "Outro"];
 
 export default function ContasPage() {
-  const { data: accounts, save: saveBankAccount, remove: removeBankAccount, restore: restoreBankAccount, archivedAccounts } = useBankAccounts();
+  const { data: accounts, save: saveBankAccount, remove: removeBankAccount, restore: restoreBankAccount, permanentlyDelete: permanentlyDeleteBankAccount, archivedAccounts } = useBankAccounts();
+  const [archivedOpen, setArchivedOpen] = useState(false);
+  const [confirmDeleteAccount, setConfirmDeleteAccount] = useState<BankAccount | null>(null);
   const { save: saveFinancialEntry, remove: removeFinancialEntry } = useFinancialEntries();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editAccount, setEditAccount] = useState<BankAccount | null>(null);
@@ -302,6 +304,18 @@ export default function ContasPage() {
   const handleRestore = async (id: string) => {
     await restoreBankAccount(id);
     toast.success("Conta restaurada");
+  };
+
+  const handlePermanentDelete = async () => {
+    if (!confirmDeleteAccount) return;
+    try {
+      await permanentlyDeleteBankAccount(confirmDeleteAccount.id);
+      toast.success("Conta excluída permanentemente");
+      setConfirmDeleteAccount(null);
+    } catch (err) {
+      console.error("[ContasPage] permanentlyDelete error:", err);
+      toast.error("Erro ao excluir a conta");
+    }
   };
 
   const handleAdjust = async () => {
@@ -592,41 +606,78 @@ export default function ContasPage() {
         </div>
       </section>
 
-      {/* Contas arquivadas */}
+      {/* Contas arquivadas — ficam escondidas atrás de um botão pra não poluir a tela */}
       {archivedAccounts.length > 0 && (
         <section className="space-y-3">
-          <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-2">
-            <Archive className="h-4 w-4" /> Arquivadas ({archivedAccounts.length})
-          </h2>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {archivedAccounts.map((account) => (
-              <Card key={account.id} className="relative border-dashed opacity-70">
-                <CardContent className="p-4">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <BankIcon conta={account.banco} size={28} />
-                      <div>
-                        <p className="text-sm font-medium text-foreground">{account.nome}</p>
-                        <p className="text-xs text-muted-foreground">{account.tipo === "cartao" ? "Cartão" : "Conta bancária"} · {account.banco}</p>
+          <Button
+            variant="outline"
+            size="sm"
+            className="gap-1.5 text-xs"
+            onClick={() => setArchivedOpen((v) => !v)}
+          >
+            <Archive className="h-3.5 w-3.5" />
+            {archivedOpen ? "Ocultar arquivadas" : `Ver arquivadas (${archivedAccounts.length})`}
+          </Button>
+          {archivedOpen && (
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {archivedAccounts.map((account) => (
+                <Card key={account.id} className="relative border-dashed opacity-70">
+                  <CardContent className="p-4">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <BankIcon conta={account.banco} size={28} />
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium text-foreground truncate">{account.nome}</p>
+                          <p className="text-xs text-muted-foreground">{account.tipo === "cartao" ? "Cartão" : "Conta bancária"} · {account.banco}</p>
+                        </div>
                       </div>
+                      {canDelete && (
+                        <div className="flex items-center gap-1 shrink-0">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="gap-1.5 text-xs text-primary hover:text-primary"
+                            onClick={() => handleRestore(account.id)}
+                          >
+                            <ArchiveRestore className="h-3.5 w-3.5" /> Restaurar
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="text-destructive hover:text-destructive"
+                            title="Excluir permanentemente"
+                            onClick={() => setConfirmDeleteAccount(account)}
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        </div>
+                      )}
                     </div>
-                    {canDelete && (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="gap-1.5 text-xs text-primary hover:text-primary"
-                        onClick={() => handleRestore(account.id)}
-                      >
-                        <ArchiveRestore className="h-3.5 w-3.5" /> Restaurar
-                      </Button>
-                    )}
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          )}
         </section>
       )}
+
+      {/* Confirmação de exclusão permanente */}
+      <Dialog open={!!confirmDeleteAccount} onOpenChange={(open) => !open && setConfirmDeleteAccount(null)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Excluir permanentemente?</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            A conta <strong className="text-foreground">{confirmDeleteAccount?.nome}</strong> será apagada de vez do banco de dados.
+            Essa ação não pode ser desfeita — não vai dar pra restaurar depois. Lançamentos financeiros antigos que usam essa conta
+            continuam existindo, só deixam de ter uma conta associada.
+          </p>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setConfirmDeleteAccount(null)}>Cancelar</Button>
+            <Button variant="destructive" onClick={handlePermanentDelete}>Excluir permanentemente</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Dialog Nova/Editar conta */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>

@@ -644,7 +644,23 @@ export function useBankAccounts() {
     syncCacheFromList(Array.from(map.values()));
   };
 
-  return { ...base, save, remove, restore, bulkSave, archivedAccounts: archivedQuery.data || [] };
+  // DELETE físico — exceção deliberada à regra geral de soft delete do projeto, só
+  // permitida aqui a pedido explícito do usuário e só sobre contas já arquivadas
+  // (a condição .not("deleted_at", "is", null) impede apagar uma conta ainda ativa).
+  // Lançamentos financeiros antigos que referenciam essa conta pelo nome (`conta`)
+  // não são afetados nem religados — ficam apontando pra um nome que não existe mais.
+  const permanentlyDelete = async (id: string) => {
+    const { error } = await db
+      .from("bank_accounts")
+      .delete()
+      .eq("id", id)
+      .eq("company_id", cid)
+      .not("deleted_at", "is", null);
+    if (error) throw error;
+    qc.invalidateQueries({ queryKey: archiveKey });
+  };
+
+  return { ...base, save, remove, restore, bulkSave, permanentlyDelete, archivedAccounts: archivedQuery.data || [] };
 }
 
 // ─── Sicoob: extrato importado (staging) + regras de categorização ──────
