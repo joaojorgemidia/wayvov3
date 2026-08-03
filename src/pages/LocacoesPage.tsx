@@ -8,7 +8,9 @@ import { lastOilChange } from "@/lib/oil-kpis";
 import { useDataCacheSnapshot } from "@/lib/data-cache";
 import { resolveAssociations, AssociationContext } from "@/lib/financial-associations";
 import { computeSemanaPeriodo } from "@/lib/cobranca-week-stats";
-import { addWeeks, addDays, addMonths, isBefore, isEqual, parseISO, differenceInDays } from "date-fns";
+import { addWeeks, addDays, addMonths, isBefore, isEqual, parseISO, differenceInDays, startOfMonth, endOfMonth, subMonths, isWithinInterval, format } from "date-fns";
+import { ptBR } from "date-fns/locale";
+import { BarChart, Bar, XAxis, YAxis, ResponsiveContainer, CartesianGrid, Tooltip as RechartsTooltip } from "recharts";
 import { useCompany } from "@/contexts/CompanyContext";
 import { DEFAULT_COBRANCA_CONFIG } from "@/lib/companies";
 import { Button } from "@/components/ui/button";
@@ -31,6 +33,12 @@ import { usePermissions } from "@/hooks/usePermissions";
 const statusLabel: Record<string, string> = { ativa: "Ativa", finalizada: "Finalizada", cancelada: "Cancelada" };
 const statusColor: Record<string, string> = { ativa: "bg-success/10 text-success", finalizada: "bg-muted text-muted-foreground", cancelada: "bg-destructive/10 text-destructive" };
 const planoLabel: Record<string, string> = { aluguel: "Só Aluguel", moto_no_final: "Moto no Final" };
+
+const PERIODOS_LOCACOES = [
+  { label: "Este mês", getFrom: () => startOfMonth(new Date()), getTo: () => new Date() },
+  { label: "Mês passado", getFrom: () => startOfMonth(subMonths(new Date(), 1)), getTo: () => endOfMonth(subMonths(new Date(), 1)) },
+  { label: "Este ano", getFrom: () => new Date(new Date().getFullYear(), 0, 1), getTo: () => new Date() },
+];
 
 /**
  * Decide o que fazer com uma cobrança pendente de aluguel ao encerrar o contrato:
@@ -416,14 +424,77 @@ export default function LocacoesPage() {
     return `#${String(r.numero).padStart(5, "0")}`;
   };
 
+  // Período selecionado para as estatísticas do topo, o gráfico de evolução e o
+  // indicativo de dias com mais locação — também filtra as abas Ativas/Finalizadas.
+  // `null` = "Todos" (sem filtro de data).
+  const [statsRange, setStatsRange] = useState<{ from: Date; to: Date } | null>(null);
+  const statsInRange = (dateStr: string | null | undefined) => {
+    if (!statsRange) return true;
+    if (!dateStr) return false;
+    try { return isWithinInterval(parseISO(dateStr), { start: statsRange.from, end: statsRange.to }); }
+    catch { return false; }
+  };
+
   const matchSearch = (r: Rental) =>
     !search ||
     getMotoPlaca(r.motoId).toLowerCase().includes(search.toLowerCase()) ||
     getRentalClientLabel(r).toLowerCase().includes(search.toLowerCase()) ||
     getNumero(r).toLowerCase().includes(search.toLowerCase());
 
-  const ativas = useMemo(() => rentals.filter(r => r.status === "ativa" && matchSearch(r)), [rentals, search, motos, clients]);
-  const finalizadas = useMemo(() => rentals.filter(r => (r.status === "finalizada" || r.status === "cancelada") && matchSearch(r)), [rentals, search, motos, clients]);
+  // Ativas: filtra pela data de início (locação que começou dentro do período).
+  // Finalizadas/canceladas: pela data de fim (cai para a data de início se não tiver
+  // dataFim registrada, pra não sumir da lista quando um período for selecionado).
+  const ativas = useMemo(
+    () => rentals.filter(r => r.status === "ativa" && matchSearch(r) && statsInRange(r.dataInicio)),
+    [rentals, search, motos, clients, statsRange],
+  );
+  const finalizadas = useMemo(
+    () => rentals.filter(r =>
+      (r.status === "finalizada" || r.status === "cancelada") && matchSearch(r) && statsInRange(r.dataFim || r.dataInicio),
+    ),
+    [rentals, search, motos, clients, statsRange],
+  );
+
+  const locacoesNoPeriodo = useMemo(
+    () => rentals.filter(r => statsInRange(r.dataInicio)).length,
+    [rentals, statsRange],
+  );
+  const finalizadasNoPeriodo = useMemo(
+    () => rentals.filter(r => r.status === "finalizada" && statsInRange(r.dataFim)).length,
+    [rentals, statsRange],
+  );
+
+  // Gráfico de evolução: locações iniciadas por mês, últimos 6 meses (janela fixa,
+  // independente do período selecionado acima — serve pra ver a tendência de fundo).
+  const evolucaoMensal = useMemo(() => {
+    const meses: { key: string; mes: string; locacoes: number }[] = [];
+    for (let i = 5; i >= 0; i--) {
+      const ref = subMonths(new Date(), i);
+      const key = format(ref, "yyyy-MM");
+      meses.push({ key, mes: format(ref, "MMM/yy", { locale: ptBR }), locacoes: 0 });
+    }
+    const byKey = new Map(meses.map(m => [m.key, m]));
+    for (const r of rentals) {
+      if (!r.dataInicio) continue;
+      const key = r.dataInicio.slice(0, 7);
+      const m = byKey.get(key);
+      if (m) m.locacoes++;
+    }
+    return meses;
+  }, [rentals]);
+
+  // Indicativo de dias com mais locação: conta início de locação por dia da semana,
+  // dentro do período selecionado acima (ou todo o histórico, se "Todos").
+  const DIAS_SEMANA = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
+  const locacoesPorDiaSemana = useMemo(() => {
+    const counts = [0, 0, 0, 0, 0, 0, 0];
+    for (const r of rentals) {
+      if (!r.dataInicio || !statsInRange(r.dataInicio)) continue;
+      counts[parseISO(r.dataInicio).getDay()]++;
+    }
+    const max = Math.max(...counts);
+    return DIAS_SEMANA.map((dia, i) => ({ dia, total: counts[i], isMax: max > 0 && counts[i] === max }));
+  }, [rentals, statsRange]);
 
   const [emailDrafts, setEmailDrafts] = useState<Record<string, string>>({});
   const [emailSaving, setEmailSaving] = useState<Set<string>>(new Set());
@@ -1179,6 +1250,86 @@ export default function LocacoesPage() {
       <div className="relative max-w-md">
         <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
         <Input placeholder="Buscar nº, placa ou cliente..." value={search} onChange={e => setSearch(e.target.value)} className="pl-9" />
+      </div>
+
+      <div className="flex flex-col gap-3 rounded-lg border bg-muted/30 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-center gap-6">
+          <div>
+            <div className="text-2xl font-bold text-foreground leading-none">{locacoesNoPeriodo}</div>
+            <div className="text-xs text-muted-foreground mt-1">Locações no período</div>
+          </div>
+          <div>
+            <div className="text-2xl font-bold text-foreground leading-none">{finalizadasNoPeriodo}</div>
+            <div className="text-xs text-muted-foreground mt-1">Finalizadas no período</div>
+          </div>
+        </div>
+        <div className="flex items-center gap-1 flex-wrap">
+          <button
+            onClick={() => setStatsRange(null)}
+            className={`px-3 py-1.5 text-xs rounded-md transition-colors font-medium ${
+              !statsRange ? "bg-primary/10 text-primary" : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            Todos
+          </button>
+          {PERIODOS_LOCACOES.map(p => {
+            const pFrom = p.getFrom();
+            const isActive = !!statsRange && statsRange.from.toDateString() === pFrom.toDateString();
+            return (
+              <button
+                key={p.label}
+                onClick={() => setStatsRange({ from: pFrom, to: p.getTo() })}
+                className={`px-3 py-1.5 text-xs rounded-md transition-colors font-medium ${
+                  isActive ? "bg-primary/10 text-primary" : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                {p.label}
+              </button>
+            );
+          })}
+          {statsRange && (
+            <span className="text-xs text-muted-foreground px-1">
+              {format(statsRange.from, "dd/MM/yy", { locale: ptBR })} – {format(statsRange.to, "dd/MM/yy", { locale: ptBR })}
+            </span>
+          )}
+        </div>
+      </div>
+
+      <div className="grid gap-3 sm:grid-cols-5">
+        <div className="rounded-lg border p-4 sm:col-span-3">
+          <div className="text-sm font-semibold text-foreground mb-2">Evolução — locações iniciadas (últimos 6 meses)</div>
+          <div className="h-[220px]">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={evolucaoMensal} barGap={4}>
+                <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
+                <XAxis dataKey="mes" className="text-xs capitalize" tick={{ fill: "hsl(var(--muted-foreground))" }} />
+                <YAxis allowDecimals={false} tick={{ fill: "hsl(var(--muted-foreground))" }} />
+                <RechartsTooltip formatter={(value: number) => `${value} locação${value !== 1 ? "ões" : ""}`} />
+                <Bar dataKey="locacoes" name="Locações iniciadas" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+        <div className="rounded-lg border p-4 sm:col-span-2">
+          <div className="text-sm font-semibold text-foreground mb-2">Dias com mais locação {statsRange ? "(no período)" : "(todo o histórico)"}</div>
+          <div className="space-y-1.5">
+            {(() => {
+              const maxTotal = Math.max(1, ...locacoesPorDiaSemana.map(d => d.total));
+              return locacoesPorDiaSemana.map(d => (
+                <div key={d.dia} className="flex items-center gap-2 text-xs">
+                  <span className={`w-8 shrink-0 ${d.isMax ? "font-bold text-primary" : "text-muted-foreground"}`}>{d.dia}</span>
+                  <div className="flex-1 h-4 rounded bg-muted overflow-hidden">
+                    <div
+                      className={`h-full rounded ${d.isMax ? "bg-primary" : "bg-primary/40"}`}
+                      style={{ width: `${(d.total / maxTotal) * 100}%` }}
+                    />
+                  </div>
+                  <span className={`w-6 text-right shrink-0 ${d.isMax ? "font-bold text-primary" : "text-muted-foreground"}`}>{d.total}</span>
+                </div>
+              ));
+            })()}
+          </div>
+        </div>
       </div>
 
       {selectedIds.size > 0 && (
