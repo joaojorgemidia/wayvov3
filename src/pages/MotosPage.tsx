@@ -179,7 +179,10 @@ export default function MotosPage() {
         </TabsContent>
 
         <TabsContent value="vendidos" className="mt-4">
-          <VendidosTab motos={motos} />
+          <VendidosTab
+            motos={motos}
+            onUpdate={(id, updates) => persist(motos.map((m) => (m.id === id ? { ...m, ...updates } : m)))}
+          />
         </TabsContent>
       </Tabs>
 

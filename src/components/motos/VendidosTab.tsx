@@ -1,8 +1,9 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { Motorcycle, FinancialEntry } from "@/lib/types";
 import { loadFinancial } from "@/lib/store";
 import { InfoTooltip } from "@/components/InfoTooltip";
 import { Card } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import { DollarSign, TrendingUp, TrendingDown, Route } from "lucide-react";
 
 function fmt(v: number | null) {
@@ -17,11 +18,36 @@ function fmtKm(v: number | null) {
 
 interface VendidosTabProps {
   motos: Motorcycle[];
+  onUpdate?: (id: string, updates: Partial<Motorcycle>) => void;
 }
 
-export function VendidosTab({ motos }: VendidosTabProps) {
+type EditingCell = { id: string; field: "valorVenda" | "dataVenda" } | null;
+
+export function VendidosTab({ motos, onUpdate }: VendidosTabProps) {
   const soldMotos = useMemo(() => motos.filter(m => m.status === "vendida"), [motos]);
   const financial = useMemo(() => loadFinancial(), []);
+  const [editing, setEditing] = useState<EditingCell>(null);
+  const [editValue, setEditValue] = useState("");
+
+  const startEdit = (id: string, field: "valorVenda" | "dataVenda", current: string) => {
+    if (!onUpdate) return;
+    setEditing({ id, field });
+    setEditValue(current);
+  };
+
+  const commitEdit = () => {
+    if (!editing || !onUpdate) return;
+    const { id, field } = editing;
+    if (field === "valorVenda") {
+      const num = editValue === "" ? null : Number(editValue);
+      onUpdate(id, { valorVenda: num != null && !isNaN(num) ? num : null });
+    } else {
+      onUpdate(id, { dataVenda: editValue || null });
+    }
+    setEditing(null);
+  };
+
+  const cancelEdit = () => setEditing(null);
 
   const enriched = useMemo(() => soldMotos.map(m => {
     const motoEntries = financial.filter(f => f.motoId === m.id);
@@ -121,9 +147,47 @@ export function VendidosTab({ motos }: VendidosTabProps) {
                 <tr key={m.id} className="border-b last:border-0 hover:bg-muted/30 transition-colors">
                   <td className="px-3 py-3 text-muted-foreground">{m.modelo || "—"}</td>
                   <td className="px-3 py-3 font-mono font-bold text-foreground">{m.placa}</td>
-                  <td className="px-3 py-3 text-muted-foreground">{m.dataVenda ? new Date(m.dataVenda + "T12:00:00").toLocaleDateString("pt-BR") : "—"}</td>
+                  <td className="px-3 py-3 text-muted-foreground">
+                    {editing?.id === m.id && editing.field === "dataVenda" ? (
+                      <Input
+                        type="date"
+                        autoFocus
+                        value={editValue}
+                        onChange={(e) => setEditValue(e.target.value)}
+                        onBlur={commitEdit}
+                        onKeyDown={(e) => { if (e.key === "Enter") commitEdit(); if (e.key === "Escape") cancelEdit(); }}
+                        className="h-7 w-36 text-sm"
+                      />
+                    ) : (
+                      <span
+                        className={onUpdate ? "cursor-pointer rounded px-1 -mx-1 hover:bg-muted" : ""}
+                        onClick={() => startEdit(m.id, "dataVenda", m.dataVenda || "")}
+                      >
+                        {m.dataVenda ? new Date(m.dataVenda + "T12:00:00").toLocaleDateString("pt-BR") : "—"}
+                      </span>
+                    )}
+                  </td>
                   <td className="px-3 py-3 text-right font-mono">{fmt(m.valorCompra)}</td>
-                  <td className="px-3 py-3 text-right font-mono">{fmt(m.valorVenda)}</td>
+                  <td className="px-3 py-3 text-right font-mono">
+                    {editing?.id === m.id && editing.field === "valorVenda" ? (
+                      <Input
+                        type="number" step="0.01" min="0"
+                        autoFocus
+                        value={editValue}
+                        onChange={(e) => setEditValue(e.target.value)}
+                        onBlur={commitEdit}
+                        onKeyDown={(e) => { if (e.key === "Enter") commitEdit(); if (e.key === "Escape") cancelEdit(); }}
+                        className="h-7 w-28 text-right ml-auto"
+                      />
+                    ) : (
+                      <span
+                        className={onUpdate ? "cursor-pointer rounded px-1 -mx-1 hover:bg-muted" : ""}
+                        onClick={() => startEdit(m.id, "valorVenda", m.valorVenda != null ? String(m.valorVenda) : "")}
+                      >
+                        {fmt(m.valorVenda)}
+                      </span>
+                    )}
+                  </td>
                   <td className="px-3 py-3 text-right font-mono text-success">{fmt(m.faturamento)}</td>
                   <td className="px-3 py-3 text-right font-mono text-destructive">{fmt(m.despesas)}</td>
                   <td className={`px-3 py-3 text-right font-mono font-semibold ${m.lucroLiquido >= 0 ? "text-success" : "text-destructive"}`}>
