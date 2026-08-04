@@ -20,6 +20,7 @@ import {
 import { CollectionRuleEditor } from "@/components/CollectionRuleEditor";
 import { CollectionActionDialog } from "@/components/CollectionActionDialog";
 import { getDataCache, isDataCacheInitialized } from "@/lib/data-cache";
+import { CobrancaConsolidadaBadge } from "@/components/financeiro/CobrancaConsolidadaBadge";
 import { useCompany } from "@/contexts/CompanyContext";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription,
@@ -253,7 +254,13 @@ function PendingRow({
                     )}
                   </div>
                   {item.descricao && (
-                    <div className="text-xs text-muted-foreground truncate">{item.descricao}</div>
+                    <div className="flex items-center gap-1.5">
+                      <div className="text-xs text-muted-foreground truncate">{item.descricao}</div>
+                      {(() => {
+                        const relatedEntry = getDataCache().financial.find(f => f.id === item.entityId);
+                        return relatedEntry ? <CobrancaConsolidadaBadge entry={relatedEntry} /> : null;
+                      })()}
+                    </div>
                   )}
                 </div>
 

@@ -29,6 +29,7 @@ import { saveFinancial, loadFinancial, loadRentals, saveRentals } from "@/lib/st
 import { supabase } from "@/integrations/supabase/client";
 import { FinancialEntry } from "@/lib/types";
 import { MessagePopup } from "@/components/MessagePopup";
+import { CobrancaConsolidadaBadge } from "@/components/financeiro/CobrancaConsolidadaBadge";
 import { applyTokens, buildAllTokens } from "@/lib/message-tokens";
 import { buildCobrancaEvent, computeSemanaPeriodo, computeSemanaNumero } from "@/lib/cobranca-week-stats";
 import { useCompany } from "@/contexts/CompanyContext";
@@ -2490,6 +2491,7 @@ export default function CobrancasSemanaPage() {
                           parcelado
                         </span>
                       )}
+                      <CobrancaConsolidadaBadge entry={e} />
                     </div>
                     <div className="flex items-center gap-2">
                       <span className="inline-flex items-center rounded-full text-[10px] font-semibold px-2 py-0.5 bg-red-100 dark:bg-red-900/40 text-red-600 dark:text-red-400">

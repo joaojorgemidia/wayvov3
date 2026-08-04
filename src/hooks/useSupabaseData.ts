@@ -443,6 +443,7 @@ function dbToFinancial(r: any): FinancialEntry {
     asaasBoletoUrl: r.asaas_boleto_url || null,
     asaasInvoiceUrl: r.asaas_invoice_url || null,
     sicoobTransactionId: r.sicoob_transaction_id || null,
+    consolidatedItems: r.consolidated_items || null,
   };
 }
 
@@ -478,6 +479,7 @@ function financialToDb(e: FinancialEntry): any {
     asaas_boleto_url: e.asaasBoletoUrl || null,
     asaas_invoice_url: e.asaasInvoiceUrl || null,
     sicoob_transaction_id: e.sicoobTransactionId || null,
+    consolidated_items: e.consolidatedItems || null,
   };
 }
 

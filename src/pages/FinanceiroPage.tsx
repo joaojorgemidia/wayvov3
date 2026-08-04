@@ -42,6 +42,7 @@ import { useDataCacheSnapshot } from "@/lib/data-cache";
 import { getCompanyFeatureFlags, DEFAULT_COBRANCA_CONFIG } from "@/lib/companies";
 import { useCompany } from "@/contexts/CompanyContext";
 import { ImportExportBar } from "@/components/ImportExportBar";
+import { CobrancaConsolidadaBadge } from "@/components/financeiro/CobrancaConsolidadaBadge";
 import { useBankAccounts, useSicoobTransactions, useCategorizationRules } from "@/hooks/useSupabaseData";
 import { suggestPatternFromDescription } from "@/lib/sicoob-matching";
 import { BulkActionBar, SelectAllCheckbox, toggleSelected } from "@/components/ui/bulk-action-bar";
@@ -4326,6 +4327,7 @@ export default function FinanceiroPage() {
                               {e.tags?.includes("OS") && (e.categoria === "manutencao_despesa" || e.categoria === "manutencao_receita") && (
                                 <span className="inline-flex items-center rounded-full border border-violet-400/30 bg-violet-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-violet-600">OS</span>
                               )}
+                              <CobrancaConsolidadaBadge entry={e} />
                             </div>
                             {fmtClientName && (
                               <span className="text-xs text-muted-foreground mt-0.5 block">{fmtClientName}</span>

@@ -236,6 +236,7 @@ export function dbToFinancial(r: any): FinancialEntry {
     asaasInvoiceUrl: r.asaas_invoice_url || null,
     sicoobTransactionId: r.sicoob_transaction_id || null,
     fineId: r.fine_id || null,
+    consolidatedItems: r.consolidated_items || null,
   };
 }
 
@@ -262,6 +263,7 @@ export function financialToDb(e: FinancialEntry): any {
     asaas_invoice_url: e.asaasInvoiceUrl || null,
     sicoob_transaction_id: e.sicoobTransactionId || null,
     fine_id: e.fineId || null,
+    consolidated_items: e.consolidatedItems || null,
   };
 }
 

@@ -237,6 +237,18 @@ export interface FinancialEntry {
   asaasInvoiceUrl?: string | null;
   sicoobTransactionId?: string | null; // vincula o lançamento à transação importada do extrato Sicoob
   fineId?: string | null; // vincula o lançamento à multa de origem (Multas)
+  consolidatedItems?: ConsolidatedItem[] | null; // snapshot das cobranças originais reunidas (encerramento de locação)
+}
+
+// Snapshot de uma cobrança original reunida numa cobrança consolidada (ver
+// FinancialEntry.consolidatedItems). As cobranças originais são soft-deletadas e
+// somem do app — esse snapshot é o único jeito de exibir a composição depois.
+export interface ConsolidatedItem {
+  originalEntryId: string;
+  descricao: string;
+  categoria: string;
+  valor: number;
+  dataPrevista: string; // ISO
 }
 
 export interface BudgetEntry {

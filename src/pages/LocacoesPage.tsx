@@ -77,6 +77,33 @@ function classifyPendenciaEncerramento(
   return dueStr <= encerrarDataISO ? { action: "preserve" } : { action: "remove" };
 }
 
+// Aplica classifyPendenciaEncerramento sobre um array de FinancialEntry (todas as entradas
+// da empresa, ou só as pendências de um contrato — entradas que não pertencem ao contrato
+// passam direto, então serve tanto pro preview no dialog quanto pra persistência real em
+// confirmEncerrar, sem duplicar a regra em dois lugares).
+function computeEncerramentoPlan(
+  rental: Rental,
+  entries: FinancialEntry[],
+  selectedIds: Set<string>,
+  encerrarDataISO: string,
+): { remaining: FinancialEntry[]; toRemove: FinancialEntry[]; ajusteCount: number } {
+  let ajusteCount = 0;
+  const forcedPreserveIds = new Set<string>();
+  const entriesBase = entries.map(e => {
+    if (e.rentalId !== rental.id || e.tipo !== "receita" || e.pago || e.ignorada) return e;
+    const cls = classifyPendenciaEncerramento(rental, e, encerrarDataISO);
+    if (cls.action === "preserve" && cls.novoValor != null) {
+      forcedPreserveIds.add(e.id);
+      ajusteCount++;
+      return { ...e, valor: cls.novoValor, observacao: [e.observacao, cls.nota].filter(Boolean).join(" — ") };
+    }
+    return e;
+  });
+  const toRemove = entriesBase.filter(e => selectedIds.has(e.id) && !forcedPreserveIds.has(e.id));
+  const remaining = entriesBase.filter(e => !selectedIds.has(e.id) || forcedPreserveIds.has(e.id));
+  return { remaining, toRemove, ajusteCount };
+}
+
 // Calcula total de pagamentos esperados para o plano "Moto no Final"
 function totalPagamentosEsperados(rental: Rental): number | null {
   if (!rental.tempoMinimoContrato || !rental.frequenciaPagamento) return null;
@@ -91,19 +118,26 @@ function totalPagamentosEsperados(rental: Rental): number | null {
 function computeContratoAlerta(
   rental: Rental,
   pagas: number,
-  proximaPendenteAluguel?: string | null,
+  ultimaAluguelGerada?: string | null,
 ): { tipo: "cobranca_futura_ausente" | "periodo_encerrado" | "ultima_parcela" | "plano_concluido"; texto: string; diasExpirado?: number } | null {
   const today = new Date().toISOString().slice(0, 10);
 
-  // Cobrança futura sumida: locação ativa com cobrança automática ligada, mas sem
-  // nenhuma parcela pendente vencendo dentro de um horizonte razoável (2x o período de
-  // cobrança). É o sintoma de cobranças excluídas e nunca regeneradas (ex.: um encerramento
+  // Cobrança futura sumida: locação ativa com cobrança automática ligada, mas cuja última
+  // cobrança de aluguel GERADA (paga ou não) está aquém do horizonte esperado (2x o período
+  // de cobrança). É o sintoma de cobranças excluídas e nunca regeneradas (ex.: um encerramento
   // que mexeu só no financeiro sem realmente fechar o contrato) — checa antes de qualquer
   // outro alerta porque, sem isso, o cliente simplesmente para de ser cobrado sem aviso.
+  // Usa a ÚLTIMA gerada (não a próxima pendente): em contratos com cobrança pré-paga, o
+  // locatário costuma pagar várias semanas adiantado, então a próxima cobrança PENDENTE já
+  // cai naturalmente longe no futuro sem que isso signifique nenhum problema de geração —
+  // o que importa é se a série continua sendo estendida, não se está tudo pago.
   if (rental.gerarCobrancaPagamento && (rental.valorDiario || 0) > 0) {
     const periodDays = rental.frequenciaPagamento === "quinzenal" ? 15 : rental.frequenciaPagamento === "mensal" ? 30 : 7;
     const limite = addDays(new Date(today + "T00:00:00"), periodDays * 2);
-    const semCobranca = !proximaPendenteAluguel || parseISO(proximaPendenteAluguel) > limite;
+    // Não alerta se a série já foi gerada até o fim do contrato — não há mais nada a gerar.
+    const fimContrato = rental.dataFimContrato ? parseISO(rental.dataFimContrato) : null;
+    const semCobranca = !ultimaAluguelGerada
+      || (parseISO(ultimaAluguelGerada) < limite && (!fimContrato || parseISO(ultimaAluguelGerada) < fimContrato));
     if (semCobranca) {
       return { tipo: "cobranca_futura_ausente", texto: "Sem cobrança futura gerada" };
     }
@@ -291,6 +325,7 @@ export default function LocacoesPage() {
   const [encerrarObs, setEncerrarObs] = useState("");
   const [encerrarPendencias, setEncerrarPendencias] = useState<FinancialEntry[]>([]);
   const [encerrarSelectedIds, setEncerrarSelectedIds] = useState<Set<string>>(new Set());
+  const [encerrarUnificar, setEncerrarUnificar] = useState(true);
 
   // Troca de moto (mesma locação continua, só o veículo muda)
   const [trocarMotoRental, setTrocarMotoRental] = useState<Rental | null>(null);
@@ -722,6 +757,7 @@ export default function LocacoesPage() {
     // ficam desmarcadas (preservadas) — o usuário ainda pode marcar manualmente se quiser.
     const toSelect = pendentes.filter(e => classifyPendenciaEncerramento(r, e, hoje).action === "remove");
     setEncerrarSelectedIds(new Set(toSelect.map(e => e.id)));
+    setEncerrarUnificar(true);
   };
 
   const ASAAS_TERMINAL = ["RECEIVED", "CANCELLED", "REFUNDED", "REFUND_REQUESTED"];
@@ -784,28 +820,59 @@ export default function LocacoesPage() {
     // abrange a data de encerramento (pré ou pós-pago) para cobrar só os dias
     // usados. A cobrança corrigida nunca é excluída, mesmo se estava marcada —
     // depois de corrigida, ela É a cobrança certa a receber.
-    let ajusteCount = 0;
-    const forcedPreserveIds = new Set<string>();
-    const entriesBase = allEntries.map(e => {
-      if (e.rentalId !== encerrarRental.id || e.tipo !== "receita" || e.pago || e.ignorada) return e;
-      const cls = classifyPendenciaEncerramento(encerrarRental, e, encerrarData);
-      if (cls.action === "preserve" && cls.novoValor != null) {
-        forcedPreserveIds.add(e.id);
-        ajusteCount++;
-        return { ...e, valor: cls.novoValor, observacao: [e.observacao, cls.nota].filter(Boolean).join(" — ") };
-      }
-      return e;
-    });
-
-    // Excluir apenas as pendências selecionadas pelo usuário
-    const toRemove = entriesBase.filter(e => encerrarSelectedIds.has(e.id) && !forcedPreserveIds.has(e.id));
-    const remaining = entriesBase.filter(e => !encerrarSelectedIds.has(e.id) || forcedPreserveIds.has(e.id));
+    const { remaining, toRemove, ajusteCount } = computeEncerramentoPlan(encerrarRental, allEntries, encerrarSelectedIds, encerrarData);
     const removedCount = toRemove.length;
     if (removedCount > 0) {
       await cancelAsaasEntries(toRemove);
     }
-    if (removedCount > 0 || ajusteCount > 0) {
-      saveFinancial(remaining);
+
+    // ── Unificação: se, depois dos passos acima, sobrar mais de uma cobrança em
+    // aberto deste contrato, junta tudo numa única cobrança nova (valor somado,
+    // composição detalhada item a item). Cancela os boletos originais no Asaas e
+    // eles somem das listagens (soft-delete automático de saveFinancial), mas o
+    // histórico continua no banco (deleted_at) e o snapshot fica em
+    // consolidatedItems pra auditoria.
+    const pendentesQueFicam = remaining.filter(e =>
+      e.rentalId === encerrarRental.id && e.tipo === "receita" && !e.pago && !e.ignorada);
+    let finalEntries = remaining;
+    let unificadoCount = 0;
+    if (encerrarUnificar && pendentesQueFicam.length > 1) {
+      const total = Math.round(pendentesQueFicam.reduce((s, e) => s + e.valor, 0) * 100) / 100;
+      const fmtDataBR = (iso: string) => iso ? new Date(iso + "T00:00:00").toLocaleDateString("pt-BR") : "—";
+      const itensTexto = pendentesQueFicam
+        .map(e => `• ${e.descricao || e.categoria} — R$ ${e.valor.toFixed(2)} (venc. ${fmtDataBR(e.dataPrevista || e.data)})`)
+        .join("\n");
+      const consolidada: FinancialEntry = {
+        id: crypto.randomUUID(),
+        tipo: "receita",
+        categoria: "outro_receita",
+        subcategoria: "Consolidação encerramento",
+        descricao: `Cobrança consolidada – Encerramento ${getNumero(encerrarRental)} (${pendentesQueFicam.length} cobranças)`,
+        valor: total,
+        data: encerrarData,
+        dataPrevista: encerrarData,
+        motoId: encerrarRental.motoId,
+        rentalId: encerrarRental.id,
+        clienteId: encerrarRental.clienteId,
+        pago: false,
+        tags: ["consolidacao", "encerramento"],
+        observacao: `Cobrança consolidada ao encerrar o contrato — reúne ${pendentesQueFicam.length} cobrança(s) em aberto, total R$ ${total.toFixed(2)}:\n${itensTexto}`,
+        consolidatedItems: pendentesQueFicam.map(e => ({
+          originalEntryId: e.id,
+          descricao: e.descricao || e.categoria,
+          categoria: e.categoria,
+          valor: e.valor,
+          dataPrevista: e.dataPrevista || e.data,
+        })),
+      };
+      await cancelAsaasEntries(pendentesQueFicam);
+      const idsUnificados = new Set(pendentesQueFicam.map(e => e.id));
+      finalEntries = [...remaining.filter(e => !idsUnificados.has(e.id)), consolidada];
+      unificadoCount = pendentesQueFicam.length;
+    }
+
+    if (removedCount > 0 || ajusteCount > 0 || unificadoCount > 0) {
+      saveFinancial(finalEntries);
     }
 
     toast.success(
@@ -813,11 +880,13 @@ export default function LocacoesPage() {
         "Locação encerrada.",
         removedCount > 0 ? `${removedCount} cobrança(s) pendente(s) removida(s).` : "",
         ajusteCount > 0 ? `${ajusteCount} cobrança(s) recalculada(s) pró-rata.` : "",
+        unificadoCount > 0 ? `${unificadoCount} cobrança(s) unificada(s) em uma só.` : "",
       ].filter(Boolean).join(" "),
     );
     setEncerrarRental(null);
     setEncerrarPendencias([]);
     setEncerrarSelectedIds(new Set());
+    setEncerrarUnificar(true);
   };
 
   const openTrocarMoto = (r: Rental) => {
@@ -1010,16 +1079,18 @@ export default function LocacoesPage() {
       }
       return m;
     })();
-    // Data da próxima cobrança de aluguel pendente por locação — usado por
-    // computeContratoAlerta para detectar cobranças futuras que sumiram.
-    const proximaAluguelPorRental = (() => {
+    // Data da ÚLTIMA cobrança de aluguel gerada (paga ou não) por locação — usado por
+    // computeContratoAlerta para detectar cobranças futuras que sumiram. Precisa ser a
+    // última gerada, não a próxima pendente: em contratos pré-pagos o locatário paga
+    // adiantado, então a próxima pendente sozinha daria falso alarme.
+    const ultimaAluguelPorRental = (() => {
       const m = new Map<string, string>();
       for (const e of cache.financial) {
-        if (e.categoria !== "aluguel" || e.pago || !e.rentalId) continue;
+        if (e.categoria !== "aluguel" || !e.rentalId) continue;
         const due = e.dataPrevista || e.data;
         if (!due) continue;
         const cur = m.get(e.rentalId);
-        if (!cur || due < cur) m.set(e.rentalId, due);
+        if (!cur || due > cur) m.set(e.rentalId, due);
       }
       return m;
     })();
@@ -1077,7 +1148,7 @@ export default function LocacoesPage() {
                     <div>{planoLabel[r.plano] || r.plano || "—"}</div>
                     {r.status === "ativa" && (() => {
                       const s = semanasPorRental.get(r.id) || { pagas: 0, pendentes: 0 };
-                      const alerta = computeContratoAlerta(r, s.pagas, proximaAluguelPorRental.get(r.id));
+                      const alerta = computeContratoAlerta(r, s.pagas, ultimaAluguelPorRental.get(r.id));
                       if (!alerta) return null;
                       const isCritico = alerta.tipo === "cobranca_futura_ausente";
                       const isRed = alerta.tipo === "plano_concluido" || alerta.tipo === "ultima_parcela";
@@ -1464,7 +1535,7 @@ export default function LocacoesPage() {
       </Dialog>
 
       {/* Encerrar Locação Dialog */}
-      <Dialog open={!!encerrarRental} onOpenChange={() => { setEncerrarRental(null); setEncerrarPendencias([]); setEncerrarSelectedIds(new Set()); }}>
+      <Dialog open={!!encerrarRental} onOpenChange={() => { setEncerrarRental(null); setEncerrarPendencias([]); setEncerrarSelectedIds(new Set()); setEncerrarUnificar(true); }}>
         <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="text-destructive flex items-center gap-2">
@@ -1627,10 +1698,39 @@ export default function LocacoesPage() {
                   Nenhuma cobrança pendente para esta locação.
                 </div>
               )}
+
+              {(() => {
+                // Cobranças que vão continuar em aberto depois de aplicar remoções/pró-rata
+                // acima — são exatamente essas que ficariam "soltas" sem a unificação.
+                const pendentesQueFicamPreview = computeEncerramentoPlan(
+                  encerrarRental, encerrarPendencias, encerrarSelectedIds, encerrarData,
+                ).remaining;
+                if (pendentesQueFicamPreview.length <= 1) return null;
+                const totalPreview = pendentesQueFicamPreview.reduce((s, e) => s + e.valor, 0);
+                return (
+                  <div className="rounded-md border border-primary/30 bg-primary/5 p-3">
+                    <div className="flex items-start gap-3">
+                      <Checkbox
+                        id="encerrar-unificar"
+                        checked={encerrarUnificar}
+                        onCheckedChange={(v) => setEncerrarUnificar(!!v)}
+                      />
+                      <label htmlFor="encerrar-unificar" className="text-sm leading-tight cursor-pointer">
+                        <span className="font-medium">
+                          Unificar as {pendentesQueFicamPreview.length} cobranças em aberto (R$ {totalPreview.toFixed(2)}) em uma única cobrança
+                        </span>
+                        <p className="text-xs text-muted-foreground mt-1">
+                          As cobranças originais serão canceladas no Asaas e substituídas por uma cobrança nova com o valor total, detalhando cada item que a compõe.
+                        </p>
+                      </label>
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
           )}
           <DialogFooter className="gap-2 sm:gap-0">
-            <Button variant="outline" onClick={() => { setEncerrarRental(null); setEncerrarPendencias([]); setEncerrarSelectedIds(new Set()); }}>Cancelar</Button>
+            <Button variant="outline" onClick={() => { setEncerrarRental(null); setEncerrarPendencias([]); setEncerrarSelectedIds(new Set()); setEncerrarUnificar(true); }}>Cancelar</Button>
             <Button variant="destructive" onClick={confirmEncerrar} className="gap-2">
               <XCircle className="h-4 w-4" /> Confirmar Encerramento
             </Button>
@@ -1740,12 +1840,13 @@ export default function LocacoesPage() {
                   {viewRental.status === "ativa" && (() => {
                     const financial = cache.financial;
                     const pagasView = financial.filter(e => e.categoria === "aluguel" && e.rentalId === viewRental.id && e.pago).length;
-                    const proximaView = financial
-                      .filter(e => e.categoria === "aluguel" && e.rentalId === viewRental.id && !e.pago)
+                    const ultimaView = financial
+                      .filter(e => e.categoria === "aluguel" && e.rentalId === viewRental.id)
                       .map(e => e.dataPrevista || e.data)
                       .filter((d): d is string => !!d)
-                      .sort()[0];
-                    const alerta = computeContratoAlerta(viewRental, pagasView, proximaView);
+                      .sort()
+                      .pop();
+                    const alerta = computeContratoAlerta(viewRental, pagasView, ultimaView);
                     if (!alerta) return null;
                     const isCritico = alerta.tipo === "cobranca_futura_ausente";
                     const isFlag = alerta.tipo === "ultima_parcela" || alerta.tipo === "plano_concluido";
