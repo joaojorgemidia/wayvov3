@@ -1686,8 +1686,14 @@ export default function CobrancasSemanaPage() {
                   items,
                   maxDays: Math.max(...items.map(i => i.originalDaysLate)),
                   total: items.reduce((s, i) => s + calcValorAtualizado(i.entry, i.daysLate), 0),
+                  // Pendência de contrato pós-pago = exposição já realizada (cliente já usou a
+                  // moto naquele período) — mais urgente que pré-pago, que é sobre período futuro.
+                  posPago: items.some(i => i.entry.rentalId && rentalsById.get(i.entry.rentalId)?.cobrancaPrePaga === false),
                 }))
-                .sort((a, b) => b.maxDays - a.maxDays);
+                .sort((a, b) => {
+                  if (b.maxDays !== a.maxDays) return b.maxDays - a.maxDays;
+                  return (b.posPago ? 1 : 0) - (a.posPago ? 1 : 0);
+                });
 
               const urgencyStyle = (days: number) =>
                 days >= 8
@@ -1711,7 +1717,7 @@ export default function CobrancasSemanaPage() {
                     </span>
                   </div>
                   <div className="bg-background divide-y divide-border/30">
-                    {clientGroups.map(({ key, items, maxDays, total }) => {
+                    {clientGroups.map(({ key, items, maxDays, total, posPago }) => {
                       const { textCls, badgeCls, dot } = urgencyStyle(maxDays);
                       const clienteId = items[0].clienteId;
                       const placas = [...new Set(items.map(i => i.entry.placa).filter(Boolean))];
@@ -1731,6 +1737,11 @@ export default function CobrancasSemanaPage() {
                               {placas.map(p => (
                                 <span key={p} className="font-mono text-[10px] bg-muted border border-border/50 rounded px-1.5 py-px text-muted-foreground flex-shrink-0">{p}</span>
                               ))}
+                              {posPago && (
+                                <span className="text-[10px] font-bold bg-rose-600 text-white rounded-full px-1.5 py-px flex-shrink-0">
+                                  Pós-pago
+                                </span>
+                              )}
                               {hasEncerrada && (
                                 <span className="text-[10px] font-bold bg-purple-600 text-white rounded-full px-1.5 py-px flex-shrink-0">
                                   Locação encerrada

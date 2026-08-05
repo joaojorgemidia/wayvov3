@@ -26,9 +26,16 @@ function formatCurrency(v: number | null) {
 interface PatrimonioTabProps {
   motos: Motorcycle[];
   onEdit: (moto: Motorcycle) => void;
+  vehicleLabel?: "todos" | "moto" | "carro";
 }
 
-export function PatrimonioTab({ motos, onEdit }: PatrimonioTabProps) {
+export function PatrimonioTab({ motos, onEdit, vehicleLabel = "moto" }: PatrimonioTabProps) {
+  const singular = vehicleLabel === "carro" ? "carro" : vehicleLabel === "todos" ? "veículo" : "moto";
+  const plural = vehicleLabel === "carro" ? "carros" : vehicleLabel === "todos" ? "veículos" : "motos";
+  // "moto" é feminino; "carro"/"veículo" são masculinos — evita concordância errada nos textos abaixo
+  const propriosLabel = vehicleLabel === "moto" ? "próprias" : "próprios";
+  const todosLabel = vehicleLabel === "moto" ? "todas as" : "todos os";
+  const cadastradosLabel = vehicleLabel === "moto" ? "cadastradas" : "cadastrados";
   const patrimonyMotos = useMemo(() => motos.filter(m => m.tipo === "propria" && m.valorCompra != null && m.status !== "vendida"), [motos]);
   const totalCompra = patrimonyMotos.reduce((s, m) => s + (m.valorCompra || 0), 0);
   const totalFipe = patrimonyMotos.reduce((s, m) => s + (m.valorFipe || 0), 0);
@@ -57,16 +64,16 @@ export function PatrimonioTab({ motos, onEdit }: PatrimonioTabProps) {
           <div className="flex items-center gap-2 text-muted-foreground text-xs font-medium">
             <DollarSign className="h-4 w-4" />
             Valor de Compra Total
-            <InfoTooltip text="Soma dos valores de compra de todas as motos próprias cadastradas" />
+            <InfoTooltip text={`Soma dos valores de compra de ${todosLabel} ${plural} ${propriosLabel} ${cadastradosLabel}`} />
           </div>
           <p className="text-2xl font-bold text-foreground">{formatCurrency(totalCompra)}</p>
-          <p className="text-xs text-muted-foreground">{patrimonyMotos.length} motos · média {formatCurrency(patrimonyMotos.length > 0 ? totalCompra / patrimonyMotos.length : 0)}</p>
+          <p className="text-xs text-muted-foreground">{patrimonyMotos.length} {patrimonyMotos.length === 1 ? singular : plural} · média {formatCurrency(patrimonyMotos.length > 0 ? totalCompra / patrimonyMotos.length : 0)}</p>
         </Card>
         <Card className="p-4 space-y-1">
           <div className="flex items-center gap-2 text-muted-foreground text-xs font-medium">
             <BarChart3 className="h-4 w-4" />
             Valor FIPE Atual
-            <InfoTooltip text="Valor de mercado atual das motos conforme tabela FIPE" />
+            <InfoTooltip text={`Valor de mercado atual dos/das ${plural} conforme tabela FIPE`} />
           </div>
           <p className="text-2xl font-bold text-primary">{formatCurrency(totalFipe)}</p>
           <p className="text-xs text-muted-foreground">média {formatCurrency(patrimonyMotos.length > 0 ? totalFipe / patrimonyMotos.length : 0)}</p>
@@ -98,7 +105,7 @@ export function PatrimonioTab({ motos, onEdit }: PatrimonioTabProps) {
       {/* Title */}
       <div className="flex items-center justify-between">
         <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">
-          Controle Patrimonial por Moto — FIPE Real
+          Controle Patrimonial por {singular === "veículo" ? "Veículo" : singular === "carro" ? "Carro" : "Moto"} — FIPE Real
         </h3>
       </div>
 
@@ -185,8 +192,8 @@ export function PatrimonioTab({ motos, onEdit }: PatrimonioTabProps) {
                   <td colSpan={9} className="px-4 py-12 text-center text-muted-foreground">
                     <div className="space-y-2">
                       <BarChart3 className="h-8 w-8 mx-auto opacity-40" />
-                      <p className="font-medium">Nenhuma moto com dados patrimoniais</p>
-                      <p className="text-xs">Edite uma moto e preencha a aba "Patrimônio" para ver os dados aqui.</p>
+                      <p className="font-medium">Nenhum{vehicleLabel === "moto" ? "a" : ""} {singular} com dados patrimoniais</p>
+                      <p className="text-xs">Edite {vehicleLabel === "moto" ? "uma moto" : vehicleLabel === "carro" ? "um carro" : "um veículo"} e preencha a aba "Patrimônio" para ver os dados aqui.</p>
                     </div>
                   </td>
                 </tr>
@@ -203,8 +210,8 @@ export function PatrimonioTab({ motos, onEdit }: PatrimonioTabProps) {
           <Card className="p-5 space-y-4">
             <div>
               <h4 className="text-sm font-semibold text-foreground flex items-center gap-1">
-                Receita Acumulada por Moto
-                <InfoTooltip text="Lucro operacional acumulado de cada moto com aluguéis, ordenado do maior para o menor" />
+                Receita Acumulada por {singular === "veículo" ? "Veículo" : singular === "carro" ? "Carro" : "Moto"}
+                <InfoTooltip text={`Lucro operacional acumulado de cada ${singular} com aluguéis, ordenado do maior para o menor`} />
               </h4>
               <p className="text-xs text-muted-foreground">Lucro operacional individual</p>
             </div>
@@ -232,7 +239,7 @@ export function PatrimonioTab({ motos, onEdit }: PatrimonioTabProps) {
           <Card className="p-5 space-y-4">
             <div>
               <h4 className="text-sm font-semibold text-foreground flex items-center gap-1">
-                Margem Operacional por Moto (%)
+                Margem Operacional por {singular === "veículo" ? "Veículo" : singular === "carro" ? "Carro" : "Moto"} (%)
                 <InfoTooltip text="Percentual do lucro operacional em relação ao valor de compra. Quanto maior, melhor o retorno do investimento" />
               </h4>
               <p className="text-xs text-muted-foreground">Lucro operacional ÷ valor de compra</p>

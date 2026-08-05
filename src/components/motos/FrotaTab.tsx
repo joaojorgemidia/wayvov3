@@ -49,9 +49,11 @@ interface FrotaTabProps {
   onDelete: (id: string) => void;
   onBulkDelete?: (ids: Set<string>) => void;
   onSell: (moto: Motorcycle) => void;
+  vehicleLabel?: "moto" | "carro";
 }
 
-export function FrotaTab({ motos, onEdit, onDelete, onBulkDelete, onSell }: FrotaTabProps) {
+export function FrotaTab({ motos, onEdit, onDelete, onBulkDelete, onSell, vehicleLabel = "moto" }: FrotaTabProps) {
+  const vehiclePlural = vehicleLabel === "carro" ? "carros" : "motos";
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -162,16 +164,16 @@ export function FrotaTab({ motos, onEdit, onDelete, onBulkDelete, onSell }: Frot
                 <th className="px-4 py-3.5 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">Modelo</th>
                 <th className="px-4 py-3.5 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">Placa</th>
                 <th className="px-4 py-3.5 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                  Aluguéis <InfoTooltip text="Quantidade total de locações registradas para esta moto" />
+                  Aluguéis <InfoTooltip text={`Quantidade total de locações registradas para este${vehicleLabel === "carro" ? "" : "a"} ${vehicleLabel}`} />
                 </th>
                 <th className="px-4 py-3.5 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                  Faturamento <InfoTooltip text="Soma de todas as receitas financeiras vinculadas a esta moto" />
+                  Faturamento <InfoTooltip text={`Soma de todas as receitas financeiras vinculadas a este${vehicleLabel === "carro" ? "" : "a"} ${vehicleLabel}`} />
                 </th>
                 <th className="px-4 py-3.5 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                  Despesas <InfoTooltip text="Soma de todas as despesas financeiras vinculadas a esta moto" />
+                  Despesas <InfoTooltip text={`Soma de todas as despesas financeiras vinculadas a este${vehicleLabel === "carro" ? "" : "a"} ${vehicleLabel}`} />
                 </th>
                 <th className="px-4 py-3.5 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                  Faturamento líquido <InfoTooltip text="Total faturado − total de despesas desta moto" />
+                  Faturamento líquido <InfoTooltip text={`Total faturado − total de despesas deste${vehicleLabel === "carro" ? "" : "a"} ${vehicleLabel}`} />
                 </th>
                 <th className="px-4 py-3.5 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">Ações</th>
               </tr>
@@ -254,8 +256,8 @@ export function FrotaTab({ motos, onEdit, onDelete, onBulkDelete, onSell }: Frot
                       <div className="flex h-12 w-12 items-center justify-center rounded-full bg-muted">
                         <Search className="h-5 w-5" />
                       </div>
-                      <p className="text-sm font-medium">Nenhuma moto encontrada</p>
-                      <p className="text-xs">Ajuste os filtros ou cadastre uma nova moto</p>
+                      <p className="text-sm font-medium">Nenhum{vehicleLabel === "carro" ? "" : "a"} {vehicleLabel} encontrad{vehicleLabel === "carro" ? "o" : "a"}</p>
+                      <p className="text-xs">Ajuste os filtros ou cadastre {vehicleLabel === "carro" ? "um novo carro" : "uma nova moto"}</p>
                     </div>
                   </td>
                 </tr>
@@ -265,7 +267,7 @@ export function FrotaTab({ motos, onEdit, onDelete, onBulkDelete, onSell }: Frot
               <tfoot>
                 <tr className="border-t-2 bg-muted/30 font-semibold">
                   <td className="px-4 py-3.5 text-xs uppercase tracking-wider text-muted-foreground" colSpan={canDelete && onBulkDelete ? 5 : 4}>
-                    Totais ({filtered.length} {filtered.length === 1 ? "moto" : "motos"})
+                    Totais ({filtered.length} {filtered.length === 1 ? vehicleLabel : vehiclePlural})
                   </td>
                   <td className="px-4 py-3.5 text-right font-mono tabular-nums">{totals.rentalsCount}</td>
                   <td className="px-4 py-3.5 text-right font-mono tabular-nums text-foreground">{fmtBRL(totals.faturado)}</td>

@@ -5,6 +5,8 @@ import {
 } from "lucide-react";
 import { WayvoLogo } from "@/components/WayvoLogo";
 import { useAuth } from "@/contexts/AuthContext";
+import { useCompany } from "@/contexts/CompanyContext";
+import { isLoca2Rodas } from "@/lib/companies";
 import { usePermissions } from "@/hooks/usePermissions";
 import { NavLink } from "@/components/NavLink";
 import { useLocation } from "react-router-dom";
@@ -31,9 +33,9 @@ const items: MenuItem[] = [
   { title: "Clientes", url: "/clientes", icon: Users },
   // — Frota —
   {
-    title: "Motos", url: "/motos", icon: Bike,
+    title: "Frota", url: "/motos", icon: Bike,
     children: [
-      { title: "Frota", url: "/motos?tab=frota" },
+      { title: "Motos", url: "/motos?tab=motos" },
       { title: "Controle Patrimonial", url: "/motos?tab=patrimonio" },
     ],
   },
@@ -80,7 +82,22 @@ export function AppSidebar() {
   const collapsed = state === "collapsed";
   const location = useLocation();
   const { isAdmin } = useAuth();
+  const { activeCompany } = useCompany();
   const { canManageEmpresas } = usePermissions();
+  const showCarrosTab = isLoca2Rodas(activeCompany);
+
+  const navItems = showCarrosTab
+    ? items.map((item) => item.title === "Frota"
+        ? {
+            ...item,
+            children: [
+              item.children![0], // Motos
+              { title: "Carros", url: "/motos?tab=carros" },
+              item.children![1], // Controle Patrimonial
+            ],
+          }
+        : item)
+    : items;
 
   return (
     <Sidebar collapsible="icon">
@@ -94,7 +111,7 @@ export function AppSidebar() {
         <SidebarGroup className="pt-2">
           <SidebarGroupContent>
             <SidebarMenu>
-              {items.map((item) => {
+              {navItems.map((item) => {
                 if (item.children && !collapsed) {
                   const isActive = item.children.some(
                     (c) => location.pathname + location.search === c.url

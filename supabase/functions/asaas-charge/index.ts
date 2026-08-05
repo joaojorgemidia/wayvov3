@@ -325,7 +325,10 @@ serve(async (req) => {
         ? [entry.descricao, contratoNumero != null ? `Contrato #${contratoNumero}` : null]
             .filter(Boolean).join(" · ")
         : [
-            categoriaLabel,
+            // "Outros" é o rótulo genérico de categorias sem um nome específico (ex.:
+            // cobrança consolidada) — não carrega nenhuma informação real, então não
+            // faz sentido aparecer no boleto do cliente.
+            categoriaLabel === "Outros" ? null : categoriaLabel,
             contratoNumero != null ? `Contrato #${contratoNumero}` : null,
             placa ? `Placa ${placa}` : null,
             semanaRef,

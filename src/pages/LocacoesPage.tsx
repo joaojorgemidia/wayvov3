@@ -838,9 +838,25 @@ export default function LocacoesPage() {
     let unificadoCount = 0;
     if (encerrarUnificar && pendentesQueFicam.length > 1) {
       const total = Math.round(pendentesQueFicam.reduce((s, e) => s + e.valor, 0) * 100) / 100;
-      const fmtDataBR = (iso: string) => iso ? new Date(iso + "T00:00:00").toLocaleDateString("pt-BR") : "—";
+      // Rótulo curto por item pro texto que vai pro boleto do cliente — a descrição bruta de
+      // algumas categorias (ex.: multa, com número de auto/RENAINF/órgão) é informação interna
+      // demais para o boleto. O detalhe completo continua em consolidatedItems, usado só na
+      // tela (badge de composição), não no texto que o Asaas manda pro cliente.
+      const CATEGORIA_LABEL_CURTO: Record<string, string> = {
+        aluguel: "Aluguel", caucao: "Caução",
+        multa_transito_receita: "Multa de trânsito", multa: "Multa de trânsito",
+        manutencao_receita: "Manutenção", venda_moto: "Venda de moto",
+        pecas_receita: "Peças", juros_atraso: "Juros por atraso",
+      };
+      const itemLabelCurto = (e: FinancialEntry) => {
+        if (e.categoria === "aluguel") {
+          const m = (e.descricao || "").match(/Aluguel\s+\d+ª\s+(semana|quinzena|mês)/i);
+          if (m) return m[0];
+        }
+        return CATEGORIA_LABEL_CURTO[e.categoria] || e.categoria || "Cobrança";
+      };
       const itensTexto = pendentesQueFicam
-        .map(e => `• ${e.descricao || e.categoria} — R$ ${e.valor.toFixed(2)} (venc. ${fmtDataBR(e.dataPrevista || e.data)})`)
+        .map(e => `• ${itemLabelCurto(e)} — R$ ${e.valor.toFixed(2)}`)
         .join("\n");
       const consolidada: FinancialEntry = {
         id: crypto.randomUUID(),
@@ -856,7 +872,7 @@ export default function LocacoesPage() {
         clienteId: encerrarRental.clienteId,
         pago: false,
         tags: ["consolidacao", "encerramento"],
-        observacao: `Cobrança consolidada ao encerrar o contrato — reúne ${pendentesQueFicam.length} cobrança(s) em aberto, total R$ ${total.toFixed(2)}:\n${itensTexto}`,
+        observacao: `Encerramento do contrato — cobranças agrupadas:\n${itensTexto}`,
         consolidatedItems: pendentesQueFicam.map(e => ({
           originalEntryId: e.id,
           descricao: e.descricao || e.categoria,
@@ -1212,6 +1228,15 @@ export default function LocacoesPage() {
                         <EyeOff className="h-2.5 w-2.5" />
                         R$ {(pendenteTotalPorRental.get(r.id) || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })} pendente
                       </button>
+                    )}
+                    {r.cobrancaPrePaga === false && (pendenteTotalPorRental.get(r.id) || 0) > 0 && (
+                      <span
+                        title="Contrato pós-pago com cobrança pendente — o cliente já usou a moto nesse período"
+                        className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold bg-rose-100 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300"
+                      >
+                        <AlertTriangle className="h-2.5 w-2.5" />
+                        Pós-pago · R$ {(pendenteTotalPorRental.get(r.id) || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                      </span>
                     )}
                   </div>
                 </TableCell>

@@ -6,6 +6,7 @@ export interface OilChangeRecord {
 
 export interface Motorcycle {
   id: string;
+  categoriaVeiculo: "moto" | "carro";
   placa: string;
   modelo: string;
   anoFabricacao: number | null;

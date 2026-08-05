@@ -517,13 +517,21 @@ export const Dashboard = memo(function Dashboard() {
             ) : (
               <div className="space-y-4">
                 {[
-                  { label: "Operacional", value: stats.despesaOperacional, bar: "bg-blue-500", badge: "bg-blue-50 text-blue-700 border-blue-100" },
-                  { label: "Administrativo", value: stats.despesaAdministrativa, bar: "bg-violet-500", badge: "bg-violet-50 text-violet-700 border-violet-100" },
-                  { label: "Investimento", value: stats.despesaInvestimento, bar: "bg-amber-500", badge: "bg-amber-50 text-amber-700 border-amber-100" },
-                ].map(({ label, value, bar, badge }) => {
+                  { label: "Operacional", natureza: "operacional", value: stats.despesaOperacional, bar: "bg-blue-500", badge: "bg-blue-50 text-blue-700 border-blue-100" },
+                  { label: "Administrativo", natureza: "administrativa", value: stats.despesaAdministrativa, bar: "bg-violet-500", badge: "bg-violet-50 text-violet-700 border-violet-100" },
+                  { label: "Investimento", natureza: "investimento", value: stats.despesaInvestimento, bar: "bg-amber-500", badge: "bg-amber-50 text-amber-700 border-amber-100" },
+                ].map(({ label, natureza, value, bar, badge }) => {
                   const pct = totalNatureza > 0 ? (value / totalNatureza) * 100 : 0;
                   return (
-                    <div key={label} className="space-y-2">
+                    <button
+                      key={label}
+                      type="button"
+                      onClick={() => navigate(
+                        `/financeiro?natureza=${natureza}&de=${format(dateRange.from, "yyyy-MM-dd")}&ate=${format(dateRange.to, "yyyy-MM-dd")}`
+                      )}
+                      className="w-full space-y-2 text-left rounded-lg -mx-2 px-2 py-1.5 transition-colors hover:bg-slate-50"
+                      title={`Ver transações de despesa — ${label}`}
+                    >
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-2">
                           <span className={`w-2 h-2 rounded-full ${bar}`} />
@@ -539,7 +547,7 @@ export const Dashboard = memo(function Dashboard() {
                       <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
                         <div className={`h-full ${bar} rounded-full transition-all duration-700`} style={{ width: `${pct}%` }} />
                       </div>
-                    </div>
+                    </button>
                   );
                 })}
               </div>

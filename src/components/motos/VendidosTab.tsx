@@ -19,11 +19,13 @@ function fmtKm(v: number | null) {
 interface VendidosTabProps {
   motos: Motorcycle[];
   onUpdate?: (id: string, updates: Partial<Motorcycle>) => void;
+  vehicleLabel?: "todos" | "moto" | "carro";
 }
 
 type EditingCell = { id: string; field: "valorVenda" | "dataVenda" } | null;
 
-export function VendidosTab({ motos, onUpdate }: VendidosTabProps) {
+export function VendidosTab({ motos, onUpdate, vehicleLabel = "moto" }: VendidosTabProps) {
+  const plural = vehicleLabel === "carro" ? "carros" : vehicleLabel === "todos" ? "veículos" : "motos";
   const soldMotos = useMemo(() => motos.filter(m => m.status === "vendida"), [motos]);
   const financial = useMemo(() => loadFinancial(), []);
   const [editing, setEditing] = useState<EditingCell>(null);
@@ -71,7 +73,7 @@ export function VendidosTab({ motos, onUpdate }: VendidosTabProps) {
     return (
       <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
         <DollarSign className="h-10 w-10 mb-3 opacity-40" />
-        <p className="text-sm">Nenhuma moto vendida registrada</p>
+        <p className="text-sm">Nenhum{vehicleLabel === "moto" ? "a" : ""} {vehicleLabel === "todos" ? "veículo" : vehicleLabel} vendid{vehicleLabel === "moto" ? "a" : "o"} registrad{vehicleLabel === "moto" ? "a" : "o"}</p>
         <p className="text-xs mt-1">Use o botão "Vender" na aba Frota para registrar uma venda</p>
       </div>
     );
@@ -84,14 +86,14 @@ export function VendidosTab({ motos, onUpdate }: VendidosTabProps) {
         <Card className="p-4">
           <div className="flex items-center gap-2 mb-1">
             <TrendingUp className="h-4 w-4 text-success" />
-            <span className="text-xs text-muted-foreground">Faturamento Total <InfoTooltip text="Soma de todas as receitas vinculadas às motos vendidas durante o período em que estiveram na frota" /></span>
+            <span className="text-xs text-muted-foreground">Faturamento Total <InfoTooltip text={`Soma de todas as receitas vinculadas ${vehicleLabel === "moto" ? "às motos vendidas" : vehicleLabel === "carro" ? "aos carros vendidos" : "aos veículos vendidos"} durante o período em que estiveram na frota`} /></span>
           </div>
           <p className="text-lg font-bold text-foreground">{fmt(totals.faturamento)}</p>
         </Card>
         <Card className="p-4">
           <div className="flex items-center gap-2 mb-1">
             <TrendingDown className="h-4 w-4 text-destructive" />
-            <span className="text-xs text-muted-foreground">Despesas Total <InfoTooltip text="Soma de todas as despesas vinculadas às motos vendidas (manutenções, peças, etc.)" /></span>
+            <span className="text-xs text-muted-foreground">Despesas Total <InfoTooltip text={`Soma de todas as despesas vinculadas ${vehicleLabel === "moto" ? "às motos vendidas" : vehicleLabel === "carro" ? "aos carros vendidos" : "aos veículos vendidos"} (manutenções, peças, etc.)`} /></span>
           </div>
           <p className="text-lg font-bold text-foreground">{fmt(totals.despesas)}</p>
         </Card>
@@ -105,7 +107,7 @@ export function VendidosTab({ motos, onUpdate }: VendidosTabProps) {
         <Card className="p-4">
           <div className="flex items-center gap-2 mb-1">
             <Route className="h-4 w-4 text-primary" />
-            <span className="text-xs text-muted-foreground">KM Total Rodados <InfoTooltip text="Total de quilômetros percorridos por todas as motos vendidas enquanto estiveram na frota" /></span>
+            <span className="text-xs text-muted-foreground">KM Total Rodados <InfoTooltip text={`Total de quilômetros percorridos por tod${vehicleLabel === "moto" ? "as as" : "os os"} ${plural} vendid${vehicleLabel === "moto" ? "as" : "os"} enquanto estiveram na frota`} /></span>
           </div>
           <p className="text-lg font-bold text-foreground">{fmtKm(totals.kmTotal)}</p>
         </Card>
@@ -120,7 +122,7 @@ export function VendidosTab({ motos, onUpdate }: VendidosTabProps) {
                 <th className="px-3 py-3 text-left font-semibold text-muted-foreground">Modelo</th>
                 <th className="px-3 py-3 text-left font-semibold text-muted-foreground">Placa</th>
                 <th className="px-3 py-3 text-left font-semibold text-muted-foreground">
-                  Data Venda <InfoTooltip text="Data em que a moto foi vendida" />
+                  Data Venda <InfoTooltip text={`Data em que ${vehicleLabel === "moto" ? "a moto foi vendida" : vehicleLabel === "carro" ? "o carro foi vendido" : "o veículo foi vendido"}`} />
                 </th>
                 <th className="px-3 py-3 text-right font-semibold text-muted-foreground">
                   Compra <InfoTooltip text="Valor pago na aquisição" />

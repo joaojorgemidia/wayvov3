@@ -109,3 +109,9 @@ export function getCompanyFeatureFlags(companyId: string) {
     filterImportedEntries: companyId === "loca2rodas",
   };
 }
+
+// IDs de empresa mudaram de slugs para UUIDs; identificamos a Loca2Rodas pelo nome
+// para não depender de um ID específico e cobrir eventuais cadastros duplicados.
+export function isLoca2Rodas(company: { nome?: string } | null | undefined): boolean {
+  return (company?.nome || "").trim().toLowerCase() === "loca2rodas";
+}

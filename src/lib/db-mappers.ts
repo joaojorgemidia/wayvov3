@@ -11,7 +11,8 @@ export interface BankAccountData {
 
 export function dbToMoto(r: any): Motorcycle {
   return {
-    id: r.id, placa: r.placa || "", modelo: r.modelo || "", anoFabricacao: r.ano_fabricacao ?? null, anoModelo: r.ano_modelo ?? null,
+    id: r.id, categoriaVeiculo: r.categoria_veiculo === "carro" ? "carro" : "moto",
+    placa: r.placa || "", modelo: r.modelo || "", anoFabricacao: r.ano_fabricacao ?? null, anoModelo: r.ano_modelo ?? null,
     cor: r.cor || "", chassi: r.chassi || "", renavam: r.renavam || "", numMotor: r.num_motor || "",
     aplicativo: r.aplicativo || "", tipo: r.tipo === "terceiro" ? "terceiro" : "propria",
     proprietario: r.proprietario || undefined,
@@ -36,6 +37,7 @@ export function dbToMoto(r: any): Motorcycle {
 
 export function motoToDb(m: Motorcycle): any {
   return {
+    categoria_veiculo: m.categoriaVeiculo || "moto",
     placa: m.placa, modelo: m.modelo, ano_fabricacao: m.anoFabricacao ?? null, ano_modelo: m.anoModelo, cor: m.cor, chassi: m.chassi,
     renavam: m.renavam, num_motor: m.numMotor, aplicativo: m.aplicativo, tipo: m.tipo,
     proprietario: m.proprietario || null,

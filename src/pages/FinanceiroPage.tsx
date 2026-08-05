@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useMemo, useCallback, useRef } from "react";
+import { useSearchParams } from "react-router-dom";
 import { localToday } from "@/lib/utils";
 import { toast } from "sonner";
 import { FinancialEntry, Motorcycle } from "@/lib/types";
@@ -834,6 +835,7 @@ export default function FinanceiroPage() {
   const [repasseContaInput, setRepasseContaInput] = useState("");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
+  const [naturezaFilter, setNaturezaFilter] = useState<"all" | "operacional" | "administrativa" | "investimento">("all");
   const [onlyPagas, setOnlyPagas] = useState(false);
   const [onlyPendentes, setOnlyPendentes] = useState(false);
   const [onlyRecorrentes, setOnlyRecorrentes] = useState(false);
@@ -868,6 +870,28 @@ export default function FinanceiroPage() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [selectedCCCard, setSelectedCCCard] = useState<any>(null);
   const [ccViewYm, setCcViewYm] = useState<string>("");
+
+  const [searchParams, setSearchParams] = useSearchParams();
+  // Deep-link vindo do Dashboard (composição de despesas por natureza): aplica o filtro
+  // de natureza + período recebidos na URL e limpa os parâmetros em seguida, pra não
+  // reaplicar o mesmo filtro numa atualização de página posterior.
+  useEffect(() => {
+    const natureza = searchParams.get("natureza");
+    const de = searchParams.get("de");
+    const ate = searchParams.get("ate");
+    if (!natureza && !de && !ate) return;
+    if (natureza === "operacional" || natureza === "administrativa" || natureza === "investimento") {
+      setNaturezaFilter(natureza);
+      setTipoFilter("despesa");
+      // A "Composição das Despesas" do Dashboard só soma lançamentos já pagos (regime de
+      // caixa) — sem isso, a lista aqui incluiria pendentes que não entraram naquele total.
+      setOnlyPagas(true);
+    }
+    if (de) setDateFrom(de);
+    if (ate) setDateTo(ate);
+    setSearchParams(new URLSearchParams(), { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const tableContainerRef = useRef<HTMLDivElement | null>(null);
 
@@ -1547,7 +1571,8 @@ export default function FinanceiroPage() {
         }
       }
       const matchIgnoradas = ignoradasFilter === "incluir" ? true : ignoradasFilter === "ocultar" ? !e.ignorada : !!e.ignorada;
-      return matchSearch && matchTipo && matchPago && matchCategoria && matchConta && matchPlaca && matchMotoOwner && matchLocatario && matchDateFrom && matchDateTo && matchRecorrente && matchDue && matchIgnoradas;
+      const matchNatureza = naturezaFilter === "all" || e.natureza === naturezaFilter;
+      return matchSearch && matchTipo && matchPago && matchCategoria && matchConta && matchPlaca && matchMotoOwner && matchLocatario && matchDateFrom && matchDateTo && matchRecorrente && matchDue && matchIgnoradas && matchNatureza;
     }).sort((a, b) => {
       // Primeiro: ordenar por data efetiva decrescente (dias do mês)
       const dateA = a.pago ? a.data : (a.dataPrevista || a.data);
@@ -1567,7 +1592,7 @@ export default function FinanceiroPage() {
       if (createdA && createdB && createdA !== createdB) return createdB.localeCompare(createdA);
       return (entryOrder.get(b.id) ?? -1) - (entryOrder.get(a.id) ?? -1);
     });
-  }, [filteredSource, search, tipoFilter, pagoFilter, categoriaFilter, contaFilter, getCatLabel, placaFilter, motoOwnerFilter, locatarioFilter, dateFrom, dateTo, onlyPagas, onlyPendentes, onlyRecorrentes, dueFilter, ignoradasFilter, motos, clients]);
+  }, [filteredSource, search, tipoFilter, pagoFilter, categoriaFilter, contaFilter, getCatLabel, placaFilter, motoOwnerFilter, locatarioFilter, dateFrom, dateTo, onlyPagas, onlyPendentes, onlyRecorrentes, dueFilter, ignoradasFilter, naturezaFilter, motos, clients]);
 
   // Reset page when filters change
   const filteredLen = filtered.length;
@@ -3276,7 +3301,7 @@ export default function FinanceiroPage() {
     return bank;
   };
 
-  const hasActiveFilters =categoriaFilter !== "all" || contaFilter !== "all" || dateFrom || dateTo || placaFilter || motoOwnerFilter !== "all" || locatarioFilter || tipoFilter !== "all" || onlyPagas || onlyPendentes || onlyRecorrentes || dueFilter !== "all" || ignoradasFilter !== "incluir" || search;
+  const hasActiveFilters =categoriaFilter !== "all" || contaFilter !== "all" || dateFrom || dateTo || placaFilter || motoOwnerFilter !== "all" || locatarioFilter || tipoFilter !== "all" || onlyPagas || onlyPendentes || onlyRecorrentes || dueFilter !== "all" || ignoradasFilter !== "incluir" || naturezaFilter !== "all" || search;
 
   return (
     <div className="p-4 md:p-6 space-y-5 max-w-7xl mx-auto">
@@ -4008,7 +4033,7 @@ export default function FinanceiroPage() {
                   placeholder="Buscar descrição, placa, locatário, valor…" value={search} onChange={e => setSearch(e.target.value)} />
               </div>
               {hasActiveFilters && (
-                <button onClick={() => { setCategoriaFilter("all"); setContaFilter("all"); setDateFrom(""); setDateTo(""); setPlacaFilter(""); setMotoOwnerFilter("all"); setLocatarioFilter(""); setOnlyPagas(false); setOnlyPendentes(false); setOnlyRecorrentes(false); setDueFilter("all"); setIgnoradasFilter("incluir"); setTipoFilter("all"); setSearch(""); }}
+                <button onClick={() => { setCategoriaFilter("all"); setContaFilter("all"); setDateFrom(""); setDateTo(""); setPlacaFilter(""); setMotoOwnerFilter("all"); setLocatarioFilter(""); setOnlyPagas(false); setOnlyPendentes(false); setOnlyRecorrentes(false); setDueFilter("all"); setIgnoradasFilter("incluir"); setTipoFilter("all"); setNaturezaFilter("all"); setSearch(""); }}
                   className="text-xs text-muted-foreground hover:text-foreground transition-colors underline underline-offset-2">Limpar</button>
               )}
             </div>
@@ -4066,6 +4091,18 @@ export default function FinanceiroPage() {
                         <SelectItem value="all">Todas</SelectItem>
                         <SelectItem value="propria">Próprias</SelectItem>
                         <SelectItem value="terceiro">Terceiros</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div>
+                    <Label className="text-[10px] text-muted-foreground uppercase tracking-wider">Natureza</Label>
+                    <Select value={naturezaFilter} onValueChange={v => setNaturezaFilter(v as "all" | "operacional" | "administrativa" | "investimento")}>
+                      <SelectTrigger className="h-7 text-xs mt-0.5"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">Todas</SelectItem>
+                        <SelectItem value="operacional">Operacional</SelectItem>
+                        <SelectItem value="administrativa">Administrativo</SelectItem>
+                        <SelectItem value="investimento">Investimento</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>

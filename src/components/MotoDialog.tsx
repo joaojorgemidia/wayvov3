@@ -25,16 +25,18 @@ interface MotoDialogProps {
   moto: Motorcycle | null;
   onSave: (moto: Motorcycle) => void;
   mode: "add" | "edit";
+  defaultCategoria?: "moto" | "carro";
 }
 
 const STEPS = [
-  { id: 1, label: "Documento", icon: FileText, description: "CRLV da moto" },
+  { id: 1, label: "Documento", icon: FileText, description: "CRLV do veículo" },
   { id: 2, label: "Veículo", icon: Bike, description: "Dados do veículo" },
   { id: 3, label: "Financeiro", icon: DollarSign, description: "Valores e patrimônio" },
 ];
 
-const emptyMoto = (): Motorcycle => ({
+const emptyMoto = (categoria: "moto" | "carro" = "moto"): Motorcycle => ({
   id: crypto.randomUUID(),
+  categoriaVeiculo: categoria,
   placa: "",
   modelo: "",
   anoFabricacao: null,
@@ -302,8 +304,8 @@ function buildEntradaEntry(m: Motorcycle, existing: FinancialEntry[], conta: str
       : undefined,
     tags: isFinanced ? ["Entrada"] : [],
     descricao: isFinanced
-      ? `Entrada ${m.formaCompra === "financiada" ? "financiamento" : "parcelamento"} moto ${m.placa}${m.modelo ? ` (${m.modelo})` : ""}`
-      : `Compra à vista moto ${m.placa}${m.modelo ? ` (${m.modelo})` : ""}`,
+      ? `Entrada ${m.formaCompra === "financiada" ? "financiamento" : "parcelamento"} ${m.categoriaVeiculo === "carro" ? "carro" : "moto"} ${m.placa}${m.modelo ? ` (${m.modelo})` : ""}`
+      : `Compra à vista ${m.categoriaVeiculo === "carro" ? "carro" : "moto"} ${m.placa}${m.modelo ? ` (${m.modelo})` : ""}`,
     valor,
     data: m.dataCompra,
     dataPrevista: m.dataCompra,
@@ -315,7 +317,7 @@ function buildEntradaEntry(m: Motorcycle, existing: FinancialEntry[], conta: str
     conta,
     natureza: "investimento",
     despesaFixa: false,
-    observacao: "Gerado automaticamente ao cadastrar a moto.",
+    observacao: `Gerado automaticamente ao cadastrar ${m.categoriaVeiculo === "carro" ? "o carro" : "a moto"}.`,
   };
 }
 
@@ -375,7 +377,7 @@ function buildFutureInstallments(
       categoria: "compra_moto",
       subcategoria: m.formaCompra === "financiada" ? "Financiamento" : "Parcelamento",
       tags: ["Parcela"],
-      descricao: `Parcela ${parcelaNum}/${totalParcelas} — ${m.formaCompra === "financiada" ? "Financiamento" : "Parcelamento"} moto ${m.placa}${m.modelo ? ` (${m.modelo})` : ""}`,
+      descricao: `Parcela ${parcelaNum}/${totalParcelas} — ${m.formaCompra === "financiada" ? "Financiamento" : "Parcelamento"} ${m.categoriaVeiculo === "carro" ? "carro" : "moto"} ${m.placa}${m.modelo ? ` (${m.modelo})` : ""}`,
       valor: m.valorParcela!,
       data: iso,
       dataPrevista: iso,
@@ -388,7 +390,7 @@ function buildFutureInstallments(
       natureza: "investimento",
       despesaFixa: false,
       serieId,
-      observacao: `Gerado automaticamente a partir do cadastro da moto. Parcela ${parcelaNum} de ${totalParcelas}.`,
+      observacao: `Gerado automaticamente a partir do cadastro d${m.categoriaVeiculo === "carro" ? "o carro" : "a moto"}. Parcela ${parcelaNum} de ${totalParcelas}.`,
     });
     existingByMonth.add(monthKey);
   }
@@ -519,8 +521,8 @@ function syncFinancialEntries(
       const novaData = m.dataCompra || cur.data;
       const novaSub = isFinanced ? (m.formaCompra === "financiada" ? "Financiamento" : "Parcelamento") : undefined;
       const novaDesc = isFinanced
-        ? `Entrada ${m.formaCompra === "financiada" ? "financiamento" : "parcelamento"} moto ${m.placa}${m.modelo ? ` (${m.modelo})` : ""}`
-        : `Compra à vista moto ${m.placa}${m.modelo ? ` (${m.modelo})` : ""}`;
+        ? `Entrada ${m.formaCompra === "financiada" ? "financiamento" : "parcelamento"} ${m.categoriaVeiculo === "carro" ? "carro" : "moto"} ${m.placa}${m.modelo ? ` (${m.modelo})` : ""}`
+        : `Compra à vista ${m.categoriaVeiculo === "carro" ? "carro" : "moto"} ${m.placa}${m.modelo ? ` (${m.modelo})` : ""}`;
       if (novoValor <= 0) {
         // Forma de compra/valor zerou — remove a despesa pendente
         next.splice(entradaIdx, 1);
@@ -552,8 +554,8 @@ function syncFinancialEntries(
   return { next, updated, created, removed };
 }
 
-export function MotoDialog({ open, onOpenChange, moto, onSave, mode }: MotoDialogProps) {
-  const [form, setForm] = useState<Motorcycle>(moto || emptyMoto());
+export function MotoDialog({ open, onOpenChange, moto, onSave, mode, defaultCategoria = "moto" }: MotoDialogProps) {
+  const [form, setForm] = useState<Motorcycle>(moto || emptyMoto(defaultCategoria));
   const { activeCompany } = useCompany();
   const [step, setStep] = useState(1);
   const [pdfFile, setPdfFile] = useState<File | null>(null);
@@ -571,7 +573,7 @@ export function MotoDialog({ open, onOpenChange, moto, onSave, mode }: MotoDialo
 
   useEffect(() => {
     if (open) {
-      const base = moto ? { ...moto, historicoOleo: [...(moto.historicoOleo || [])] } : emptyMoto();
+      const base = moto ? { ...moto, historicoOleo: [...(moto.historicoOleo || [])] } : emptyMoto(defaultCategoria);
       // Auto-compute lucro operacional
       if (moto) {
         base.lucroOperacional = computeLucroOperacional(moto.id, base);
@@ -589,7 +591,7 @@ export function MotoDialog({ open, onOpenChange, moto, onSave, mode }: MotoDialo
       setContaLancamento(accs[0]?.nome || "Caixa");
       setRastreadores(loadRastreadores());
     }
-  }, [open, moto, mode]);
+  }, [open, moto, mode, defaultCategoria]);
 
   // Auto-lookup FIPE when modelo + anoModelo are set and step goes to 3
   useEffect(() => {
@@ -745,7 +747,7 @@ export function MotoDialog({ open, onOpenChange, moto, onSave, mode }: MotoDialo
     onSave({ ...form, lucroOperacional: lucro });
     onOpenChange(false);
 
-    const parts: string[] = ["Moto salva"];
+    const parts: string[] = [form.categoriaVeiculo === "carro" ? "Carro salvo" : "Moto salva"];
     if (entradaCreated) parts.push(`despesa de ${isFinanced ? "entrada" : "compra"} criada`);
     if (parcelasCreated) parts.push(`${parcelasCreated} parcela(s) criadas${parcelasSkipped ? ` (${parcelasSkipped} ignoradas)` : ""}`);
     if (syncUpdated) parts.push(`${syncUpdated} lançamento(s) atualizados`);
@@ -854,7 +856,11 @@ export function MotoDialog({ open, onOpenChange, moto, onSave, mode }: MotoDialo
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto p-0">
         <DialogHeader className="px-6 pt-6 pb-0">
-          <DialogTitle>{mode === "add" ? "Cadastrar Nova Moto" : `Editar ${form.placa || "moto"}`}</DialogTitle>
+          <DialogTitle>
+            {mode === "add"
+              ? (form.categoriaVeiculo === "carro" ? "Cadastrar Novo Carro" : "Cadastrar Nova Moto")
+              : `Editar ${form.placa || (form.categoriaVeiculo === "carro" ? "carro" : "moto")}`}
+          </DialogTitle>
         </DialogHeader>
 
         {/* Stepper */}

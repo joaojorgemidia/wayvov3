@@ -93,6 +93,19 @@ function findRentalAtDate(motoId: string, dateIso: string | null, rentals: Renta
   }) ?? null;
 }
 
+// Mesma lógica de findRentalAtDate, mas partindo do cliente — usada para puxar a moto
+// (placa) automaticamente quando o locatário é selecionado antes da moto.
+function findRentalForClientAtDate(clienteId: string, dateIso: string | null, rentals: Rental[]): Rental | null {
+  if (!dateIso) return null;
+  const ts = new Date(dateIso + "T00:00:00").getTime();
+  return rentals.find((r) => {
+    if (r.clienteId !== clienteId) return false;
+    const inicio = new Date(r.dataInicio + "T00:00:00").getTime();
+    const fim = r.dataFim ? new Date(r.dataFim + "T00:00:00").getTime() : Date.now();
+    return ts >= inicio && ts <= fim;
+  }) ?? null;
+}
+
 // ─── Main component ────────────────────────────────────────────────────────────
 export default function MultasPage() {
   const cache = useDataCacheSnapshot();
@@ -906,7 +919,13 @@ export default function MultasPage() {
                   value={form.clienteId || "none"}
                   onValueChange={v => {
                     const novoClienteId = v === "none" ? null : v;
-                    setForm({ ...form, clienteId: novoClienteId });
+                    const rental = novoClienteId ? findRentalForClientAtDate(novoClienteId, form.dataMulta, rentals) : null;
+                    setForm({
+                      ...form,
+                      clienteId: novoClienteId,
+                      motoId: rental?.motoId ?? form.motoId,
+                      rentalId: rental?.id ?? null,
+                    });
                     setGerarEntrada(!!novoClienteId);
                   }}
                   placeholder="Nenhum"
