@@ -12,6 +12,7 @@ import { addWeeks, addDays, addMonths, isBefore, isEqual, parseISO, differenceIn
 import { ptBR } from "date-fns/locale";
 import { BarChart, Bar, XAxis, YAxis, ResponsiveContainer, CartesianGrid, Tooltip as RechartsTooltip } from "recharts";
 import { useCompany } from "@/contexts/CompanyContext";
+import { sanitizeWhatsAppNumber } from "@/lib/whatsapp";
 import { DEFAULT_COBRANCA_CONFIG } from "@/lib/companies";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -1048,14 +1049,14 @@ export default function LocacoesPage() {
     toast.success(`${targets.length} locação(ões) marcada(s) como ${prePaga ? "Pré-paga" : "Pós-paga"}.`);
   };
 
-  // Copia de uma vez o telefone (só dígitos, sem +55) de todos os locatários com locação
-  // ativa — pra colar direto em ferramentas de disparo em massa (ex: WhatsApp Business).
+  // Copia de uma vez o telefone (DDI 55 + DDD + número, só dígitos) de todos os locatários
+  // com locação ativa — pra colar direto em ferramentas de disparo em massa (ex: WhatsApp Business).
   const handleCopyActivePhones = () => {
     const seen = new Set<string>();
     const numbers: string[] = [];
     rentals.filter(r => r.status === "ativa").forEach(r => {
       const client = clients.find(c => c.id === r.clienteId);
-      const digits = (client?.telefone || "").replace(/\D/g, "");
+      const digits = sanitizeWhatsAppNumber(client?.telefone);
       if (!digits || seen.has(digits)) return;
       seen.add(digits);
       numbers.push(digits);
