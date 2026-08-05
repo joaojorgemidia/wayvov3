@@ -1048,6 +1048,26 @@ export default function LocacoesPage() {
     toast.success(`${targets.length} locação(ões) marcada(s) como ${prePaga ? "Pré-paga" : "Pós-paga"}.`);
   };
 
+  // Copia de uma vez o telefone (só dígitos, sem +55) de todos os locatários com locação
+  // ativa — pra colar direto em ferramentas de disparo em massa (ex: WhatsApp Business).
+  const handleCopyActivePhones = () => {
+    const seen = new Set<string>();
+    const numbers: string[] = [];
+    rentals.filter(r => r.status === "ativa").forEach(r => {
+      const client = clients.find(c => c.id === r.clienteId);
+      const digits = (client?.telefone || "").replace(/\D/g, "");
+      if (!digits || seen.has(digits)) return;
+      seen.add(digits);
+      numbers.push(digits);
+    });
+    if (numbers.length === 0) {
+      toast.error("Nenhum telefone encontrado entre os locatários ativos.");
+      return;
+    }
+    navigator.clipboard.writeText(numbers.join(", "));
+    toast.success(`${numbers.length} telefone(s) copiado(s).`);
+  };
+
   const handleBulkDelete = async () => {
     const toDelete = rentals.filter(r => selectedIds.has(r.id));
     const activeMotoIds = toDelete.filter(r => r.status === "ativa").map(r => r.motoId).filter(Boolean);
@@ -1339,6 +1359,9 @@ export default function LocacoesPage() {
           )}
           <Button variant="outline" onClick={() => setHistoricalOpen(true)} className="gap-2">
             <History className="h-4 w-4" /> Locação Encerrada
+          </Button>
+          <Button variant="outline" onClick={handleCopyActivePhones} className="gap-2" title="Copia o telefone de todos os locatários com locação ativa">
+            <Copy className="h-4 w-4" /> Copiar Telefones (Ativos)
           </Button>
         </div>
       </div>
