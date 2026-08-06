@@ -13,7 +13,8 @@ import { ptBR } from "date-fns/locale";
 import { BarChart, Bar, XAxis, YAxis, ResponsiveContainer, CartesianGrid, Tooltip as RechartsTooltip } from "recharts";
 import { useCompany } from "@/contexts/CompanyContext";
 import { sanitizeWhatsAppNumber } from "@/lib/whatsapp";
-import { DEFAULT_COBRANCA_CONFIG } from "@/lib/companies";
+import { DEFAULT_COBRANCA_CONFIG, isLoca2Rodas } from "@/lib/companies";
+import { VehicleFilterChips, VehicleFilter } from "@/components/VehicleFilterChips";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -308,6 +309,16 @@ export default function LocacoesPage() {
   const clients = cache.clients;
   const [search, setSearch] = useState("");
 
+  // Filtro Motos/Carros — só relevante pra Loca2Rodas, única locadora com carros na frota.
+  // Para as demais empresas `rentalsScoped` é sempre igual a `rentals` (tudo é moto).
+  const showVehicleFilter = isLoca2Rodas(activeCompany);
+  const [vehicleFilter, setVehicleFilter] = useState<VehicleFilter>("todos");
+  const motosById = useMemo(() => new Map(motos.map(m => [m.id, m])), [motos]);
+  const rentalsScoped = useMemo(() => {
+    if (!showVehicleFilter || vehicleFilter === "todos") return rentals;
+    return rentals.filter(r => (motosById.get(r.motoId)?.categoriaVeiculo || "moto") === vehicleFilter);
+  }, [rentals, motosById, showVehicleFilter, vehicleFilter]);
+
   const cobrancaCfg = activeCompany?.cobrancaConfig ?? DEFAULT_COBRANCA_CONFIG;
 
   useEffect(() => { setRentals(cache.rentals); }, [cache.rentals]);
@@ -481,23 +492,23 @@ export default function LocacoesPage() {
   // Finalizadas/canceladas: pela data de fim (cai para a data de início se não tiver
   // dataFim registrada, pra não sumir da lista quando um período for selecionado).
   const ativas = useMemo(
-    () => rentals.filter(r => r.status === "ativa" && matchSearch(r) && statsInRange(r.dataInicio)),
-    [rentals, search, motos, clients, statsRange],
+    () => rentalsScoped.filter(r => r.status === "ativa" && matchSearch(r) && statsInRange(r.dataInicio)),
+    [rentalsScoped, search, motos, clients, statsRange],
   );
   const finalizadas = useMemo(
-    () => rentals.filter(r =>
+    () => rentalsScoped.filter(r =>
       (r.status === "finalizada" || r.status === "cancelada") && matchSearch(r) && statsInRange(r.dataFim || r.dataInicio),
     ),
-    [rentals, search, motos, clients, statsRange],
+    [rentalsScoped, search, motos, clients, statsRange],
   );
 
   const locacoesNoPeriodo = useMemo(
-    () => rentals.filter(r => statsInRange(r.dataInicio)).length,
-    [rentals, statsRange],
+    () => rentalsScoped.filter(r => statsInRange(r.dataInicio)).length,
+    [rentalsScoped, statsRange],
   );
   const finalizadasNoPeriodo = useMemo(
-    () => rentals.filter(r => r.status === "finalizada" && statsInRange(r.dataFim)).length,
-    [rentals, statsRange],
+    () => rentalsScoped.filter(r => r.status === "finalizada" && statsInRange(r.dataFim)).length,
+    [rentalsScoped, statsRange],
   );
 
   // Gráfico de evolução: locações iniciadas por mês, últimos 6 meses (janela fixa,
@@ -510,27 +521,27 @@ export default function LocacoesPage() {
       meses.push({ key, mes: format(ref, "MMM/yy", { locale: ptBR }), locacoes: 0 });
     }
     const byKey = new Map(meses.map(m => [m.key, m]));
-    for (const r of rentals) {
+    for (const r of rentalsScoped) {
       if (!r.dataInicio) continue;
       const key = r.dataInicio.slice(0, 7);
       const m = byKey.get(key);
       if (m) m.locacoes++;
     }
     return meses;
-  }, [rentals]);
+  }, [rentalsScoped]);
 
   // Indicativo de dias com mais locação: conta início de locação por dia da semana,
   // dentro do período selecionado acima (ou todo o histórico, se "Todos").
   const DIAS_SEMANA = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
   const locacoesPorDiaSemana = useMemo(() => {
     const counts = [0, 0, 0, 0, 0, 0, 0];
-    for (const r of rentals) {
+    for (const r of rentalsScoped) {
       if (!r.dataInicio || !statsInRange(r.dataInicio)) continue;
       counts[parseISO(r.dataInicio).getDay()]++;
     }
     const max = Math.max(...counts);
     return DIAS_SEMANA.map((dia, i) => ({ dia, total: counts[i], isMax: max > 0 && counts[i] === max }));
-  }, [rentals, statsRange]);
+  }, [rentalsScoped, statsRange]);
 
   const [emailDrafts, setEmailDrafts] = useState<Record<string, string>>({});
   const [emailSaving, setEmailSaving] = useState<Set<string>>(new Set());
@@ -556,11 +567,11 @@ export default function LocacoesPage() {
   const clientesSemEmail = useMemo(() => {
     const clientsMap = new Map(clients.map(c => [c.id, c]));
     const motosMap = new Map(motos.map(m => [m.id, m]));
-    return rentals
+    return rentalsScoped
       .filter(r => r.status === "ativa")
       .map(r => ({ rental: r, client: clientsMap.get(r.clienteId), moto: motosMap.get(r.motoId) }))
       .filter(({ client }) => !client?.email);
-  }, [rentals, clients, motos]);
+  }, [rentalsScoped, clients, motos]);
 
   const handleSaveRental = async (rental: Rental, client: Client) => {
     const allClients = loadClients();
@@ -1054,7 +1065,7 @@ export default function LocacoesPage() {
   const handleCopyActivePhones = () => {
     const seen = new Set<string>();
     const numbers: string[] = [];
-    rentals.filter(r => r.status === "ativa").forEach(r => {
+    rentalsScoped.filter(r => r.status === "ativa").forEach(r => {
       const client = clients.find(c => c.id === r.clienteId);
       const digits = sanitizeWhatsAppNumber(client?.telefone);
       if (!digits || seen.has(digits)) return;
@@ -1326,7 +1337,7 @@ export default function LocacoesPage() {
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-2xl font-bold text-foreground">Locações</h2>
-          <p className="text-sm text-muted-foreground">{ativas.length} ativas · {rentals.length} total</p>
+          <p className="text-sm text-muted-foreground">{ativas.length} ativas · {rentalsScoped.length} total</p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           <ImportExportBar
@@ -1367,9 +1378,14 @@ export default function LocacoesPage() {
         </div>
       </div>
 
-      <div className="relative max-w-md">
-        <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-        <Input placeholder="Buscar nº, placa ou cliente..." value={search} onChange={e => setSearch(e.target.value)} className="pl-9" />
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+        <div className="relative max-w-md flex-1">
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input placeholder="Buscar nº, placa ou cliente..." value={search} onChange={e => setSearch(e.target.value)} className="pl-9" />
+        </div>
+        {showVehicleFilter && (
+          <VehicleFilterChips value={vehicleFilter} onChange={setVehicleFilter} />
+        )}
       </div>
 
       <div className="flex flex-col gap-3 rounded-lg border bg-muted/30 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">

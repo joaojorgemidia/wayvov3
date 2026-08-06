@@ -18,6 +18,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { ensureVistoriaFolders } from "@/lib/vistoria-folders";
 import { useCompany } from "@/contexts/CompanyContext";
 import { isLoca2Rodas as checkIsLoca2Rodas } from "@/lib/companies";
+import { VehicleFilterChips } from "@/components/VehicleFilterChips";
 
 export default function MotosPage() {
   const [searchParams] = useSearchParams();
@@ -257,35 +258,6 @@ export default function MotosPage() {
 
       <MotoDialog open={dialogOpen} onOpenChange={setDialogOpen} moto={editMoto} onSave={handleSave} mode={dialogMode} defaultCategoria={addCategoria} />
       <SaleDialog open={saleDialogOpen} onOpenChange={setSaleDialogOpen} moto={saleMoto} onConfirm={handleSaleConfirm} />
-    </div>
-  );
-}
-
-function VehicleFilterChips({ value, onChange }: { value: "todos" | "moto" | "carro"; onChange: (v: "todos" | "moto" | "carro") => void }) {
-  const options: { value: "todos" | "moto" | "carro"; label: string }[] = [
-    { value: "todos", label: "Todos" },
-    { value: "moto", label: "Motos" },
-    { value: "carro", label: "Carros" },
-  ];
-  return (
-    <div className="flex gap-1.5 flex-wrap">
-      {options.map((o) => {
-        const active = value === o.value;
-        return (
-          <button
-            key={o.value}
-            type="button"
-            onClick={() => onChange(o.value)}
-            className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition-all ${
-              active
-                ? "bg-primary text-primary-foreground shadow-sm shadow-primary/30"
-                : "bg-muted/60 text-muted-foreground hover:bg-muted hover:text-foreground"
-            }`}
-          >
-            {o.label}
-          </button>
-        );
-      })}
     </div>
   );
 }
