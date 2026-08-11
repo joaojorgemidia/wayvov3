@@ -1354,13 +1354,16 @@ export default function FinanceiroPage() {
     // anterior confirmar — sem essa trava, um re-render no meio de um save já viu a mesma
     // "lacuna" de ocorrências futuras e criava 24 meses duplicados (aconteceu em produção).
     if (materializingRef.current) return;
-    // Lançamentos vinculados a uma locação (rentalId) já têm sua própria recorrência
-    // controlada pelo motor de cobrança de aluguel (LocacoesPage.tsx). Se um deles for
-    // marcado como recorrente/despesa fixa aqui (ex.: edição manual por engano), esse
-    // efeito ficaria recriando para sempre ocorrências antigas já pagas/renegociadas —
-    // já aconteceu em produção com uma cobrança que tinha sido quitada num acordo de
-    // parcelamento e voltava sozinha. Por isso ignoramos qualquer base com rentalId.
-    const bases = entries.filter(e => !e.fixedOriginId && !e.rentalId && (e.recorrente || e.despesaFixa));
+    // Cobranças de aluguel vinculadas a uma locação (rentalId + categoria "aluguel") já têm
+    // sua própria recorrência controlada pelo motor de cobrança de aluguel (LocacoesPage.tsx).
+    // Se uma delas for marcada como recorrente/despesa fixa aqui (ex.: edição manual por
+    // engano), esse efeito ficaria recriando para sempre ocorrências antigas já pagas/
+    // renegociadas — já aconteceu em produção com uma cobrança quitada num acordo de
+    // parcelamento que voltava sozinha. Por isso ignoramos SÓ aluguel com rentalId.
+    // Outras categorias (ex.: compra_moto/financiamento) podem ter um rentalId "emprestado"
+    // por resolveAssociations (mesma moto em locação ativa) sem serem cobrança de aluguel —
+    // essas continuam precisando deste efeito pra gerar as parcelas futuras.
+    const bases = entries.filter(e => !e.fixedOriginId && !(e.rentalId && e.categoria === "aluguel") && (e.recorrente || e.despesaFixa));
     if (!bases.length) return;
 
     const nextEntries = [...entries];
@@ -4366,6 +4369,11 @@ export default function FinanceiroPage() {
                               )}
                               <CobrancaConsolidadaBadge entry={e} />
                             </div>
+                            {e.categoria === "transferencia" && e.descricao && (
+                              <span className="text-xs text-muted-foreground mt-0.5 block truncate" title={e.descricao}>
+                                {e.descricao}
+                              </span>
+                            )}
                             {fmtClientName && (
                               <span className="text-xs text-muted-foreground mt-0.5 block">{fmtClientName}</span>
                             )}
@@ -4983,7 +4991,33 @@ export default function FinanceiroPage() {
             <DialogTitle>{mode === "add" ? "Novo Lançamento" : "Editar Lançamento"}</DialogTitle>
           </DialogHeader>
 
-          {/* ── Tipo toggle ── */}
+          {/* ── Aviso: este lançamento é metade de uma transferência ── */}
+          {mode === "edit" && form.categoria === "transferencia" && form.serieId && (() => {
+            const partner = entries.find(e => e.serieId === form.serieId && e.id !== form.id);
+            if (!partner) return null;
+            const isSaida = form.tipo === "despesa";
+            const contaOrigem = isSaida ? form.conta : partner.conta;
+            const contaDestino = isSaida ? partner.conta : form.conta;
+            return (
+              <div className="flex items-center justify-between gap-2 rounded-lg border border-primary/20 bg-primary/5 px-3 py-2 text-sm">
+                <div className="flex items-center gap-2 min-w-0">
+                  <ArrowLeftRight className="h-3.5 w-3.5 text-primary shrink-0" />
+                  <span className="text-muted-foreground shrink-0">{isSaida ? "Saída" : "Entrada"} de transferência</span>
+                  <span className="flex items-center gap-1.5 min-w-0 font-medium text-foreground">
+                    {contaOrigem && <BankIcon conta={contaOrigem} size={18} />}
+                    <span className="truncate">{contaOrigem || "—"}</span>
+                    <span className="text-muted-foreground/60">→</span>
+                    {contaDestino && <BankIcon conta={contaDestino} size={18} />}
+                    <span className="truncate">{contaDestino || "—"}</span>
+                  </span>
+                </div>
+                <HelpTip text="Ao salvar, valor, data, status (pago) e observação são copiados automaticamente para a outra ponta da transferência. Conta e Categoria valem só para este lado." />
+              </div>
+            );
+          })()}
+
+          {/* ── Tipo toggle (oculto em transferências: a direção já é mostrada no aviso acima, e mudar aqui zeraria a categoria) ── */}
+          {form.categoria !== "transferencia" && (
           <div className="flex gap-2">
             <Button type="button" variant={form.tipo === "receita" ? "default" : "outline"}
               className={`flex-1 ${form.tipo === "receita" ? "bg-success hover:bg-success/90 text-success-foreground" : ""}`}
@@ -4996,9 +5030,10 @@ export default function FinanceiroPage() {
               <TrendingDown className="h-4 w-4 mr-2" /> Despesa
             </Button>
           </div>
+          )}
 
-          {/* ── Two-column layout ── */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1">
+          {/* ── Layout: 2 colunas normalmente, 1 coluna compacta para transferências ── */}
+          <div className={`grid grid-cols-1 gap-x-6 gap-y-1 ${form.categoria === "transferencia" ? "sm:max-w-sm" : "sm:grid-cols-2"}`}>
 
             {/* ═══ LEFT COLUMN ═══ */}
             <div className="space-y-4">
@@ -5140,9 +5175,24 @@ export default function FinanceiroPage() {
                   </div>
                 )}
               </div>
+
+              {/* Ignorar transação — para transferências, fica aqui na coluna única */}
+              {form.categoria === "transferencia" && (
+                <div className="flex items-center justify-between gap-3 border-t border-border/50 pt-3">
+                  <div className="flex flex-col gap-0.5">
+                    <div className="flex items-center gap-2">
+                      <EyeOff className="h-4 w-4 text-muted-foreground" />
+                      <Label className="text-sm">Ignorar transação</Label>
+                    </div>
+                    <p className="text-xs text-muted-foreground ml-6">Transações ignoradas não são contabilizadas nos totais de receitas e despesas</p>
+                  </div>
+                  <Switch checked={form.ignorada || false} onCheckedChange={v => setForm({ ...form, ignorada: v })} />
+                </div>
+              )}
             </div>
 
-            {/* ═══ RIGHT COLUMN ═══ */}
+            {/* ═══ RIGHT COLUMN (oculta em transferências — nada aqui se aplica) ═══ */}
+            {form.categoria !== "transferencia" && (
             <div className="space-y-4 sm:border-l sm:border-border/50 sm:pl-6">
               {/* Tags */}
               <div className="grid gap-1.5">
@@ -5342,6 +5392,7 @@ export default function FinanceiroPage() {
                 <Switch checked={form.ignorada || false} onCheckedChange={v => setForm({ ...form, ignorada: v })} />
               </div>
             </div>
+            )}
           </div>
 
           {/* Footer */}
