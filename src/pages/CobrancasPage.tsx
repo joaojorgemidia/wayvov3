@@ -636,7 +636,7 @@ export default function CobrancasPage() {
         await saveMotos(next);
         // Etapa de confirmação para o locatário (mesma da página Troca de Óleo)
         if (motoBefore) {
-            const cfg = brandConfigFor(motoBefore.modelo, loadBrandConfig());
+            const cfg = brandConfigFor(motoBefore.modelo, loadBrandConfig(), motoBefore.categoriaVeiculo);
             const proxOleoKm = km + cfg.oilKm;
             const proxFiltroKm = cfg.filterKm ? km + cfg.filterKm : null;
             const cliente = getCliente(item.clienteId);
@@ -710,7 +710,7 @@ export default function CobrancasPage() {
     const moto = getDataCache().motos.find((m) => m.id === resolveItem.motoId);
     if (!moto) return null;
     const km = parseInt(resolveData.km, 10) || 0;
-    const cfg = brandConfigFor(moto.modelo, loadBrandConfig());
+    const cfg = brandConfigFor(moto.modelo, loadBrandConfig(), moto.categoriaVeiculo);
     const proxOleo = km > 0 ? km + cfg.oilKm : null;
     const proxFiltro = km > 0 && cfg.filterKm ? km + cfg.filterKm : null;
     return { km, proxOleo, proxFiltro };

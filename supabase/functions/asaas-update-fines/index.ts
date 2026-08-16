@@ -182,7 +182,13 @@ serve(async (req) => {
       if (multaFixa > 0) parts.push(`Multa ${fmtBRL(multaFixa)}`);
       if (jurosDiarioTotal > 0) parts.push(`Juros ${fmtBRL(jurosDiario)}/dia × ${diasAtraso}d = ${fmtBRL(jurosDiarioTotal)}`);
       if (jurosMesTotal > 0) parts.push(`Juros ${jurosMes}%/mês (${diasAtraso}d) = ${fmtBRL(jurosMesTotal)}`);
-      const explicacao = `${parts.join(" + ")} = ${fmtBRL(valorAtualizado)} (${diasAtraso}d em atraso)`;
+      // O Asaas obriga a mover o "vencimento" oficial do boleto pra hoje sempre que a
+      // cobrança já está vencida (boleto não pode circular com data passada) — por isso
+      // o campo "Data de vencimento" exibido ao cliente mostra hoje, mesmo a cobrança já
+      // estando atrasada há dias. Pra não parecer contraditório, a descrição deixa
+      // explícito qual era o vencimento original.
+      const vencOriginal = fmtDM(new Date(dueStr + "T00:00:00"));
+      const explicacao = `${parts.join(" + ")} = ${fmtBRL(valorAtualizado)} (venceu ${vencOriginal}, ${diasAtraso}d em atraso)`;
 
       let semanaRef: string | null = null;
       if (rental?.data_inicio) {

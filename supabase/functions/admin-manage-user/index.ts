@@ -26,13 +26,46 @@ Deno.serve(async (req) => {
     if (!caller) return json({ error: "Unauthorized" }, 401);
 
     const adminClient = createClient(supabaseUrl, serviceRoleKey);
-    const { data: callerRoles } = await adminClient
-      .from("user_roles").select("role").eq("user_id", caller.id).eq("role", "admin");
-    if (!callerRoles?.length) return json({ error: "Admin only" }, 403);
+    const { data: callerRoleRows } = await adminClient
+      .from("user_roles").select("role").eq("user_id", caller.id);
+    const callerRoles = (callerRoleRows || []).map((r: any) => r.role);
+    const callerIsSuperAdmin = callerRoles.includes("superadmin");
+    const callerIsAdmin = callerIsSuperAdmin || callerRoles.includes("admin");
+    if (!callerIsAdmin) return json({ error: "Admin only" }, 403);
+
+    // "admin" é um cargo POR EMPRESA (gestor de uma locadora) — diferente de
+    // "superadmin" (staff da plataforma, gerencia todas as empresas). Sem essa
+    // distinção, o gestor de UMA empresa conseguia editar/excluir usuários de
+    // QUALQUER empresa, se dar acesso a empresas que não são dele, ou até se
+    // promover a superadmin — daí a régua abaixo pra quem não é superadmin.
+    let callerCompanyIds: string[] = [];
+    if (!callerIsSuperAdmin) {
+      const { data: callerCompanies } = await adminClient
+        .from("user_companies").select("company_id").eq("user_id", caller.id);
+      callerCompanyIds = (callerCompanies || []).map((c: any) => c.company_id);
+    }
 
     const body = await req.json();
     const { action, user_id } = body;
     if (!action || !user_id) return json({ error: "Missing fields" }, 400);
+
+    // Um admin de empresa só pode mexer em usuários que já são exclusivamente
+    // das empresas dele — nunca em alguém de outra empresa nem em um superadmin.
+    if (!callerIsSuperAdmin) {
+      const [{ data: targetRoleRows }, { data: targetCompanyRows }] = await Promise.all([
+        adminClient.from("user_roles").select("role").eq("user_id", user_id),
+        adminClient.from("user_companies").select("company_id").eq("user_id", user_id),
+      ]);
+      const targetRoles = (targetRoleRows || []).map((r: any) => r.role);
+      if (targetRoles.includes("superadmin")) {
+        return json({ error: "Você não pode gerenciar um superadmin" }, 403);
+      }
+      const targetCompanyIds = (targetCompanyRows || []).map((c: any) => c.company_id);
+      const outsideCaller = targetCompanyIds.some((cid: string) => !callerCompanyIds.includes(cid));
+      if (targetCompanyIds.length > 0 && outsideCaller) {
+        return json({ error: "Você só pode gerenciar usuários da sua própria empresa" }, 403);
+      }
+    }
 
     if (action === "delete") {
       if (user_id === caller.id) return json({ error: "Você não pode excluir a si mesmo" }, 400);
@@ -46,6 +79,15 @@ Deno.serve(async (req) => {
 
     if (action === "update") {
       const { display_name, email, password, role, company_ids } = body;
+
+      if (!callerIsSuperAdmin) {
+        if (role === "superadmin") {
+          return json({ error: "Você não pode conceder o cargo superadmin" }, 403);
+        }
+        if (Array.isArray(company_ids) && company_ids.some((cid: string) => !callerCompanyIds.includes(cid))) {
+          return json({ error: "Você só pode dar acesso a empresas que você mesmo gerencia" }, 403);
+        }
+      }
 
       const updates: any = {};
       if (email) updates.email = email;

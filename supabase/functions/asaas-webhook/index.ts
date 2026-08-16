@@ -158,6 +158,7 @@ async function syncFeesFromTransactions(
   payment: Record<string, any>,
   linkFields: LinkFields,
   creditDate: string,
+  displayDate: string,
 ): Promise<number> {
   const today = new Date().toISOString().split("T")[0];
   if (creditDate > today) {
@@ -214,8 +215,8 @@ async function syncFeesFromTransactions(
       descricao: desc,
       observacao: desc,
       valor: feeAmount,
-      data: creditDate,
-      data_prevista: creditDate,
+      data: displayDate,
+      data_prevista: displayDate,
       pago: true,
       conta: "Asaas",
       natureza: linkFields.placa || linkFields.moto_id ? "operacional" : "administrativa",
@@ -255,7 +256,7 @@ async function syncFeeFromNetValue(
   supabase: ReturnType<typeof createClient>,
   payment: Record<string, any>,
   linkFields: LinkFields,
-  creditDate: string,
+  displayDate: string,
 ): Promise<number> {
   const feeAmount = calcPlatformFee(payment);
   if (feeAmount <= 0.005) return 0;
@@ -272,8 +273,8 @@ async function syncFeeFromNetValue(
     descricao,
     observacao: descricao,
     valor: feeAmount,
-    data: creditDate,
-    data_prevista: creditDate,
+    data: displayDate,
+    data_prevista: displayDate,
     pago: true,
     conta: "Asaas",
     natureza: linkFields.placa || linkFields.moto_id ? "operacional" : "administrativa",
@@ -423,13 +424,23 @@ serve(async (req) => {
 
     const { data: entry, error } = await supabase
       .from("financial_entries")
-      .select("id, pago, asaas_status, asaas_payment_id, company_id, cliente_id, cliente_nome, moto_id, placa, rental_id, data_prevista, valor, observacao")
+      .select("id, categoria, pago, asaas_status, asaas_payment_id, company_id, cliente_id, cliente_nome, moto_id, placa, rental_id, data_prevista, valor, observacao")
       .eq("asaas_payment_id", payment.id)
       .single();
 
     if (error || !entry) {
       console.warn(`[asaas-webhook] entrada não encontrada para ${payment.id}`);
       return new Response(JSON.stringify({ ok: true, notFound: true }), { status: 200 });
+    }
+
+    // "juros_atraso"/"taxas" são lançamentos DERIVADOS da cobrança de aluguel que gerou
+    // o mesmo pagamento — nunca a fonte da verdade para vínculo/valor de um webhook de
+    // pagamento. Ver mesmo guard em asaas-sync-fees (histórico: valor de juros inflado
+    // e rótulo de semana corrompido ao reprocessar um lançamento derivado como se fosse
+    // o original).
+    if (entry.categoria === "juros_atraso" || entry.categoria === "taxas") {
+      console.log(`[asaas-webhook] entry=${entry.id} é categoria "${entry.categoria}" (derivada) — ignorando`);
+      return new Response(JSON.stringify({ ok: true, skipped: true, reason: "derived-entry" }), { status: 200 });
     }
 
     // RECEIVED_IN_CASH é o status usado quando o próprio app marca manualmente um
@@ -443,7 +454,11 @@ serve(async (req) => {
     if (payment.bankSlipUrl) updates.asaas_boleto_url = payment.bankSlipUrl;
     if (payment.invoiceUrl) updates.asaas_invoice_url = payment.invoiceUrl;
 
-    const paymentDate = payment.creditDate || payment.paymentDate || payment.confirmedDate || new Date().toISOString().split("T")[0];
+    // Prioriza a data de recebimento (confirmedDate/paymentDate) sobre creditDate (data de
+    // compensação bancária, D+1 útil pro boleto) — mantém aluguel/taxa/juros do mesmo
+    // pagamento no mesmo dia no Financeiro. creditDate só é usado, separadamente, pra
+    // consultar a API de transações (que só existe a partir da data de compensação).
+    const paymentDate = payment.confirmedDate || payment.paymentDate || payment.creditDate || new Date().toISOString().split("T")[0];
 
     if (newStatus === "RECEIVED" && !isReceivedInCash) {
       updates.pago = true;
@@ -482,9 +497,9 @@ serve(async (req) => {
 
         // Primária: taxas via financialTransactions (boleto/PIX + mensageria)
         // Fallback: apenas taxa de processamento via value - netValue
-        const feesFromTx = await syncFeesFromTransactions(supabase, apiKey, fullPayment, linkFields, creditDate);
+        const feesFromTx = await syncFeesFromTransactions(supabase, apiKey, fullPayment, linkFields, creditDate, paymentDate);
         if (feesFromTx === 0) {
-          await syncFeeFromNetValue(supabase, fullPayment, linkFields, creditDate);
+          await syncFeeFromNetValue(supabase, fullPayment, linkFields, paymentDate);
         }
 
         await registerJurosMulta(supabase, entry, fullPayment, paymentDate);

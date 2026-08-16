@@ -43,7 +43,7 @@ const categoriaLabel: Record<string, string> = {
 
 const emptyFine = (): Fine => ({
   id: crypto.randomUUID(), motoId: "", clienteId: null, rentalId: null,
-  dataMulta: localToday(), dataVencimento: null, dataNotificacao: null,
+  dataMulta: localToday(), dataVencimento: localToday(), dataNotificacao: null,
   valor: 0, descricao: "", status: "pendente", responsavel: "cliente",
   origem: "manual", autoInfracao: null, codigoInfracao: null, numeroRenainf: null,
   orgaoCompetencia: null, horaInfracao: null, localInfracao: null,
@@ -152,7 +152,9 @@ export default function MultasPage() {
 
   const filtered = useMemo(() => fines.filter(f =>
     getMotoPlaca(f.motoId).toLowerCase().includes(search.toLowerCase()) ||
-    f.descricao.toLowerCase().includes(search.toLowerCase())
+    f.descricao.toLowerCase().includes(search.toLowerCase()) ||
+    (f.autoInfracao || "").toLowerCase().includes(search.toLowerCase()) ||
+    (f.numeroRenainf || "").toLowerCase().includes(search.toLowerCase())
   ), [fines, search, motos]);
 
   // Bloqueia/avisa multa repetida: Auto da Infração e Nº RENAINF são identificadores
@@ -201,7 +203,8 @@ export default function MultasPage() {
     const valor = parseFloat(valorStr.replace(/\./g, "").replace(",", ".")) || 0;
     const responsavel: Fine["responsavel"] = gerarEntrada ? "cliente" : "locadora";
     const finalForm = { ...form, valor, responsavel };
-    const isNew = !fines.find(f => f.id === form.id);
+    const originalFine = fines.find(f => f.id === form.id);
+    const isNew = !originalFine;
 
     if (findDuplicateFine(finalForm)) {
       toast.error(duplicateFineMessage(finalForm));
@@ -210,6 +213,29 @@ export default function MultasPage() {
 
     if (isNew) persist([...fines, finalForm]);
     else persist(fines.map(f => f.id === form.id ? finalForm : f));
+
+    // Editar a Data de Vencimento aqui não pode deixar a cobrança já gerada no Financeiro
+    // (a receita de repasse ao locatário, vinculada por fineId) com o vencimento antigo —
+    // senão a régua de cobrança e o boleto do Asaas cobram na data errada.
+    if (!isNew && originalFine.dataVencimento !== finalForm.dataVencimento) {
+      const allFinancial = loadFinancial();
+      const linked = allFinancial.find(e => e.tipo === "receita" && e.fineId === finalForm.id && !e.pago);
+      if (linked) {
+        const novoVencimento = finalForm.dataVencimento!;
+        try {
+          await saveFinancial(allFinancial.map(e => e.id === linked.id ? { ...e, data: novoVencimento, dataPrevista: novoVencimento } : e));
+          const asaasTerminal = ["RECEIVED", "CANCELLED", "REFUNDED", "REFUND_REQUESTED"];
+          if (linked.asaasPaymentId && !asaasTerminal.includes(linked.asaasStatus || "")) {
+            const { error } = await supabase.functions.invoke("asaas-update-payment", {
+              body: { asaasPaymentId: linked.asaasPaymentId, companyId: activeCompany?.id, dueDate: novoVencimento },
+            });
+            if (error) toast.warning("Multa salva, mas não foi possível atualizar o vencimento do boleto no Asaas.");
+          }
+        } catch {
+          toast.warning("Multa salva, mas não foi possível atualizar o vencimento da cobrança no Financeiro.");
+        }
+      }
+    }
 
     // No cadastro, só a receita (cobrança ao locatário) é lançada — quem paga o órgão (a
     // locadora ou o próprio locatário direto), com qual valor/data/conta, só é decidido na
@@ -622,7 +648,7 @@ export default function MultasPage() {
 
       <div className="relative max-w-md">
         <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-        <Input placeholder="Buscar placa ou descrição..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9" />
+        <Input placeholder="Buscar placa, descrição ou auto da infração..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9" />
       </div>
 
       {filtered.length === 0 ? (

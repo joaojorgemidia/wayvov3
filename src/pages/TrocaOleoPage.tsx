@@ -11,13 +11,16 @@ import {
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { useDataCacheSnapshot } from "@/lib/data-cache";
+import { useCompany } from "@/contexts/CompanyContext";
+import { isLoca2Rodas } from "@/lib/companies";
+import { VehicleFilterChips, VehicleFilter } from "@/components/VehicleFilterChips";
 import { saveMotos } from "@/lib/store";
 import { Motorcycle, OilChangeRecord } from "@/lib/types";
 import { formatDate } from "@/lib/alerts";
 import {
   ChevronDown, ChevronRight, Pencil, Droplets, Search, Settings,
   Copy, Check, MessageCircle, AlertTriangle, TrendingUp, Activity,
-  Repeat, Send, Phone, BellOff, Clock,
+  Repeat, Send, Phone, BellOff, Clock, Trash2,
 } from "lucide-react";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem,
@@ -223,9 +226,18 @@ const TROCA_OLEO_HELP: HowItWorksContent = {
 // ============== Página ==============
 export default function TrocaOleoPage() {
   const cache = useDataCacheSnapshot();
-  const motos = cache.motos.filter((m) => m.status !== "vendida" && m.status !== "inativa");
+  const { activeCompany } = useCompany();
+  const motosAtivas = cache.motos.filter((m) => m.status !== "vendida" && m.status !== "inativa");
   const rentals = cache.rentals;
   const clients = cache.clients;
+
+  // Filtro Motos/Carros — só relevante pra Loca2Rodas, única locadora com carros na frota.
+  const showVehicleFilter = isLoca2Rodas(activeCompany);
+  const [vehicleFilter, setVehicleFilter] = useState<VehicleFilter>("todos");
+  const motos = useMemo(() => {
+    if (!showVehicleFilter || vehicleFilter === "todos") return motosAtivas;
+    return motosAtivas.filter((m) => (m.categoriaVeiculo || "moto") === vehicleFilter);
+  }, [motosAtivas, showVehicleFilter, vehicleFilter]);
 
   const [brandConfig, setBrandConfig] = useState<Record<string, BrandConfig>>(() => loadBrandConfig());
   const [globalConfig, setGlobalConfig] = useState<OilGlobalConfig>(() => loadGlobalConfig());
@@ -470,6 +482,25 @@ export default function TrocaOleoPage() {
     URL.revokeObjectURL(url);
   }
 
+  // Copia de uma vez o telefone (DDI 55 + DDD + número, só dígitos) de todos os locatários
+  // com troca de óleo vencida — pra colar direto em ferramentas de disparo em massa.
+  function handleCopyOverduePhones() {
+    const seen = new Set<string>();
+    const numbers: string[] = [];
+    vencidasList.forEach((m) => {
+      const digits = sanitizeWhatsAppNumber(motoClientMap.get(m.id)?.telefone);
+      if (!digits || seen.has(digits)) return;
+      seen.add(digits);
+      numbers.push(digits);
+    });
+    if (numbers.length === 0) {
+      toast.error("Nenhum telefone encontrado entre as trocas de óleo vencidas.");
+      return;
+    }
+    navigator.clipboard.writeText(numbers.join(", "));
+    toast.success(`${numbers.length} telefone(s) copiado(s).`);
+  }
+
   function persistMotos(updated: Motorcycle[]) {
     saveMotos(updated);
   }
@@ -479,6 +510,24 @@ export default function TrocaOleoPage() {
     persistMotos(next);
     setEditMoto(null);
     toast.success("Moto atualizada");
+  }
+
+  // Remove um registro de troca cadastrado errado. Se o registro removido era o mais
+  // recente, recalcula ultimaTrocaOleo/kmTrocaOleo (campos legados ainda lidos direto por
+  // alerts.ts e VistoriaPage) a partir do que sobrou no histórico — senão essas telas
+  // continuariam mostrando a troca errada mesmo depois de excluída.
+  function handleDeleteOilChange(moto: Motorcycle, recordId: string) {
+    const historico = (moto.historicoOleo || []).filter((r) => r.id !== recordId);
+    const ultima = [...historico].sort((a, b) => new Date(b.data).getTime() - new Date(a.data).getTime())[0] ?? null;
+    const updated: Motorcycle = {
+      ...moto,
+      historicoOleo: historico,
+      ultimaTrocaOleo: ultima?.data ?? null,
+      kmTrocaOleo: ultima?.km ?? null,
+    };
+    const next = cache.motos.map((m) => (m.id === updated.id ? updated : m));
+    persistMotos(next);
+    toast.success("Registro de troca excluído");
   }
 
   function handleRegisterOilChange(moto: Motorcycle, data: string, km: number, trocouFiltro: boolean) {
@@ -502,7 +551,7 @@ export default function TrocaOleoPage() {
       setSnoozeMap(buildSnoozeMap());
     }
 
-    const cfg = brandConfigFor(moto.modelo, brandConfig);
+    const cfg = brandConfigFor(moto.modelo, brandConfig, moto.categoriaVeiculo);
     const proxOleoKm = km + cfg.oilKm;
     const cliente = motoClientMap.get(moto.id)?.nome ?? "";
     const telefone = motoClientMap.get(moto.id)?.telefone ?? "";
@@ -649,7 +698,7 @@ export default function TrocaOleoPage() {
     const clienteNome = clienteInfo?.nome ?? "";
     const telefone = clienteInfo?.telefone ?? "";
     const clienteId = clienteInfo?.id ?? null;
-    const cfg = brandConfigFor(moto.modelo, brandConfig);
+    const cfg = brandConfigFor(moto.modelo, brandConfig, moto.categoriaVeiculo);
     const last = lastOilChange(moto);
     const kmAtual = moto.kmAtual ?? 0;
     const proxOleoKm = status?.proxOleoKm ?? (last?.km ?? kmAtual) + cfg.oilKm;
@@ -816,6 +865,12 @@ export default function TrocaOleoPage() {
               até <span className="font-semibold text-foreground">{kmRange[1].toLocaleString("pt-BR")} km</span>
             </p>
           </div>
+          {showVehicleFilter && (
+            <div className="space-y-2">
+              <Label className="text-sm">Tipo de veículo</Label>
+              <VehicleFilterChips value={vehicleFilter} onChange={setVehicleFilter} />
+            </div>
+          )}
         </CardContent>
       </Card>
 
@@ -839,6 +894,15 @@ export default function TrocaOleoPage() {
         </Button>
         <Button size="sm" variant="outline" onClick={exportCSV}>
           ⬇ Exportar
+        </Button>
+        <Button
+          size="sm"
+          variant="outline"
+          className="gap-1"
+          onClick={handleCopyOverduePhones}
+          title="Copia o telefone de todos os locatários com troca de óleo vencida"
+        >
+          <Copy className="h-4 w-4" /> Copiar Telefones (Vencidas)
         </Button>
       </div>
 
@@ -864,6 +928,7 @@ export default function TrocaOleoPage() {
             onEdit={setEditMoto}
             onCobrar={handleCobrarAtraso}
             onRegistrar={(m) => { setRegisterMoto(m); setNewDialogOpen(true); }}
+            onDeleteHistorico={handleDeleteOilChange}
             onSnooze={(m) => setSnoozeDialog({ open: true, moto: m, days: 3 })}
             emptyMessage="🎉 Nenhuma moto com troca vencida."
           />
@@ -892,6 +957,7 @@ export default function TrocaOleoPage() {
             onEdit={setEditMoto}
             onCobrar={handleCobrarAtraso}
             onRegistrar={(m) => { setRegisterMoto(m); setNewDialogOpen(true); }}
+            onDeleteHistorico={handleDeleteOilChange}
             emptyMessage="Nenhuma moto encontrada."
           />
         </CardContent>
@@ -919,6 +985,7 @@ export default function TrocaOleoPage() {
             onEdit={setEditMoto}
             onCobrar={handleCobrarAtraso}
             onRegistrar={(m) => { setRegisterMoto(m); setNewDialogOpen(true); }}
+            onDeleteHistorico={handleDeleteOilChange}
             emptyMessage="Nenhuma moto em estoque."
           />
         </CardContent>
@@ -944,6 +1011,7 @@ export default function TrocaOleoPage() {
         onOpenChange={setSettingsOpen}
         brandConfig={brandConfig}
         globalConfig={globalConfig}
+        showCarroSection={showVehicleFilter}
         onSave={(brand, global) => {
           setBrandConfig(brand);
           saveBrandConfig(brand);
@@ -1080,7 +1148,7 @@ function SnoozeButton({ motoId, placa }: { motoId: string; placa: string }) {
 // ============== Oil Table (lista reutilizável) ==============
 function OilTable({
   motos, motoStatusMap, motoClientMap,
-  expanded, onToggleExpand, onEdit, onCobrar, onRegistrar, onSnooze, emptyMessage,
+  expanded, onToggleExpand, onEdit, onCobrar, onRegistrar, onSnooze, onDeleteHistorico, emptyMessage,
 }: {
   motos: Motorcycle[];
   motoStatusMap: Map<string, ReturnType<typeof getOilStatus>>;
@@ -1091,6 +1159,7 @@ function OilTable({
   onCobrar: (m: Motorcycle) => void;
   onRegistrar: (m: Motorcycle) => void;
   onSnooze?: (m: Motorcycle) => void;
+  onDeleteHistorico: (m: Motorcycle, recordId: string) => void;
   emptyMessage: string;
 }) {
   return (
@@ -1229,9 +1298,20 @@ function OilTable({
                             {[...m.historicoOleo]
                               .sort((a, b) => new Date(b.data).getTime() - new Date(a.data).getTime())
                               .map((r) => (
-                                <li key={r.id} className="text-muted-foreground">
+                                <li key={r.id} className="text-muted-foreground flex items-center gap-2 group">
                                   <span className="text-foreground font-medium">{formatDate(r.data)}</span>{" "}
                                   — {r.km.toLocaleString("pt-BR")} Km
+                                  <button
+                                    onClick={() => {
+                                      if (confirm(`Excluir a troca de ${formatDate(r.data)} (${r.km.toLocaleString("pt-BR")} Km)? Isso não pode ser desfeito.`)) {
+                                        onDeleteHistorico(m, r.id);
+                                      }
+                                    }}
+                                    className="opacity-0 group-hover:opacity-100 text-muted-foreground/60 hover:text-destructive transition-opacity"
+                                    title="Excluir este registro de troca"
+                                  >
+                                    <Trash2 className="h-3 w-3" />
+                                  </button>
                                 </li>
                               ))}
                           </ul>
@@ -1328,7 +1408,7 @@ function RegisterOilDialog({
   }, [open, preselected]);
 
   const selected = motos.find((m) => m.id === motoId) || null;
-  const cfg = selected ? brandConfigFor(selected.modelo, brandConfig) : null;
+  const cfg = selected ? brandConfigFor(selected.modelo, brandConfig, selected.categoriaVeiculo) : null;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -1473,18 +1553,20 @@ function EditMotoDialog({
 
 // ============== Config Dialog (marca + global) ==============
 function ConfigDialog({
-  open, onOpenChange, brandConfig, globalConfig, onSave,
+  open, onOpenChange, brandConfig, globalConfig, showCarroSection, onSave,
 }: {
   open: boolean;
   onOpenChange: (o: boolean) => void;
   brandConfig: Record<string, BrandConfig>;
   globalConfig: OilGlobalConfig;
+  showCarroSection?: boolean;
   onSave: (brand: Record<string, BrandConfig>, global: OilGlobalConfig) => void;
 }) {
   const [hondaOil, setHondaOil] = useState("");
   const [yamahaOil, setYamahaOil] = useState("");
   const [yamahaFilter, setYamahaFilter] = useState("");
   const [outrasOil, setOutrasOil] = useState("");
+  const [carroOil, setCarroOil] = useState("");
   const [windowKm, setWindowKm] = useState("");
   const [defaultKmWeek, setDefaultKmWeek] = useState("");
   const [useBrandDefault, setUseBrandDefault] = useState(false);
@@ -1513,6 +1595,7 @@ function ConfigDialog({
       setYamahaOil(String(brandConfig.yamaha?.oilKm ?? 2000));
       setYamahaFilter(String(brandConfig.yamaha?.filterKm ?? 4000));
       setOutrasOil(String(brandConfig.outras?.oilKm ?? 1000));
+      setCarroOil(String(brandConfig.carro?.oilKm ?? 10000));
       setWindowKm(String(globalConfig.windowKm));
       setDefaultKmWeek(String(Math.round(globalConfig.defaultKmPerDay * 7)));
       setUseBrandDefault(!!globalConfig.useBrandDefault);
@@ -1586,6 +1669,61 @@ function ConfigDialog({
                   Mínimo de trocas seguidas dentro da tolerância para usar o ritmo do locatário em vez dos dias.
                 </p>
               </div>
+            </div>
+          </section>
+
+          {/* === Intervalo de troca por marca/tipo === */}
+          <section className="space-y-3">
+            <div className="flex items-center gap-2">
+              <div className="h-7 w-7 rounded-md bg-warning/10 flex items-center justify-center">
+                <Droplets className="h-4 w-4 text-warning" />
+              </div>
+              <div>
+                <h3 className="text-sm font-semibold text-foreground">Intervalo de troca (km)</h3>
+                <p className="text-[11px] text-muted-foreground">
+                  A cada quantos km cada marca/tipo de veículo precisa trocar o óleo.
+                </p>
+              </div>
+            </div>
+            <div className="rounded-lg border bg-card p-4 grid grid-cols-2 gap-4">
+              <div className="space-y-1.5">
+                <Label className="text-xs font-medium flex items-center gap-1.5">
+                  <span className="h-2 w-2 rounded-full bg-destructive" />
+                  Honda
+                </Label>
+                <Input type="number" value={hondaOil} onChange={(e) => setHondaOil(e.target.value)} />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs font-medium flex items-center gap-1.5">
+                  <span className="h-2 w-2 rounded-full bg-primary" />
+                  Yamaha
+                </Label>
+                <Input type="number" value={yamahaOil} onChange={(e) => setYamahaOil(e.target.value)} />
+                <Input
+                  type="number"
+                  value={yamahaFilter}
+                  onChange={(e) => setYamahaFilter(e.target.value)}
+                  placeholder="Km da troca de filtro"
+                />
+                <p className="text-[10px] text-muted-foreground">2º campo: intervalo do filtro de óleo</p>
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs font-medium flex items-center gap-1.5">
+                  <span className="h-2 w-2 rounded-full bg-muted-foreground" />
+                  Outras marcas (moto)
+                </Label>
+                <Input type="number" value={outrasOil} onChange={(e) => setOutrasOil(e.target.value)} />
+              </div>
+              {showCarroSection && (
+                <div className="space-y-1.5">
+                  <Label className="text-xs font-medium flex items-center gap-1.5">
+                    <span className="h-2 w-2 rounded-full bg-success" />
+                    Carro
+                  </Label>
+                  <Input type="number" value={carroOil} onChange={(e) => setCarroOil(e.target.value)} />
+                  <p className="text-[10px] text-muted-foreground">Independente da marca do carro.</p>
+                </div>
+              )}
             </div>
           </section>
 
@@ -1762,6 +1900,7 @@ function ConfigDialog({
               const yo = Number(yamahaOil);
               const yf = Number(yamahaFilter);
               const oo = Number(outrasOil);
+              const co = Number(carroOil);
               const wk = Number(windowKm);
               const dkw = Number(defaultKmWeek);
               const od = Number(overdueDays);
@@ -1770,7 +1909,7 @@ function ConfigDialog({
               const hkw = Number(hondaKmWeek);
               const ykw = Number(yamahaKmWeek);
               const okw = Number(outrasKmWeek);
-              const baseOk = [ho, yo, yf, oo, wk, dkw, od, kpd, amt].every((n) => Number.isFinite(n) && n > 0);
+              const baseOk = [ho, yo, yf, oo, co, wk, dkw, od, kpd, amt].every((n) => Number.isFinite(n) && n > 0);
               const brandOk = !useBrandDefault || [hkw, ykw, okw].every((n) => Number.isFinite(n) && n > 0);
               if (!baseOk || !brandOk) {
                 toast.error("Informe valores válidos (> 0)");
@@ -1789,6 +1928,7 @@ function ConfigDialog({
                   honda: { oilKm: ho, defaultKmPerDay: hkw / 7 },
                   yamaha: { oilKm: yo, filterKm: yf, defaultKmPerDay: ykw / 7 },
                   outras: { oilKm: oo, defaultKmPerDay: okw / 7 },
+                  carro: { oilKm: co },
                 },
                 {
                   windowKm: wk,

@@ -394,10 +394,14 @@ export default function LocacoesPage() {
       if (rental.plano === "moto_no_final") continue; // fim natural pelo nº de parcelas
 
       const aluguelDoRental = aluguelPorRental.get(rental.id) || [];
-      const futuras = aluguelDoRental.filter(e => !e.pago && e.data >= today);
-      if (futuras.length === 0) continue; // locação nova — handleSaveRental já cuida disso
+      // Locação nova (nenhuma cobrança gerada ainda) — handleSaveRental já cuida disso.
+      // IMPORTANTE: não usar só as NÃO PAGAS aqui — um locatário em dia (todas as cobranças
+      // geradas até agora já pagas) tem zero "futuras" nesse sentido, mas não é uma locação
+      // nova, e precisa continuar sendo renovado normalmente. Calcular o máximo entre TODAS
+      // as cobranças (pagas ou não) evita que o gerador pare de vez pra quem paga em dia.
+      if (aluguelDoRental.length === 0) continue;
 
-      const maxDate = futuras.reduce((max, e) => (e.data > max ? e.data : max), futuras[0].data);
+      const maxDate = aluguelDoRental.reduce((max, e) => (e.data > max ? e.data : max), aluguelDoRental[0].data);
       const periodDays = rental.frequenciaPagamento === "quinzenal" ? 15 : rental.frequenciaPagamento === "mensal" ? 30 : 7;
       const diasRestantes = differenceInDays(parseISO(maxDate), parseISO(today));
       if (diasRestantes > periodDays) continue; // ainda sobra mais de um período — não precisa renovar ainda
@@ -1720,6 +1724,12 @@ export default function LocacoesPage() {
                       if (aluguelEntries.length > 0) {
                         aluguelEntries.forEach((e, idx) => {
                           const checked = encerrarSelectedIds.has(e.id);
+                          // A última cobrança pode ser parcial (contrato encerra no meio do
+                          // período) — mostra aqui o valor pró-rata já corrigido, em vez do
+                          // valor cheio do período, senão a lista mostra um valor que nunca
+                          // vai ser cobrado (só o preview de unificação, mais abaixo, corrigia).
+                          const cls = classifyPendenciaEncerramento(encerrarRental, e, encerrarData);
+                          const valorExibido = cls.novoValor ?? e.valor;
                           rows.push(
                             <div key={e.id} className="flex items-center gap-3 px-3 py-2 text-sm group">
                               <Checkbox
@@ -1732,9 +1742,12 @@ export default function LocacoesPage() {
                                 <span className="ml-2 text-muted-foreground text-xs">
                                   {e.data ? new Date(e.data + "T00:00:00").toLocaleDateString("pt-BR") : "—"}
                                 </span>
+                                {cls.novoValor != null && (
+                                  <span className="ml-2 text-[10px] text-primary">(pró-rata)</span>
+                                )}
                               </label>
                               <span className="font-mono text-xs tabular-nums mr-2">
-                                R$ {(e.valor ?? 0).toFixed(2)}
+                                R$ {valorExibido.toFixed(2)}
                               </span>
                               <button
                                 type="button"

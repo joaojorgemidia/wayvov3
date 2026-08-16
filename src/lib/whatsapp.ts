@@ -16,24 +16,26 @@
 const DEFAULT_DDI = "55"; // Brasil
 
 /**
- * Sanitiza um telefone removendo todos os caracteres não numéricos
- * e garantindo o DDI do Brasil quando ausente.
- * Retorna string vazia se não houver dígitos.
+ * Sanitiza um telefone removendo todos os caracteres não numéricos e normalizando
+ * sempre para o padrão fixo 55DDDXXXXXXXXX (DDI 55 + DDD com 2 dígitos + número
+ * com 9 dígitos, 13 dígitos no total). Números antigos sem o 9º dígito (8 dígitos)
+ * recebem o "9" na frente do número — é o formato que o WhatsApp exige.
+ * Retorna string vazia se não houver DDD reconhecível.
  */
 export function sanitizeWhatsAppNumber(rawPhone: string | null | undefined): string {
   if (!rawPhone) return "";
-  const digits = String(rawPhone).replace(/\D/g, "");
+  let digits = String(rawPhone).replace(/\D/g, "");
   if (!digits) return "";
-  // Já vem com DDI 55 (12 ou 13 dígitos: 55 + DDD(2) + número(8 ou 9))
+  // Remove um DDI 55 já presente para sempre normalizar a partir do número local (DDD + número).
   if (digits.startsWith(DEFAULT_DDI) && (digits.length === 12 || digits.length === 13)) {
-    return digits;
+    digits = digits.slice(2);
   }
-  // Número local (10 ou 11 dígitos com DDD) → adiciona DDI 55
-  if (digits.length === 10 || digits.length === 11) {
-    return DEFAULT_DDI + digits;
-  }
-  // Outros formatos (DDI estrangeiro, número curto): retorna como veio
-  return digits;
+  if (digits.length < 10) return digits; // sem DDD reconhecível — não força o padrão
+  const ddd = digits.slice(0, 2);
+  let numero = digits.slice(2);
+  if (numero.length === 8) numero = "9" + numero; // celular antigo sem o 9º dígito
+  else if (numero.length > 9) numero = numero.slice(-9); // descarta lixo residual à esquerda
+  return DEFAULT_DDI + ddd + numero;
 }
 
 /**

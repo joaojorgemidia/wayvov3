@@ -29,6 +29,9 @@ export const DEFAULT_BRAND_CONFIG: Record<string, BrandConfig> = {
   honda: { oilKm: 1000 },
   yamaha: { oilKm: 2000, filterKm: 4000 },
   outras: { oilKm: 1000 },
+  // Carros têm um intervalo de troca de óleo bem maior que motos — nunca deve cair
+  // no bucket "outras" (que é o fallback pra marca de MOTO não reconhecida).
+  carro: { oilKm: 10000 },
 };
 
 export const DEFAULT_GLOBAL_CONFIG: OilGlobalConfig = {
@@ -84,15 +87,20 @@ export function saveGlobalConfig(cfg: OilGlobalConfig) {
 }
 
 // ============== Helpers ==============
-export function detectBrand(modelo: string): string {
+// Carro sempre cai no bucket "carro", nunca no de marca de moto não reconhecida
+// ("outras") — o km permitido entre trocas é de ordem de grandeza bem diferente.
+export function detectBrand(modelo: string, categoria?: "moto" | "carro"): string {
+  if (categoria === "carro") return "carro";
   const m = (modelo || "").toLowerCase();
   if (m.includes("honda")) return "honda";
   if (m.includes("yamaha")) return "yamaha";
   return "outras";
 }
 
-export function brandConfigFor(modelo: string, cfg: Record<string, BrandConfig>): BrandConfig {
-  return cfg[detectBrand(modelo)] ?? cfg["outras"] ?? { oilKm: 1000 };
+export function brandConfigFor(modelo: string, cfg: Record<string, BrandConfig>, categoria?: "moto" | "carro"): BrandConfig {
+  const fallbackKey = categoria === "carro" ? "carro" : "outras";
+  const fallbackOilKm = categoria === "carro" ? 10000 : 1000;
+  return cfg[detectBrand(modelo, categoria)] ?? cfg[fallbackKey] ?? { oilKm: fallbackOilKm };
 }
 
 /** Resolve o km/dia padrão (sem histórico do locatário) considerando o toggle "padrão por marca". */
@@ -100,9 +108,10 @@ export function defaultKmPerDayFor(
   modelo: string,
   brandCfg: Record<string, BrandConfig>,
   globalCfg: OilGlobalConfig,
+  categoria?: "moto" | "carro",
 ): number {
   if (globalCfg.useBrandDefault) {
-    const bc = brandConfigFor(modelo, brandCfg);
+    const bc = brandConfigFor(modelo, brandCfg, categoria);
     if (typeof bc.defaultKmPerDay === "number" && bc.defaultKmPerDay > 0) {
       return bc.defaultKmPerDay;
     }
@@ -148,7 +157,7 @@ export function getOilStatus(
   rentals: Rental[] = [],
 ): OilStatus {
   const last = lastOilChange(m);
-  const cfg = brandConfigFor(m.modelo, brandCfg);
+  const cfg = brandConfigFor(m.modelo, brandCfg, m.categoriaVeiculo);
   const kmAtual = m.kmAtual ?? 0;
   // Âncora para "próxima troca" quando não há histórico de óleo: usar o km
   // de compra (ou 0). NUNCA ancorar no km atual — atualizar o hodômetro
@@ -294,7 +303,7 @@ export function computeKpis(
   const totalByClient = new Map<string, number>();
 
   for (const m of motos) {
-    const cfg = brandConfigFor(m.modelo, brandCfg);
+    const cfg = brandConfigFor(m.modelo, brandCfg, m.categoriaVeiculo);
     const hist = sortedHistory(m);
     for (let i = 1; i < hist.length; i++) {
       const dev = changeDeviation(hist[i - 1], hist[i], cfg.oilKm);
@@ -395,21 +404,21 @@ export function estimateNextChange(
   globalCfg: OilGlobalConfig,
 ): NextChangeEstimate {
   const last = lastOilChange(m);
-  const cfg = brandConfigFor(m.modelo, brandCfg);
+  const cfg = brandConfigFor(m.modelo, brandCfg, m.categoriaVeiculo);
   if (!last) {
     const anchorKm = m.kmCompra ?? 0;
     return {
       proxOleoKm: anchorKm + cfg.oilKm,
       proxFiltroKm: cfg.filterKm ? anchorKm + cfg.filterKm : null,
       proxOleoData: null,
-      kmPorDia: defaultKmPerDayFor(m.modelo, brandCfg, globalCfg),
+      kmPorDia: defaultKmPerDayFor(m.modelo, brandCfg, globalCfg, m.categoriaVeiculo),
       fonte: "sem_dados",
     };
   }
   const proxOleoKm = last.km + cfg.oilKm;
   const proxFiltroKm = cfg.filterKm ? last.km + cfg.filterKm : null;
   const pace = adaptivePace(m, rentals, cfg.oilKm, globalCfg.windowKm, globalCfg.adaptiveMinTrocas ?? 3);
-  const kmPorDia = pace?.kmPorDia ?? defaultKmPerDayFor(m.modelo, brandCfg, globalCfg);
+  const kmPorDia = pace?.kmPorDia ?? defaultKmPerDayFor(m.modelo, brandCfg, globalCfg, m.categoriaVeiculo);
   const kmAtual = m.kmAtual ?? last.km;
   const kmRestantes = Math.max(0, proxOleoKm - kmAtual);
   const diasRestantes = kmPorDia > 0 ? kmRestantes / kmPorDia : 0;
@@ -510,7 +519,7 @@ export function clientAvgLateKm(
   if (!clienteId) return { mediaKm: null, amostras: 0 };
   const desvios: { data: string; dev: number }[] = [];
   for (const m of motos) {
-    const cfg = brandConfigFor(m.modelo, brandCfg);
+    const cfg = brandConfigFor(m.modelo, brandCfg, m.categoriaVeiculo);
     const hist = sortedHistory(m);
     for (let i = 1; i < hist.length; i++) {
       const cId = clientForDate(m.id, hist[i].data, rentals);
@@ -540,7 +549,7 @@ export function clientLateCount(
   if (!clienteId) return 0;
   let count = 0;
   for (const m of motos) {
-    const cfg = brandConfigFor(m.modelo, brandCfg);
+    const cfg = brandConfigFor(m.modelo, brandCfg, m.categoriaVeiculo);
     const hist = sortedHistory(m);
     for (let i = 1; i < hist.length; i++) {
       const cId = clientForDate(m.id, hist[i].data, rentals);

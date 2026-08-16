@@ -11,11 +11,17 @@ serve(async (_req) => {
   cutoff.setDate(cutoff.getDate() - 7);
   const cutoffDate = cutoff.toISOString().split("T")[0];
 
+  // categoria "juros_atraso"/"taxas" são lançamentos DERIVADOS de uma cobrança de
+  // aluguel — só existem porque o aluguel já foi sincronizado. Reprocessá-los aqui
+  // faz o asaas-sync-fees usar o próprio lançamento derivado (já reprocessado antes)
+  // como base do cálculo em vez do aluguel original, inflando o valor a cada rodada
+  // (o cron roda a cada 2h) e corrompendo o rótulo de semana exibido no Financeiro.
   const { data: entries, error } = await supabase
     .from("financial_entries")
     .select("id, asaas_payment_id, company_id")
     .eq("pago", true)
     .not("asaas_payment_id", "is", null)
+    .not("categoria", "in", "(juros_atraso,taxas)")
     .gte("data", cutoffDate)
     .is("deleted_at", null);
 

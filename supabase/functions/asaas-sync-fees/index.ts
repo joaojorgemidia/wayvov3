@@ -158,6 +158,7 @@ async function syncFeesFromTransactions(
   payment: Record<string, any>,
   linkFields: LinkFields,
   creditDate: string,
+  displayDate: string,
 ): Promise<number> {
   const today = new Date().toISOString().split("T")[0];
 
@@ -221,8 +222,8 @@ async function syncFeesFromTransactions(
       descricao: desc,
       observacao: desc,
       valor: feeAmount,
-      data: creditDate,
-      data_prevista: creditDate,
+      data: displayDate,
+      data_prevista: displayDate,
       pago: true,
       conta: "Asaas",
       natureza: linkFields.placa || linkFields.moto_id ? "operacional" : "administrativa",
@@ -264,7 +265,7 @@ async function syncFeeFromNetValue(
   supabase: ReturnType<typeof createClient>,
   payment: Record<string, any>,
   linkFields: LinkFields,
-  creditDate: string,
+  displayDate: string,
 ): Promise<number> {
   const feeAmount = calcPlatformFee(payment);
   if (feeAmount <= 0.005) return 0;
@@ -281,8 +282,8 @@ async function syncFeeFromNetValue(
     descricao,
     observacao: descricao,
     valor: feeAmount,
-    data: creditDate,
-    data_prevista: creditDate,
+    data: displayDate,
+    data_prevista: displayDate,
     pago: true,
     conta: "Asaas",
     natureza: linkFields.placa || linkFields.moto_id ? "operacional" : "administrativa",
@@ -340,17 +341,31 @@ serve(async (req) => {
     if (entryId) {
       const { data } = await supabase
         .from("financial_entries")
-        .select("id, asaas_payment_id, company_id, cliente_id, cliente_nome, moto_id, placa, rental_id, data, data_prevista, valor, observacao")
+        .select("id, categoria, asaas_payment_id, company_id, cliente_id, cliente_nome, moto_id, placa, rental_id, data, data_prevista, valor, observacao")
         .eq("id", entryId)
         .single();
       entry = data;
     } else {
       const { data } = await supabase
         .from("financial_entries")
-        .select("id, asaas_payment_id, company_id, cliente_id, cliente_nome, moto_id, placa, rental_id, data, data_prevista, valor, observacao")
+        .select("id, categoria, asaas_payment_id, company_id, cliente_id, cliente_nome, moto_id, placa, rental_id, data, data_prevista, valor, observacao")
         .eq("asaas_payment_id", asaasPaymentId)
         .single();
       entry = data;
+    }
+
+    // "juros_atraso"/"taxas" são lançamentos DERIVADOS da cobrança de aluguel que gerou
+    // o mesmo pagamento Asaas — nunca a fonte da verdade para vínculo/valor. Se algo
+    // (cron, retry de webhook) chamar esta função apontando para um desses, processar
+    // usaria o próprio lançamento derivado como base do cálculo em vez do aluguel
+    // original — isso já inflou o valor de juros e corrompeu o rótulo de semana no
+    // Financeiro no passado. Encerra cedo em vez de seguir com vínculos vazios.
+    if (entry && (entry.categoria === "juros_atraso" || entry.categoria === "taxas")) {
+      console.log(`[asaas-sync-fees] entry=${entry.id} é categoria "${entry.categoria}" (derivada) — ignorando`);
+      return new Response(
+        JSON.stringify({ registeredFees: 0, registeredJuros: 0, skipped: true, reason: "derived-entry" }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
     }
 
     const linkFields: LinkFields = {
@@ -379,9 +394,16 @@ serve(async (req) => {
 
     const paymentData = await paymentRes.json();
     const today = new Date().toISOString().split("T")[0];
+    // creditDate = data de compensação bancária (D+1 útil pro boleto) — só serve pra
+    // consultar a API de transações do Asaas, que só existe a partir dessa data.
     const creditDate = paymentData.creditDate || paymentData.paymentDate || entry?.data || today;
+    // displayDate = data que vai pro Financeiro em "data"/"data_prevista" — usa o dia do
+    // recebimento (mesmo critério do aluguel, marcado pago em asaas-sync-status/
+    // asaas-webhook), não o de compensação. Sem isso, taxa e juros apareciam um dia
+    // depois do aluguel que gerou o mesmo pagamento (boleto compensa D+1).
+    const displayDate = paymentData.confirmedDate || paymentData.paymentDate || creditDate;
 
-    console.log(`[asaas-sync-fees] payment=${asaasPaymentId} status=${paymentData.status} value=${paymentData.value} netValue=${paymentData.netValue} billingType=${paymentData.billingType} creditDate=${creditDate} nossoNumero=${paymentData.nossoNumero}`);
+    console.log(`[asaas-sync-fees] payment=${asaasPaymentId} status=${paymentData.status} value=${paymentData.value} netValue=${paymentData.netValue} billingType=${paymentData.billingType} creditDate=${creditDate} displayDate=${displayDate} nossoNumero=${paymentData.nossoNumero}`);
 
     // Só registra taxa/juros quando o Asaas confirma que o dinheiro entrou de fato
     // ATRAVÉS DA PLATAFORMA (boleto/PIX/cartão pagos normalmente). RECEIVED_IN_CASH
@@ -406,11 +428,11 @@ serve(async (req) => {
     // Primária: busca todas as taxas (boleto + mensageria) via financialTransactions.
     // Fallback: apenas taxa de processamento via value - netValue.
     // txResult: 0 = nada encontrado (fallback), -1 = tudo já existia (não usar fallback), >0 = N novas taxas
-    const txResult = await syncFeesFromTransactions(supabase, apiKey, paymentData, linkFields, creditDate);
+    const txResult = await syncFeesFromTransactions(supabase, apiKey, paymentData, linkFields, creditDate, displayDate);
     const usedFallback = txResult === 0;
     let registeredFees = Math.max(0, txResult); // -1 → 0 para a resposta
     if (usedFallback) {
-      registeredFees = await syncFeeFromNetValue(supabase, paymentData, linkFields, creditDate);
+      registeredFees = await syncFeeFromNetValue(supabase, paymentData, linkFields, displayDate);
     }
 
     // ── 2. Juros e multa recebidos (receita juros_atraso) ────────────────────
@@ -472,12 +494,18 @@ serve(async (req) => {
         descricao,
         observacao,
         valor: jurosTotal,
-        data: creditDate,
-        data_prevista: creditDate,
+        data: displayDate,
+        data_prevista: displayDate,
         pago: true,
         conta: "Asaas",
         natureza: "operacional",
         ...linkFields,
+        // Sem isso, a linha de juros/multa ficava sem link de boleto no Financeiro —
+        // é o mesmo pagamento do Asaas que já pagou o aluguel, só que lançado numa
+        // entrada separada (categoria juros_atraso), então recebe a mesma referência.
+        asaas_payment_id: asaasPaymentId,
+        asaas_boleto_url: paymentData.bankSlipUrl || null,
+        asaas_invoice_url: paymentData.invoiceUrl || null,
         tags: ["Asaas", "Pago Asaas"],
         recorrente: false,
         despesa_fixa: false,

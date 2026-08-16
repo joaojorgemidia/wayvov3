@@ -18,9 +18,11 @@ import { cn } from "@/lib/utils";
 import { supabase } from "@/integrations/supabase/client";
 import { useDataCacheSnapshot } from "@/lib/data-cache";
 import { useCompany } from "@/contexts/CompanyContext";
+import { isLoca2Rodas } from "@/lib/companies";
+import { VehicleFilterChips, VehicleFilter } from "@/components/VehicleFilterChips";
 import { Motorcycle } from "@/lib/types";
 import { formatDate } from "@/lib/alerts";
-import { buildWhatsAppUrl } from "@/lib/whatsapp";
+import { buildWhatsAppUrl, sanitizeWhatsAppNumber } from "@/lib/whatsapp";
 import { applyTokens, buildAllTokens } from "@/lib/message-tokens";
 import { DEFAULT_STAGES } from "@/lib/collections";
 import { useCollections } from "@/hooks/useCollections";
@@ -148,10 +150,19 @@ const SITUATION_TONE: Record<Situation, string> = {
 
 export default function VistoriaPage() {
   const cache = useDataCacheSnapshot();
-  const motos = useMemo(
+  const { activeCompany } = useCompany();
+  const motosAtivas = useMemo(
     () => cache.motos.filter((m) => m.status !== "vendida" && m.status !== "inativa"),
     [cache.motos],
   );
+
+  // Filtro Motos/Carros — só relevante pra Loca2Rodas, única locadora com carros na frota.
+  const showVehicleFilter = isLoca2Rodas(activeCompany);
+  const [vehicleFilter, setVehicleFilter] = useState<VehicleFilter>("todos");
+  const motos = useMemo(() => {
+    if (!showVehicleFilter || vehicleFilter === "todos") return motosAtivas;
+    return motosAtivas.filter((m) => (m.categoriaVeiculo || "moto") === vehicleFilter);
+  }, [motosAtivas, showVehicleFilter, vehicleFilter]);
 
   // Mapa: motoId -> nome do locatário ativo (para criar a subpasta do Drive)
   const activeRenterByMoto = useMemo(() => {
@@ -242,6 +253,25 @@ export default function VistoriaPage() {
     }
   }
 
+  // Copia de uma vez o telefone (DDI 55 + DDD + número, só dígitos) de todos os locatários
+  // com vistoria vencida — pra colar direto em ferramentas de disparo em massa.
+  function handleCopyOverduePhones() {
+    const seen = new Set<string>();
+    const numbers: string[] = [];
+    rows.filter((r) => r.status.situation === "vencida").forEach((r) => {
+      const digits = sanitizeWhatsAppNumber(activeClientByMoto.get(r.moto.id)?.telefone);
+      if (!digits || seen.has(digits)) return;
+      seen.add(digits);
+      numbers.push(digits);
+    });
+    if (numbers.length === 0) {
+      toast.error("Nenhum telefone encontrado entre as vistorias vencidas.");
+      return;
+    }
+    navigator.clipboard.writeText(numbers.join(", "));
+    toast.success(`${numbers.length} telefone(s) copiado(s).`);
+  }
+
   function toggleSelected(id: string) {
     setSelected((prev) => {
       const next = new Set(prev);
@@ -266,7 +296,6 @@ export default function VistoriaPage() {
     loading: boolean;
   } | null>(null);
 
-  const { activeCompany } = useCompany();
   const companyId = activeCompany?.id ?? "";
 
   async function loadAll() {
@@ -458,11 +487,23 @@ export default function VistoriaPage() {
           </p>
         </div>
         <div className="flex gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleCopyOverduePhones}
+            title="Copia o telefone de todos os locatários com vistoria vencida"
+          >
+            <Copy className="h-4 w-4 mr-2" /> Copiar Telefones (Vencidas)
+          </Button>
           <Button variant="outline" size="sm" onClick={() => setSettingsOpen(true)}>
             <Settings className="h-4 w-4 mr-2" /> Configurações
           </Button>
         </div>
       </div>
+
+      {showVehicleFilter && (
+        <VehicleFilterChips value={vehicleFilter} onChange={setVehicleFilter} />
+      )}
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <KpiCard label="Vencidas" value={counts.vencida} tone="danger" />
