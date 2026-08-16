@@ -81,16 +81,19 @@ serve(async (req) => {
       targetDate.setDate(targetDate.getDate() + Number(cfg.gerarBoletoXDiasAntes));
       const targetDateStr = targetDate.toISOString().split("T")[0];
 
-      // Entradas de aluguel/caução OU parcela de acordo de dívida (categoria "outro_receita"
-      // com subcategoria "Parcelamento" — criada ao agrupar cobranças em atraso num acordo)
-      // sem boleto, não pagas, com vencimento até a data alvo. Usa "<=" (não "=") para
+      // Qualquer cobrança de receita (aluguel, caução, parcelamento, cobrança consolidada de
+      // encerramento etc.) sem boleto, não paga, com vencimento até a data alvo. Antes só uma
+      // lista fixa de categorias entrava aqui (ex.: cobrança consolidada de encerramento
+      // ficava de fora e nunca gerava boleto sozinha) — agora é "qualquer receita", exceto
+      // multa (tratada abaixo com sua própria janela de vencimento). Usa "<=" (não "=") para
       // recuperar entradas que ficaram sem boleto por falha pontual num dia anterior — com
       // "=" elas nunca mais seriam pegas, já que no dia seguinte a data alvo já é outra.
       const { data: entries } = await supabase
         .from("financial_entries")
         .select("id")
         .eq("company_id", company.id)
-        .or("categoria.in.(aluguel,caucao),and(categoria.eq.outro_receita,subcategoria.eq.Parcelamento)")
+        .eq("tipo", "receita")
+        .neq("categoria", "multa_transito_receita")
         .is("asaas_payment_id", null)
         .eq("pago", false)
         .is("deleted_at", null)
