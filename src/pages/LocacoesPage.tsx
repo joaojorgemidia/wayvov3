@@ -57,7 +57,7 @@ function classifyPendenciaEncerramento(
   rental: Rental,
   entry: FinancialEntry,
   encerrarDataISO: string,
-): { action: "preserve" | "remove"; novoValor?: number; nota?: string } {
+): { action: "preserve" | "remove"; novoValor?: number; nota?: string; diasUsados?: number } {
   const dueStr = entry.dataPrevista || entry.data;
   if (!dueStr) return { action: "preserve" };
   const categoria = (entry.categoria || "").toLowerCase();
@@ -73,7 +73,7 @@ function classifyPendenciaEncerramento(
       if (novoValor >= entry.valor) return { action: "preserve" };
       const dataFmt = new Date(encerrarDataISO + "T00:00:00").toLocaleDateString("pt-BR");
       const nota = `Cobrança recalculada ao encerrar o contrato (${dataFmt}): cobrando apenas ${diasUsados} diária${diasUsados !== 1 ? "s" : ""} (R$ ${diariaReal.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}/dia) até a data final do contrato, em vez do período completo.`;
-      return { action: "preserve", novoValor, nota };
+      return { action: "preserve", novoValor, nota, diasUsados };
     }
   }
   return dueStr <= encerrarDataISO ? { action: "preserve" } : { action: "remove" };
@@ -110,22 +110,27 @@ function computeEncerramentoPlan(
   entries: FinancialEntry[],
   selectedIds: Set<string>,
   encerrarDataISO: string,
-): { remaining: FinancialEntry[]; toRemove: FinancialEntry[]; ajusteCount: number } {
+): { remaining: FinancialEntry[]; toRemove: FinancialEntry[]; ajusteCount: number; diasUsadosById: Map<string, number> } {
   let ajusteCount = 0;
   const forcedPreserveIds = new Set<string>();
+  // Guarda os dias usados de cada pró-rata à parte — depois que o valor do entry vira o
+  // pró-rata, reclassificar de novo não recupera esse número (o entry já "cabe" no cálculo
+  // e a função devolve preserve sem diasUsados) — ver classifyPendenciaEncerramento.
+  const diasUsadosById = new Map<string, number>();
   const entriesBase = entries.map(e => {
     if (e.rentalId !== rental.id || e.tipo !== "receita" || e.pago || e.ignorada) return e;
     const cls = classifyPendenciaEncerramento(rental, e, encerrarDataISO);
     if (cls.action === "preserve" && cls.novoValor != null) {
       forcedPreserveIds.add(e.id);
       ajusteCount++;
+      if (cls.diasUsados != null) diasUsadosById.set(e.id, cls.diasUsados);
       return { ...e, valor: cls.novoValor, observacao: [e.observacao, cls.nota].filter(Boolean).join(" — ") };
     }
     return e;
   });
   const toRemove = entriesBase.filter(e => selectedIds.has(e.id) && !forcedPreserveIds.has(e.id));
   const remaining = entriesBase.filter(e => !selectedIds.has(e.id) || forcedPreserveIds.has(e.id));
-  return { remaining, toRemove, ajusteCount };
+  return { remaining, toRemove, ajusteCount, diasUsadosById };
 }
 
 // Calcula total de pagamentos esperados para o plano "Moto no Final"
@@ -858,7 +863,7 @@ export default function LocacoesPage() {
     // abrange a data de encerramento (pré ou pós-pago) para cobrar só os dias
     // usados. A cobrança corrigida nunca é excluída, mesmo se estava marcada —
     // depois de corrigida, ela É a cobrança certa a receber.
-    const { remaining, toRemove, ajusteCount } = computeEncerramentoPlan(encerrarRental, allEntries, encerrarSelectedIds, encerrarData);
+    const { remaining, toRemove, ajusteCount, diasUsadosById } = computeEncerramentoPlan(encerrarRental, allEntries, encerrarSelectedIds, encerrarData);
     const removedCount = toRemove.length;
     if (removedCount > 0) {
       await cancelAsaasEntries(toRemove);
@@ -901,7 +906,9 @@ export default function LocacoesPage() {
       const itensTexto = pendentesQueFicam
         .map(e => {
           const acr = acrescimos.get(e.id) || 0;
-          return `• ${itemLabelCurto(e)} — R$ ${valorFinal(e).toFixed(2)}${acr > 0 ? ` (inclui R$ ${acr.toFixed(2)} de multa/juros por atraso)` : ""}`;
+          const dias = diasUsadosById.get(e.id);
+          const diasTxt = dias != null ? ` (${dias} diária${dias !== 1 ? "s" : ""})` : "";
+          return `• ${itemLabelCurto(e)}${diasTxt} — R$ ${valorFinal(e).toFixed(2)}${acr > 0 ? ` (inclui R$ ${acr.toFixed(2)} de multa/juros por atraso)` : ""}`;
         })
         .join("\n");
       const consolidada: FinancialEntry = {
@@ -1777,7 +1784,9 @@ export default function LocacoesPage() {
                                   {e.data ? new Date(e.data + "T00:00:00").toLocaleDateString("pt-BR") : "—"}
                                 </span>
                                 {cls.novoValor != null && (
-                                  <span className="ml-2 text-[10px] text-primary">(pró-rata)</span>
+                                  <span className="ml-2 text-[10px] text-primary">
+                                    (pró-rata{cls.diasUsados != null ? ` · ${cls.diasUsados} diária${cls.diasUsados !== 1 ? "s" : ""}` : ""})
+                                  </span>
                                 )}
                                 {acrescimo > 0 && (
                                   <span className="ml-2 text-[10px] text-destructive">(+ R$ {acrescimo.toFixed(2)} multa/juros)</span>
