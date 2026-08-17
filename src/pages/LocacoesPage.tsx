@@ -1756,10 +1756,14 @@ export default function LocacoesPage() {
                           const checked = encerrarSelectedIds.has(e.id);
                           // A última cobrança pode ser parcial (contrato encerra no meio do
                           // período) — mostra aqui o valor pró-rata já corrigido, em vez do
-                          // valor cheio do período, senão a lista mostra um valor que nunca
-                          // vai ser cobrado (só o preview de unificação, mais abaixo, corrigia).
+                          // valor cheio do período. E toda cobrança já vencida entra com
+                          // multa+juros pelos dias de atraso até a data de encerramento (mesma
+                          // conta usada na unificação, mais abaixo) — sem isso a lista mostrava
+                          // um valor que nunca seria o cobrado de fato.
                           const cls = classifyPendenciaEncerramento(encerrarRental, e, encerrarData);
-                          const valorExibido = cls.novoValor ?? e.valor;
+                          const baseEntry = cls.novoValor != null ? { ...e, valor: cls.novoValor } : e;
+                          const acrescimo = calcAcrescimoAtraso(encerrarRental, baseEntry, cobrancaCfg, encerrarData);
+                          const valorExibido = baseEntry.valor + acrescimo;
                           rows.push(
                             <div key={e.id} className="flex items-center gap-3 px-3 py-2 text-sm group">
                               <Checkbox
@@ -1774,6 +1778,9 @@ export default function LocacoesPage() {
                                 </span>
                                 {cls.novoValor != null && (
                                   <span className="ml-2 text-[10px] text-primary">(pró-rata)</span>
+                                )}
+                                {acrescimo > 0 && (
+                                  <span className="ml-2 text-[10px] text-destructive">(+ R$ {acrescimo.toFixed(2)} multa/juros)</span>
                                 )}
                               </label>
                               <span className="font-mono text-xs tabular-nums mr-2">

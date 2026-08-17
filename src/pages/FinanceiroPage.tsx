@@ -5056,8 +5056,38 @@ export default function FinanceiroPage() {
                     })()}
                     onChange={e => {
                       const digits = e.target.value.replace(/\D/g, "");
-                      if (!digits) { setForm({ ...form, valor: 0 }); return; }
-                      const num = parseInt(digits, 10) / 100;
+                      const num = digits ? parseInt(digits, 10) / 100 : 0;
+                      // Se a observação é a explicação de multa/juros que o próprio sistema gera
+                      // (mesmo texto do cron asaas-update-fines/asaas-charge — "Valor original R$
+                      // X + Multa..."), corrigir o valor manualmente deixava essa explicação
+                      // desatualizada até a próxima rodada do cron. Recalcula na hora, com a
+                      // mesma fórmula, pra ficar coerente já ao salvar.
+                      const fmtBRL = (v: number) => `R$ ${v.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+                      const isAutoObs = (form.observacao || "").startsWith("Valor original R$");
+                      const isAluguelOuCaucao = form.categoria === "aluguel" || form.categoria === "caucao";
+                      if (isAutoObs && isAluguelOuCaucao && !form.pago && num > 0) {
+                        const dueStr = form.dataPrevista || form.data;
+                        const diasAtraso = dueStr
+                          ? Math.max(0, Math.floor((new Date(localToday() + "T00:00:00").getTime() - new Date(dueStr + "T00:00:00").getTime()) / 86400000))
+                          : 0;
+                        if (diasAtraso > 0) {
+                          const rental = form.rentalId ? rentals.find(r => r.id === form.rentalId) : null;
+                          const cfg = activeCompany?.cobrancaConfig ?? DEFAULT_COBRANCA_CONFIG;
+                          const multaFixa = rental?.multaAtraso || cfg.multaAtraso || 0;
+                          const jurosMes = rental?.jurosAtrasoMes || cfg.jurosMes || 0;
+                          const jurosDiario = cfg.jurosDiario || 0;
+                          const jurosDiarioTotal = jurosDiario * diasAtraso;
+                          const jurosMesTotal = num * (jurosMes / 100 / 30) * diasAtraso;
+                          const valorAtualizado = Math.round((num + multaFixa + jurosDiarioTotal + jurosMesTotal) * 100) / 100;
+                          const parts: string[] = [`Valor original ${fmtBRL(num)}`];
+                          if (multaFixa > 0) parts.push(`Multa ${fmtBRL(multaFixa)}`);
+                          if (jurosDiarioTotal > 0) parts.push(`Juros ${fmtBRL(jurosDiario)}/dia × ${diasAtraso}d = ${fmtBRL(jurosDiarioTotal)}`);
+                          if (jurosMesTotal > 0) parts.push(`Juros ${jurosMes}%/mês (${diasAtraso}d) = ${fmtBRL(jurosMesTotal)}`);
+                          const observacao = `${parts.join(" + ")} = ${fmtBRL(valorAtualizado)} (${diasAtraso}d em atraso)`;
+                          setForm({ ...form, valor: num, observacao });
+                          return;
+                        }
+                      }
                       setForm({ ...form, valor: num });
                     }}
                     placeholder="0,00"
