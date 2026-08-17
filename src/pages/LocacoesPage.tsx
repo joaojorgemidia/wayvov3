@@ -408,9 +408,15 @@ export default function LocacoesPage() {
     const novoHorizonte = addMonths(new Date(), 12);
     const novasEntradas: FinancialEntry[] = [];
 
-    // Indexa uma vez só — evita filtrar o array inteiro de lançamentos para cada locação
+    // Indexa uma vez só — evita filtrar o array inteiro de lançamentos para cada locação.
+    // Usa loadFinancial() (leitura síncrona sempre atual) em vez do `cache.financial`
+    // capturado no closure deste efeito: salvar uma locação editada (handleSaveRental)
+    // já regenera as cobranças de aluguel na hora, de forma síncrona no cache — mas esse
+    // efeito também dispara de novo pouco depois (reage à mudança em `rentals`), e se
+    // usasse o `cache.financial` do fechamento antigo, ainda não veria essas cobranças
+    // recém-geradas e acabava gerando um segundo lote por cima, duplicado.
     const aluguelPorRental = new Map<string, FinancialEntry[]>();
-    for (const e of cache.financial) {
+    for (const e of loadFinancial()) {
       if (e.categoria !== "aluguel" || !e.rentalId) continue;
       const arr = aluguelPorRental.get(e.rentalId);
       if (arr) arr.push(e); else aluguelPorRental.set(e.rentalId, [e]);

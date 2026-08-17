@@ -360,9 +360,7 @@ export default function CobrancasSemanaPage() {
     (e.observacao || "").startsWith("Saldo devedor de pagamento parcial");
 
   const calcValorAtualizado = (e: FinancialEntry, days: number) => {
-    if (days <= 0 || e.categoria === "juros_atraso" || isSaldoRestanteEntry(e)) return e.valor || 0;
-    // encargos de atraso só se aplicam a aluguel e caução
-    if (!["aluguel", "caucao"].includes((e.categoria || "").toLowerCase())) return e.valor || 0;
+    if (days <= 0 || e.tipo !== "receita" || e.categoria === "juros_atraso" || isSaldoRestanteEntry(e)) return e.valor || 0;
     const cfg = activeCompany?.cobrancaConfig ?? { multaAtraso: 15, jurosDiario: 7, jurosMes: 0 };
     const rental = e.rentalId ? rentalsById.get(e.rentalId) : undefined;
     const valor = e.valor || 0;

@@ -85,14 +85,15 @@ serve(async (req) => {
   const todayStr = new Date().toISOString().split("T")[0];
   const todayTs = new Date(todayStr + "T00:00:00").getTime();
 
-  // Busca cobranças de aluguel/caução vencidas, ainda não pagas, com boleto Asaas gerado.
-  // Multa/juros de atraso só se aplicam a essas duas categorias — mesma regra usada em
-  // todo o resto do app (calcValorAtualizado, asaas-charge).
+  // Busca qualquer receita vencida, ainda não paga, com boleto Asaas gerado. Multa/juros de
+  // atraso valem pra qualquer receita — mesma regra usada em todo o resto do app
+  // (calcValorAtualizado, asaas-charge) — exceto "juros_atraso", que já É o próprio encargo
+  // e não pode acumular juros em cima de juros (filtrado abaixo, no loop).
   const { data: entries, error } = await supabase
     .from("financial_entries")
-    .select("id, company_id, rental_id, valor, data, data_prevista, descricao, observacao, placa, categoria, asaas_payment_id")
+    .select("id, company_id, rental_id, valor, data, data_prevista, descricao, observacao, placa, categoria, subcategoria, asaas_payment_id")
     .eq("pago", false)
-    .in("categoria", ["aluguel", "caucao"])
+    .eq("tipo", "receita")
     .not("asaas_payment_id", "is", null)
     .lt("data_prevista", todayStr)
     .is("deleted_at", null);
@@ -156,11 +157,15 @@ serve(async (req) => {
     const diasAtraso = Math.max(0, Math.floor((todayTs - dueTs) / MS_DAY));
     if (diasAtraso <= 0) { skipped++; continue; }
 
+    // "juros_atraso" já É o próprio encargo — não pode acumular juros em cima de juros.
+    if (entry.categoria === "juros_atraso") { skipped++; continue; }
+
     // Saldo restante de um pagamento parcial anterior — a multa/juros já foi somada UMA
     // vez ao calcular esse saldo (ver asaas-charge/FinanceiroPage/CobrancasSemanaPage).
     // Recalcular multa/juros aqui de novo dobraria o encargo a cada rodada de atraso do
     // mesmo saldo — mesmo critério usado no resto do app (isSaldoRestanteEntry).
-    if ((entry.observacao || "").startsWith("Saldo devedor de pagamento parcial")) { skipped++; continue; }
+    const isSaldoRestante = (entry.observacao || "").startsWith("Saldo devedor de pagamento parcial");
+    if (isSaldoRestante) { skipped++; continue; }
 
     const baseValor = Number(entry.valor) || 0;
     const multaFixa = multaAtraso;
@@ -190,21 +195,65 @@ serve(async (req) => {
       const vencOriginal = fmtDM(new Date(dueStr + "T00:00:00"));
       const explicacao = `${parts.join(" + ")} = ${fmtBRL(valorAtualizado)} (venceu ${vencOriginal}, ${diasAtraso}d em atraso)`;
 
+      const isAluguelOuCaucao = entry.categoria === "aluguel" || entry.categoria === "caucao";
       let semanaRef: string | null = null;
-      if (rental?.data_inicio) {
+      if (isAluguelOuCaucao && rental?.data_inicio) {
         const num = computeSemanaNumero(rental.data_inicio, !!rental.cobranca_pre_paga, dueStr);
         if (num != null) {
           const { inicio, fim } = computeSemanaPeriodo(rental.data_inicio, !!rental.cobranca_pre_paga, dueStr);
           semanaRef = `Semana ${String(num).padStart(2, "0")}: ${fmtDM(inicio)} até ${fmtDM(fim)}`;
         }
       }
-      const descricaoBoleto = [
-        entry.categoria === "caucao" ? "Caução" : "Aluguel",
-        rental?.numero != null ? `Contrato #${rental.numero}` : null,
-        entry.placa ? `Placa ${entry.placa}` : null,
-        semanaRef,
-        explicacao,
-      ].filter(Boolean).join(" · ");
+
+      // Parcelamento/acordo de dívida: o texto interno da entrada (ex.: "Parcela 2/6")
+      // não diz do que se trata a dívida original — troca por um rótulo legível pro
+      // cliente + o resumo de quais cobranças foram renegociadas (mesma lógica usada
+      // em asaas-charge, pra não flapear entre um texto bom e um genérico a cada
+      // rodada que esse boleto passa por aqui).
+      const isParcelamento = entry.subcategoria === "Parcelamento";
+      let descricaoBoleto: string;
+      if (isParcelamento) {
+        const descOriginal = String(entry.descricao || "");
+        const parcelaMatch = descOriginal.match(/Parcela (\d+)\/(\d+)/i);
+        let rotulo: string;
+        if (parcelaMatch) {
+          const [, idx, total] = parcelaMatch;
+          rotulo = total === "1"
+            ? "Parcela única do acordo de parcelamento de dívida"
+            : `Parcela ${idx}/${total} do acordo de parcelamento de dívida`;
+        } else if (/Entrada/i.test(descOriginal)) {
+          rotulo = "Entrada do acordo de parcelamento de dívida";
+        } else {
+          rotulo = descOriginal;
+        }
+        let detalhe: string | null = entry.observacao ? String(entry.observacao) : null;
+        if (detalhe) {
+          const linhas = detalhe
+            .replace(/^Acordo de parcelamento de dívida\s*[—-]\s*/i, "")
+            .split("\n")
+            .map((l: string) => l.trim().replace(/^•\s*/, ""))
+            .filter(Boolean);
+          detalhe = linhas.length > 1
+            ? `${linhas[0].replace(/:$/, "")}: ${linhas.slice(1).join(" + ")}`
+            : linhas[0] || null;
+        }
+        descricaoBoleto = [rotulo, rental?.numero != null ? `Contrato #${rental.numero}` : null, detalhe, explicacao]
+          .filter(Boolean).join(" · ");
+      } else {
+        const CATEGORIA_LABELS: Record<string, string> = {
+          aluguel: "Aluguel", caucao: "Caução", manutencao_receita: "Manutenção",
+          multa_transito_receita: "Multa de Trânsito", venda_moto: "Venda de Moto",
+          pecas_receita: "Peças", outro_receita: "Outros",
+        };
+        const categoriaLabel = CATEGORIA_LABELS[entry.categoria] || null;
+        descricaoBoleto = [
+          categoriaLabel === "Outros" ? null : categoriaLabel,
+          rental?.numero != null ? `Contrato #${rental.numero}` : null,
+          entry.placa ? `Placa ${entry.placa}` : null,
+          semanaRef,
+          explicacao,
+        ].filter(Boolean).join(" · ");
+      }
 
       // Asaas exige vencimento >= hoje em qualquer atualização (mesmo que dueDate não
       // mude de fato) — sem isso, a chamada é recusada com "data mínima de vencimento".

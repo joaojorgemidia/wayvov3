@@ -266,14 +266,65 @@ serve(async (req) => {
     // — mesmo critério usado no resto do app (isSaldoRestanteEntry).
     const isSaldoRestante = (entry.observacao || "").startsWith("Saldo devedor de pagamento parcial");
 
-    // Multa/juros de atraso só se aplicam a aluguel e caução — mesma regra usada em todo o
-    // resto do app (ex: calcValorAtualizado no Financeiro/Cobranças). O app usa multa fixa +
-    // juros diário (R$/dia) + juros mensal (%) — o Asaas não tem um equivalente nativo para
-    // "R$/dia fixo" via fine/interest, então quando a cobrança JÁ está em atraso na hora de
-    // gerar o boleto, o valor com os acréscimos é calculado aqui (mesma fórmula do app) e
-    // embutido direto no valor do boleto, em vez de deixar o Asaas recalcular sozinho (o que
-    // gerava um total divergente do mostrado no app). Para cobranças ainda não vencidas,
-    // mantém o comportamento anterior: valor base + fine/interest como acréscimo futuro.
+    // Texto do boleto pro cliente, pra parcela/acordo de dívida: a descrição interna crua
+    // (ex.: "Saldo restante — Acordo de parcelamento de dívida – Parcela 1/1") é jargão de
+    // sistema — o cliente não sabe o que é "saldo restante" nem por que uma "parcela 1/1"
+    // existe. Aqui montamos um rótulo em linguagem simples + o detalhe de quais cobranças
+    // foram renegociadas (que fica na observação da entrada, ou — se essa entrada for o
+    // saldo de um pagamento parcial — na entrada de origem via fixed_origin_id).
+    let parcelamentoDescricao: string | null = null;
+    if (isParcelamento) {
+      const descOriginal = String(entry.descricao || "");
+      const parcelaMatch = descOriginal.match(/Parcela (\d+)\/(\d+)/i);
+      let rotulo: string;
+      if (parcelaMatch) {
+        const [, idx, total] = parcelaMatch;
+        rotulo = total === "1"
+          ? "Parcela única do acordo de parcelamento de dívida"
+          : `Parcela ${idx}/${total} do acordo de parcelamento de dívida`;
+      } else if (/Entrada/i.test(descOriginal)) {
+        rotulo = "Entrada do acordo de parcelamento de dívida";
+      } else {
+        rotulo = descOriginal;
+      }
+      parcelamentoDescricao = isSaldoRestante ? `Saldo restante — ${rotulo}` : rotulo;
+
+      let detalhe = entry.observacao ? String(entry.observacao) : null;
+      if (isSaldoRestante && entry.fixed_origin_id) {
+        const { data: origem } = await supabase
+          .from("financial_entries")
+          .select("observacao")
+          .eq("id", entry.fixed_origin_id)
+          .single();
+        if (origem?.observacao) detalhe = String(origem.observacao);
+      }
+      if (detalhe) {
+        // A observação vem como "Acordo de parcelamento de dívida — substitui N cobranças
+        // em atraso, total R$ X:\n• item 1\n• item 2" — o prefixo já virou o rótulo acima,
+        // então tiramos ele e achatamos a lista de bullets numa única linha legível.
+        const linhas = detalhe
+          .replace(/^Acordo de parcelamento de dívida\s*[—-]\s*/i, "")
+          .split("\n")
+          .map((l) => l.trim().replace(/^•\s*/, ""))
+          .filter(Boolean);
+        detalhe = linhas.length > 1
+          ? `${linhas[0].replace(/:$/, "")}: ${linhas.slice(1).join(" + ")}`
+          : linhas[0] || null;
+      }
+      parcelamentoDescricao = [parcelamentoDescricao, detalhe].filter(Boolean).join(" · ");
+    }
+
+    // Multa/juros de atraso valem pra qualquer receita vencida — mesma regra usada em todo o
+    // resto do app (ex: calcValorAtualizado no Financeiro/Cobranças). Fica de fora só
+    // "juros_atraso" (categoria que já É o próprio encargo — não pode acumular juros de
+    // novo em cima de juros). O app usa multa fixa + juros diário (R$/dia) + juros mensal
+    // (%) — o Asaas não tem um equivalente nativo para "R$/dia fixo" via fine/interest,
+    // então quando a cobrança JÁ está em atraso na hora de gerar o boleto, o valor com os
+    // acréscimos é calculado aqui (mesma fórmula do app) e embutido direto no valor do
+    // boleto, em vez de deixar o Asaas recalcular sozinho (o que gerava um total divergente
+    // do mostrado no app). Para cobranças ainda não vencidas, mantém o comportamento
+    // anterior: valor base + fine/interest como acréscimo futuro.
+    const elegivelParaAtraso = categoria !== "juros_atraso";
     let valorBoleto = baseValor;
     let fineToApply: { value: number; type: string } | null = null;
     let interestToApply: { value: number } | null = null;
@@ -282,12 +333,12 @@ serve(async (req) => {
     // ficar um valor "seco" sem explicar de onde veio o acréscimo.
     let explicacaoAtraso: string | null = null;
 
-    if (isAluguelOuCaucao && isSaldoRestante) {
+    if (elegivelParaAtraso && isSaldoRestante) {
       // Zera fine/interest pra não deixar o Asaas aplicar a taxa padrão da conta em cima
       // de um valor que já é o saldo (parcial ou só multa/juros) de uma rodada anterior.
       fineToApply = { value: 0, type: "FIXED" };
       interestToApply = { value: 0 };
-    } else if (isAluguelOuCaucao) {
+    } else if (elegivelParaAtraso) {
       if (diasAtrasoReal > 0) {
         const jurosDiarioTotal = jurosDiario * diasAtrasoReal;
         const jurosMesTotal = baseValor * (jurosAtrasoMes / 100 / 30) * diasAtrasoReal;
@@ -322,7 +373,7 @@ serve(async (req) => {
       value: valorBoleto,
       dueDate: effectiveDueDate,
       description: isParcelamento
-        ? [entry.descricao, contratoNumero != null ? `Contrato #${contratoNumero}` : null]
+        ? [parcelamentoDescricao, contratoNumero != null ? `Contrato #${contratoNumero}` : null]
             .filter(Boolean).join(" · ")
         : [
             // "Outros" é o rótulo genérico de categorias sem um nome específico (ex.:

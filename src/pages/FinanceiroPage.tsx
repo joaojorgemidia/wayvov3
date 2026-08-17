@@ -29,7 +29,7 @@ import {
   PieChart as PieChartIcon, BarChart3, Settings2, HelpCircle,
   EyeOff, Pin, Tag as TagIcon, Check, ChevronsUpDown, Bookmark, AlertTriangle,
   MoreVertical, CheckCheck, Banknote, X, Eye, ChevronsLeft, ChevronsRight, ArrowLeftRight, ChevronDown,
-  ExternalLink, Loader2, Link2, RefreshCw, Scissors, Copy
+  ExternalLink, Loader2, Link2, RefreshCw, Scissors, Copy, Handshake
 } from "lucide-react";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Textarea } from "@/components/ui/textarea";
@@ -976,6 +976,15 @@ export default function FinanceiroPage() {
   const [parcelandoEntryFin, setParcelandoEntryFin] = useState<FinancialEntry | null>(null);
   const [parcelFormFin, setParcelFormFin] = useState({ entrada: "", primeiraData: new Date().toISOString().slice(0, 10), nParcelas: "2" });
   const [parcelSalvandoFin, setParcelSalvandoFin] = useState(false);
+  // Acordo de parcelamento de dívida (agrupa várias cobranças selecionadas do mesmo
+  // cliente numa negociação só) — mesma feature que já existe em Pagamentos/Cobranças
+  // da semana, disponibilizada aqui a partir da seleção múltipla da lista.
+  const [parcelandoGrupoFin, setParcelandoGrupoFin] = useState<FinancialEntry[] | null>(null);
+  const [parcelGrupoSelectedFin, setParcelGrupoSelectedFin] = useState<Set<string>>(new Set());
+  const [parcelGrupoFormFin, setParcelGrupoFormFin] = useState({ entrada: "", valorParcela: "", primeiraData: new Date().toISOString().slice(0, 10) });
+  const [parcelGrupoDateOverridesFin, setParcelGrupoDateOverridesFin] = useState<Record<number, string>>({});
+  const [parcelGrupoEditingIndexFin, setParcelGrupoEditingIndexFin] = useState<number | null>(null);
+  const [parcelGrupoSalvandoFin, setParcelGrupoSalvandoFin] = useState(false);
   const [corrigirParcelaEntry, setCorrigirParcelaEntry] = useState<FinancialEntry | null>(null);
   const [corrigirOrigemId, setCorrigirOrigemId] = useState<string>("");
   const [corrigirOrigemDate, setCorrigirOrigemDate] = useState<string>("");
@@ -2317,6 +2326,146 @@ export default function FinanceiroPage() {
     }
   };
 
+  // Lançamento de saldo restante de um pagamento parcial anterior: a multa/juros do
+  // atraso original já foi somada uma vez ao calcular esse saldo — não pode ganhar
+  // multa/juros de novo, senão o encargo dobra a cada pagamento parcial subsequente.
+  const isSaldoRestanteEntryGrupo = (e: FinancialEntry) =>
+    (e.observacao || "").startsWith("Saldo devedor de pagamento parcial");
+
+  const calcValorAtualizadoGrupo = (e: FinancialEntry, days: number) => {
+    if (days <= 0 || e.tipo !== "receita" || e.categoria === "juros_atraso" || isSaldoRestanteEntryGrupo(e)) return e.valor || 0;
+    const cfg = activeCompany?.cobrancaConfig ?? DEFAULT_COBRANCA_CONFIG;
+    const rental = e.rentalId ? rentals.find(r => r.id === e.rentalId) : undefined;
+    const valor = e.valor || 0;
+    const multa = rental?.multaAtraso ?? cfg.multaAtraso ?? 0;
+    const jurosMes = rental?.jurosAtrasoMes ?? cfg.jurosMes ?? 0;
+    const jurosDiario = cfg.jurosDiario ?? 0;
+    const juros = valor * (jurosMes / 100 / 30) * days + jurosDiario * days + multa;
+    return parseFloat((valor + juros).toFixed(2));
+  };
+
+  const valorAtualDeGrupo = (e: FinancialEntry) => {
+    const dueStr = e.dataPrevista || e.data;
+    if (!dueStr) return e.valor || 0;
+    const due = new Date(dueStr + "T00:00:00");
+    const hoje = new Date(localToday() + "T00:00:00");
+    const days = Math.round((hoje.getTime() - due.getTime()) / 86400000);
+    return calcValorAtualizadoGrupo(e, days);
+  };
+
+  // Abre o diálogo de "acordo de parcelamento de dívida" a partir da seleção múltipla
+  // da lista — mesma funcionalidade que já existe em Pagamentos (Cobranças da semana).
+  // Só faz sentido pra cobranças em aberto (receita, não paga) de um único cliente —
+  // senão não dá pra saber de quem é a dívida nem quais boletos cancelar no Asaas.
+  const handleBulkParcelar = () => {
+    const selected = entries.filter(e => selectedIds.has(e.id));
+    if (selected.length === 0) return;
+    const ignoradas = selected.filter(e => e.pago || e.tipo !== "receita");
+    const elegiveis = selected.filter(e => e.tipo === "receita" && !e.pago);
+    if (elegiveis.length === 0) {
+      toast.error("Selecione ao menos uma cobrança em aberto (receita, não paga) para parcelar.");
+      return;
+    }
+    const clienteIds = new Set(elegiveis.map(e => e.clienteId).filter(Boolean));
+    if (clienteIds.size > 1) {
+      toast.error("Selecione cobranças de um único cliente para juntar num mesmo acordo.");
+      return;
+    }
+    if (!elegiveis[0].clienteId) {
+      toast.error("As cobranças selecionadas não têm cliente vinculado.");
+      return;
+    }
+    if (ignoradas.length > 0) {
+      toast.info(`${ignoradas.length} lançamento${ignoradas.length !== 1 ? "s" : ""} já pago(s) ou de despesa foi(ram) ignorado(s) da seleção.`);
+    }
+    setParcelandoGrupoFin(elegiveis);
+    setParcelGrupoSelectedFin(new Set(elegiveis.map(e => e.id)));
+    const amanha = new Date();
+    amanha.setDate(amanha.getDate() + 1);
+    setParcelGrupoFormFin({ entrada: "", valorParcela: "", primeiraData: amanha.toISOString().slice(0, 10) });
+    setParcelGrupoDateOverridesFin({});
+    setParcelGrupoEditingIndexFin(null);
+  };
+
+  const criarParcelamentoGrupoFin = async () => {
+    if (!parcelandoGrupoFin) return;
+    const selecionadas = parcelandoGrupoFin.filter(e => parcelGrupoSelectedFin.has(e.id));
+    if (selecionadas.length === 0) { toast.error("Selecione ao menos uma cobrança"); return; }
+    const valorTotal = selecionadas.reduce((s, e) => s + valorAtualDeGrupo(e), 0);
+    const entrada = parseFloat(parcelGrupoFormFin.entrada.replace(",", ".")) || 0;
+    const valorParcela = parseFloat(parcelGrupoFormFin.valorParcela.replace(",", ".")) || 0;
+    const primeiraData = parcelGrupoFormFin.primeiraData;
+    if (entrada < 0 || entrada >= valorTotal) { toast.error("Valor de entrada inválido"); return; }
+    if (valorParcela <= 0) { toast.error("Informe o valor da parcela"); return; }
+    if (!primeiraData) { toast.error("Informe a data da 1ª parcela"); return; }
+    const restante = parseFloat((valorTotal - entrada).toFixed(2));
+    const nParcelas = Math.max(1, Math.ceil(restante / valorParcela));
+    const addDaysLocal = (iso: string, d: number) => {
+      const dt = new Date(iso + "T00:00:00");
+      dt.setDate(dt.getDate() + d);
+      return dt.toISOString().slice(0, 10);
+    };
+    const fmtDt = (iso: string) => new Date(iso + "T00:00:00").toLocaleDateString("pt-BR");
+    const fmtBRLGrupo = (v: number) => v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+    const groupId = crypto.randomUUID();
+    const primeira = selecionadas[0];
+    const resumoItens = selecionadas
+      .map(e => `• ${getCatLabel(e.categoria || "", e.tipo)} — ${fmtBRLGrupo(valorAtualDeGrupo(e))} (venc. ${fmtDt(e.dataPrevista || e.data)})`)
+      .join("\n");
+    const observacaoBase = `Acordo de parcelamento de dívida — substitui ${selecionadas.length} cobrança${selecionadas.length !== 1 ? "s" : ""} em atraso, total ${fmtBRLGrupo(valorTotal)}:\n${resumoItens}`;
+    // Herda placa/moto/locação das cobranças agrupadas quando todas pertencem à mesma
+    // moto — só fica em branco se o acordo realmente mistura motos diferentes.
+    const placasEnvolvidas = Array.from(new Set(selecionadas.map(e => e.placa).filter(Boolean)));
+    const motoIdsEnvolvidos = Array.from(new Set(selecionadas.map(e => e.motoId).filter(Boolean)));
+    const rentalIdsEnvolvidos = Array.from(new Set(selecionadas.map(e => e.rentalId).filter(Boolean)));
+    const base = {
+      tipo: "receita" as const,
+      categoria: "outro_receita",
+      subcategoria: "Parcelamento",
+      motoId: motoIdsEnvolvidos.length === 1 ? motoIdsEnvolvidos[0] : null,
+      rentalId: rentalIdsEnvolvidos.length === 1 ? rentalIdsEnvolvidos[0] : null,
+      clienteId: primeira.clienteId,
+      pago: false,
+      conta: "",
+      natureza: "operacional" as const,
+      placa: placasEnvolvidas.join(", "),
+      clienteNome: primeira.clienteNome,
+      recurringGroupId: groupId,
+      tags: ["parcelamento", "acordo-divida"],
+      observacao: observacaoBase,
+    };
+    const newEntries: FinancialEntry[] = [];
+    if (entrada > 0) {
+      // Entrada é cobrada no dia do acordo (hoje) — "Data da 1ª parcela" é só da 1ª
+      // parcela semanal, para não cair no mesmo dia da entrada.
+      const hoje = localToday();
+      newEntries.push({ ...base, id: crypto.randomUUID(), descricao: "Acordo de parcelamento de dívida – Entrada", valor: entrada, data: hoje, dataPrevista: hoje } as FinancialEntry);
+    }
+    for (let i = 0; i < nParcelas; i++) {
+      const data = parcelGrupoDateOverridesFin[i] || addDaysLocal(primeiraData, i * 7);
+      const v = i === nParcelas - 1 ? parseFloat((restante - valorParcela * (nParcelas - 1)).toFixed(2)) : valorParcela;
+      newEntries.push({ ...base, id: crypto.randomUUID(), descricao: `Acordo de parcelamento de dívida – Parcela ${i + 1}/${nParcelas}`, valor: v, data, dataPrevista: data } as FinancialEntry);
+    }
+    setParcelGrupoSalvandoFin(true);
+    try {
+      const idsSel = new Set(selecionadas.map(e => e.id));
+      const remaining = entries.filter(e => !idsSel.has(e.id));
+      // Cancela os boletos das cobranças agrupadas no Asaas antes de descartá-las — senão
+      // continuam abertas e pagáveis por lá, e um pagamento numa delas nunca aparece no
+      // sistema (a cobrança já não existe mais pra ninguém reconciliar contra ela).
+      await cancelAsaasPayments(selecionadas);
+      const ok = await persistWithFeedback([...remaining, ...newEntries], {
+        successMessage: `Acordo criado: ${nParcelas} parcela${nParcelas !== 1 ? "s" : ""}${entrada > 0 ? " + entrada" : ""}.`,
+      });
+      if (ok) {
+        setSelectedIds(new Set());
+        setParcelandoGrupoFin(null);
+      }
+    } finally {
+      setParcelGrupoSalvandoFin(false);
+    }
+  };
+
   const aplicarCorrecaoParcelamento = async (parcelaEntry: FinancialEntry, originDate: string, originEntryId?: string) => {
     const all = loadFinancial();
     const rental = parcelaEntry.rentalId ? rentals.find(r => r.id === parcelaEntry.rentalId) : undefined;
@@ -2552,19 +2701,23 @@ export default function FinanceiroPage() {
       const card = creditCards.find(c => c.nome === (entry.conta || ""));
       setConfirmPayBank(card?.contaPagamento || "");
 
-      // Calcula valor inicial com acréscimos por atraso
+      // Calcula valor inicial com acréscimos por atraso — vale pra qualquer receita vencida,
+      // não só aluguel; "juros_atraso" e saldo de pagamento parcial ficam de fora pra não
+      // cobrar juros em cima de um valor que já É juros/multa ou já inclui o encargo.
       let initialValor = entry.valor;
-      if (!entry.pago && entry.rentalId && entry.tipo === "receita" && entry.categoria === "aluguel" && payDate) {
-        const rental = rentals.find(r => r.id === entry.rentalId);
+      const isJurosOuSaldoParcial = entry.categoria === "juros_atraso"
+        || (entry.observacao || "").startsWith("Saldo devedor de pagamento parcial");
+      if (!entry.pago && entry.tipo === "receita" && !isJurosOuSaldoParcial && payDate) {
+        const rental = entry.rentalId ? rentals.find(r => r.id === entry.rentalId) : undefined;
         const dueDateStr = entry.dataPrevista || entry.data;
-        if (rental && dueDateStr) {
+        if (dueDateStr) {
           const dueDate = new Date(dueDateStr + "T00:00:00");
           const pay = new Date(payDate + "T00:00:00");
           const daysOverdue = Math.max(0, Math.floor((pay.getTime() - dueDate.getTime()) / 86400000));
           if (daysOverdue > 0) {
             const cfg = activeCompany?.cobrancaConfig ?? DEFAULT_COBRANCA_CONFIG;
-            const multa = rental.multaAtraso || cfg.multaAtraso || 0;
-            const jurosMes = rental.jurosAtrasoMes || cfg.jurosMes || 0;
+            const multa = rental?.multaAtraso || cfg.multaAtraso || 0;
+            const jurosMes = rental?.jurosAtrasoMes || cfg.jurosMes || 0;
             const jurosCalc = (entry.valor * (jurosMes / 100 / 30)) * daysOverdue;
             const jurosDiarioFix = (cfg.jurosDiario || 0) * daysOverdue;
             initialValor = entry.valor + multa + jurosCalc + jurosDiarioFix;
@@ -2636,7 +2789,14 @@ export default function FinanceiroPage() {
       const entry = working.find(e => e.id === id);
       if (!entry || entry.pago) continue;
       const rental = entry.rentalId ? rentals.find(r => r.id === entry.rentalId) : null;
-      const isRentalPayment = !!entry.rentalId && entry.tipo === "receita" && entry.categoria === "aluguel" && rental?.status === "ativa";
+      // Qualquer receita vencida pode ter multa/juros a calcular — não só aluguel. Exceção:
+      // entrada já vinculada a uma locação encerrada (o acerto dela é feito à parte no
+      // encerramento, não aqui) e "juros_atraso"/saldo de pagamento parcial (já são o
+      // próprio encargo, não podem acumular juros de novo).
+      const isJurosOuSaldoParcial = entry.categoria === "juros_atraso"
+        || (entry.observacao || "").startsWith("Saldo devedor de pagamento parcial");
+      const isRentalPayment = entry.tipo === "receita" && !isJurosOuSaldoParcial
+        && (!entry.rentalId || rental?.status === "ativa");
       const dueDateStr = entry.dataPrevista || entry.data;
       const daysOverdue = isRentalPayment && dueDateStr
         ? Math.max(0, Math.floor((new Date(payDate + "T00:00:00").getTime() - new Date(dueDateStr + "T00:00:00").getTime()) / 86400000))
@@ -2679,16 +2839,19 @@ export default function FinanceiroPage() {
   useEffect(() => {
     if (!confirmToggleEntry || confirmToggleEntry.pago || !confirmDate) return;
     if (confirmValorEditado) return;
-    // Juros automático só se aplica a aluguéis — nunca sobre juros_atraso ou outras categorias
-    if (confirmToggleEntry.categoria !== "aluguel") {
+    // Juros automático vale pra qualquer receita — nunca sobre juros_atraso (já é o próprio
+    // encargo) nem sobre saldo de pagamento parcial (já inclui o encargo de uma rodada anterior)
+    const isJurosOuSaldoParcial = confirmToggleEntry.categoria === "juros_atraso"
+      || (confirmToggleEntry.observacao || "").startsWith("Saldo devedor de pagamento parcial");
+    if (confirmToggleEntry.tipo !== "receita" || isJurosOuSaldoParcial) {
       setConfirmValor(confirmToggleEntry.valor.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
       return;
     }
-    const rental = confirmToggleEntry.rentalId && confirmToggleEntry.tipo === "receita"
+    const rental = confirmToggleEntry.rentalId
       ? rentals.find(r => r.id === confirmToggleEntry.rentalId)
       : null;
     const dueDateStr = confirmToggleEntry.dataPrevista || confirmToggleEntry.data;
-    if (!rental || !dueDateStr) {
+    if (!dueDateStr) {
       setConfirmValor(confirmToggleEntry.valor.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
       return;
     }
@@ -2700,8 +2863,8 @@ export default function FinanceiroPage() {
       return;
     }
     const cfg = activeCompany?.cobrancaConfig ?? DEFAULT_COBRANCA_CONFIG;
-    const multa = rental.multaAtraso || cfg.multaAtraso || 0;
-    const jurosMes = rental.jurosAtrasoMes || cfg.jurosMes || 0;
+    const multa = rental?.multaAtraso || cfg.multaAtraso || 0;
+    const jurosMes = rental?.jurosAtrasoMes || cfg.jurosMes || 0;
     const jurosCalc = (confirmToggleEntry.valor * (jurosMes / 100 / 30)) * daysOverdue;
     const jurosDiarioFix = (cfg.jurosDiario || 0) * daysOverdue;
     const total = confirmToggleEntry.valor + multa + jurosCalc + jurosDiarioFix;
@@ -2719,11 +2882,13 @@ export default function FinanceiroPage() {
     const parsedValor = parseFloat(confirmValor.replace(/\./g, "").replace(",", "."));
     const finalValor = !isNaN(parsedValor) && parsedValor > 0 ? parsedValor : confirmToggleEntry.valor;
     const payDate = confirmDate || localToday();
-    const rental = rentals.find(r => r.id === confirmToggleEntry.rentalId) ?? null;
-    const isRentalPayment = !confirmToggleEntry.pago && !!confirmToggleEntry.rentalId
+    const rental = confirmToggleEntry.rentalId ? (rentals.find(r => r.id === confirmToggleEntry.rentalId) ?? null) : null;
+    const isJurosOuSaldoParcial = confirmToggleEntry.categoria === "juros_atraso"
+      || (confirmToggleEntry.observacao || "").startsWith("Saldo devedor de pagamento parcial");
+    const isRentalPayment = !confirmToggleEntry.pago
       && confirmToggleEntry.tipo === "receita"
-      && confirmToggleEntry.categoria === "aluguel"
-      && rental?.status === "ativa";
+      && !isJurosOuSaldoParcial
+      && (!confirmToggleEntry.rentalId || rental?.status === "ativa");
 
     // ── Calcular acréscimos por atraso (hierarquia: locação > empresa) ──────
     const dueDateStr = confirmToggleEntry.dataPrevista || confirmToggleEntry.data;
@@ -4702,6 +4867,7 @@ export default function FinanceiroPage() {
             actions={[
               { label: marcarPagoLabel, icon: CheckCheck, onClick: handleBulkMarcarPago },
               { label: desfazerPagoLabel, icon: Circle, onClick: handleBulkDesfazer },
+              { label: "Parcelar dívida", icon: Handshake, onClick: handleBulkParcelar },
               { label: "Ignorar", icon: EyeOff, onClick: () => handleBulkIgnorar(true) },
               { label: "Excluir", icon: Trash2, variant: "destructive", onClick: handleBulkDelete },
             ]}
@@ -5064,8 +5230,7 @@ export default function FinanceiroPage() {
                       // mesma fórmula, pra ficar coerente já ao salvar.
                       const fmtBRL = (v: number) => `R$ ${v.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
                       const isAutoObs = (form.observacao || "").startsWith("Valor original R$");
-                      const isAluguelOuCaucao = form.categoria === "aluguel" || form.categoria === "caucao";
-                      if (isAutoObs && isAluguelOuCaucao && !form.pago && num > 0) {
+                      if (isAutoObs && form.tipo === "receita" && !form.pago && num > 0) {
                         const dueStr = form.dataPrevista || form.data;
                         const diasAtraso = dueStr
                           ? Math.max(0, Math.floor((new Date(localToday() + "T00:00:00").getTime() - new Date(dueStr + "T00:00:00").getTime()) / 86400000))
@@ -5679,18 +5844,24 @@ export default function FinanceiroPage() {
                 </div>
               </div>
 
-              {/* Bloco de atraso — aparece quando há multa/juros configurados e a data de pagamento é posterior ao vencimento */}
-              {confirmToggleEntry.rentalId && confirmToggleEntry.tipo === "receita" && confirmToggleEntry.categoria === "aluguel" && confirmDate && (() => {
-                const rental = rentals.find(r => r.id === confirmToggleEntry.rentalId);
+              {/* Bloco de atraso — aparece quando há multa/juros configurados e a data de pagamento é
+                  posterior ao vencimento. Vale pra qualquer receita vencida, não só aluguel; fica de
+                  fora "juros_atraso" (já é o próprio encargo) e saldo de pagamento parcial (idem). */}
+              {confirmToggleEntry.tipo === "receita"
+                && confirmToggleEntry.categoria !== "juros_atraso"
+                && !(confirmToggleEntry.observacao || "").startsWith("Saldo devedor de pagamento parcial")
+                && confirmDate && (() => {
+                const rental = confirmToggleEntry.rentalId ? rentals.find(r => r.id === confirmToggleEntry.rentalId) : undefined;
+                if (confirmToggleEntry.rentalId && (!rental || rental.status !== "ativa")) return null;
                 const dueDateStr = confirmToggleEntry.dataPrevista || confirmToggleEntry.data;
-                if (!rental || !dueDateStr || rental.status !== "ativa") return null;
+                if (!dueDateStr) return null;
                 const due = new Date(dueDateStr + "T00:00:00");
                 const pay = new Date(confirmDate + "T00:00:00");
                 const daysOverdue = Math.max(0, Math.floor((pay.getTime() - due.getTime()) / 86400000));
                 if (daysOverdue === 0) return null;
                 const cfg = activeCompany?.cobrancaConfig ?? DEFAULT_COBRANCA_CONFIG;
-                const multa = rental.multaAtraso || cfg.multaAtraso || 0;
-                const jurosMes = rental.jurosAtrasoMes || cfg.jurosMes || 0;
+                const multa = rental?.multaAtraso || cfg.multaAtraso || 0;
+                const jurosMes = rental?.jurosAtrasoMes || cfg.jurosMes || 0;
                 const jurosCalc = (confirmToggleEntry.valor * (jurosMes / 100 / 30)) * daysOverdue;
                 const jurosDiarioFix = (cfg.jurosDiario || 0) * daysOverdue;
                 const totalJuros = jurosCalc + jurosDiarioFix;
@@ -5766,22 +5937,22 @@ export default function FinanceiroPage() {
                   há atraso/acréscimo, senão duplica o bloco "PAGAMENTO VENCIDO"
                   acima (que já mostra o pendente considerando multa/juros). */}
               {!confirmToggleEntry.pago && confirmToggleEntry.tipo === "receita" && (() => {
-                // A checagem de multa/juros de atraso só faz sentido para o próprio
-                // aluguel — outras categorias (ex: multa de trânsito) podem estar
-                // vinculadas à mesma locação só como referência, sem que a
-                // configuração de atraso do aluguel se aplique a elas.
-                const rental = confirmToggleEntry.categoria === "aluguel" && confirmToggleEntry.rentalId
-                  ? rentals.find(r => r.id === confirmToggleEntry.rentalId)
-                  : undefined;
+                // Mesma checagem de multa/juros do bloco "PAGAMENTO VENCIDO" acima — se ele já vai
+                // aparecer (qualquer receita vencida, exceto juros_atraso/saldo parcial), não
+                // duplica aqui o aviso de pendência.
+                const isJurosOuSaldoParcial = confirmToggleEntry.categoria === "juros_atraso"
+                  || (confirmToggleEntry.observacao || "").startsWith("Saldo devedor de pagamento parcial");
+                const rental = confirmToggleEntry.rentalId ? rentals.find(r => r.id === confirmToggleEntry.rentalId) : undefined;
+                const rentalOk = !confirmToggleEntry.rentalId || rental?.status === "ativa";
                 const dueDateStr = confirmToggleEntry.dataPrevista || confirmToggleEntry.data;
-                if (rental && dueDateStr && confirmDate) {
+                if (!isJurosOuSaldoParcial && rentalOk && dueDateStr && confirmDate) {
                   const due = new Date(dueDateStr + "T00:00:00");
                   const pay = new Date(confirmDate + "T00:00:00");
                   const daysOverdue = Math.max(0, Math.floor((pay.getTime() - due.getTime()) / 86400000));
                   if (daysOverdue > 0) {
                     const cfg = activeCompany?.cobrancaConfig ?? DEFAULT_COBRANCA_CONFIG;
-                    const multa = rental.multaAtraso || cfg.multaAtraso || 0;
-                    const jurosMes = rental.jurosAtrasoMes || cfg.jurosMes || 0;
+                    const multa = rental?.multaAtraso || cfg.multaAtraso || 0;
+                    const jurosMes = rental?.jurosAtrasoMes || cfg.jurosMes || 0;
                     const jurosCalc = (confirmToggleEntry.valor * (jurosMes / 100 / 30)) * daysOverdue;
                     const jurosDiarioFix = (cfg.jurosDiario || 0) * daysOverdue;
                     if (multa > 0 || (jurosCalc + jurosDiarioFix) > 0) return null;
@@ -6671,6 +6842,197 @@ export default function FinanceiroPage() {
                   className="bg-orange-600 hover:bg-orange-700 text-white"
                 >
                   {parcelSalvandoFin ? "Salvando…" : `Criar ${nParcelasNum} parcela${nParcelasNum !== 1 ? "s" : ""}${entradaNum > 0 ? " + entrada" : ""}`}
+                </Button>
+              </div>
+            </DialogContent>
+          </Dialog>
+        );
+      })()}
+
+      {/* ── Dialog: Parcelar dívida agrupada (acordo, seleção múltipla) ──── */}
+      {(() => {
+        if (!parcelandoGrupoFin) return null;
+        const selecionadas = parcelandoGrupoFin.filter(e => parcelGrupoSelectedFin.has(e.id));
+        const valorTotal = selecionadas.reduce((s, e) => s + valorAtualDeGrupo(e), 0);
+        const entradaNum = parseFloat(parcelGrupoFormFin.entrada.replace(",", ".")) || 0;
+        const valorParcelaNum = parseFloat(parcelGrupoFormFin.valorParcela.replace(",", ".")) || 0;
+        const restante = Math.max(0, parseFloat((valorTotal - entradaNum).toFixed(2)));
+        const nParcelas = valorParcelaNum > 0 ? Math.max(1, Math.ceil(restante / valorParcelaNum)) : 0;
+        const entradaValida = entradaNum >= 0 && entradaNum < valorTotal;
+        const podeSalvar = selecionadas.length > 0 && entradaValida && valorParcelaNum > 0 && !!parcelGrupoFormFin.primeiraData && nParcelas > 0 && nParcelas <= 104;
+
+        const addDaysLocal = (iso: string, d: number) => {
+          const dt = new Date(iso + "T00:00:00");
+          dt.setDate(dt.getDate() + d);
+          return dt.toISOString().slice(0, 10);
+        };
+        const fmtDt = (iso: string) => new Date(iso + "T00:00:00").toLocaleDateString("pt-BR");
+        const fmtBRLGrupo = (v: number) => v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+
+        const previewParcelas = nParcelas > 0 && nParcelas <= 104 && parcelGrupoFormFin.primeiraData
+          ? Array.from({ length: nParcelas }, (_, i) => {
+              const data = parcelGrupoDateOverridesFin[i] || addDaysLocal(parcelGrupoFormFin.primeiraData, i * 7);
+              const v = i === nParcelas - 1 ? parseFloat((restante - valorParcelaNum * (nParcelas - 1)).toFixed(2)) : valorParcelaNum;
+              return { index: i + 1, data, v };
+            })
+          : [];
+        const clienteNomeGrupo = parcelandoGrupoFin[0]?.clienteNome || "";
+
+        return (
+          <Dialog open={!!parcelandoGrupoFin} onOpenChange={(o) => !o && setParcelandoGrupoFin(null)}>
+            <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-2">
+                  <Handshake className="h-4 w-4 text-indigo-500" /> Parcelar dívida
+                </DialogTitle>
+              </DialogHeader>
+
+              {/* Lista de cobranças selecionáveis */}
+              <div className="space-y-1.5">
+                <Label className="text-xs text-muted-foreground">Cobranças incluídas no acordo</Label>
+                <div className="border rounded-md divide-y max-h-48 overflow-y-auto">
+                  {parcelandoGrupoFin.map(e => {
+                    const checked = parcelGrupoSelectedFin.has(e.id);
+                    return (
+                      <label key={e.id} className="flex items-center gap-2 px-3 py-1.5 text-xs cursor-pointer hover:bg-muted/30">
+                        <Checkbox
+                          checked={checked}
+                          onCheckedChange={(v) => setParcelGrupoSelectedFin(prev => {
+                            const next = new Set(prev);
+                            if (v) next.add(e.id); else next.delete(e.id);
+                            return next;
+                          })}
+                        />
+                        <span className="flex-1 min-w-0">
+                          <span className="block font-medium truncate">{getCatLabel(e.categoria || "", e.tipo)}</span>
+                          <span className="text-muted-foreground">venc. {fmtDt(e.dataPrevista || e.data)}</span>
+                        </span>
+                        <span className="font-semibold shrink-0">{fmtBRLGrupo(valorAtualDeGrupo(e))}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+                <div className="flex justify-between text-sm font-semibold px-1">
+                  <span>Total selecionado</span>
+                  <span className="text-indigo-600 dark:text-indigo-400">{fmtBRLGrupo(valorTotal)}</span>
+                </div>
+              </div>
+
+              <div className="space-y-4 py-1">
+                {/* Entrada */}
+                <div className="space-y-1.5">
+                  <Label>Entrada (opcional)</Label>
+                  <Input
+                    type="number"
+                    placeholder="0,00"
+                    value={parcelGrupoFormFin.entrada}
+                    onChange={e => setParcelGrupoFormFin(f => ({ ...f, entrada: e.target.value }))}
+                    min={0}
+                    max={Math.max(0, valorTotal - 0.01)}
+                    step={0.01}
+                  />
+                  {entradaNum > 0 && (
+                    <p className="text-xs text-muted-foreground">Restante a parcelar: {fmtBRLGrupo(restante)}</p>
+                  )}
+                </div>
+
+                {/* Grade: valor da parcela + data */}
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <Label>Valor da parcela</Label>
+                    <Input
+                      type="number"
+                      placeholder="0,00"
+                      value={parcelGrupoFormFin.valorParcela}
+                      onChange={e => setParcelGrupoFormFin(f => ({ ...f, valorParcela: e.target.value }))}
+                      min={0.01}
+                      step={0.01}
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Data da 1ª parcela</Label>
+                    <Input
+                      type="date"
+                      value={parcelGrupoFormFin.primeiraData}
+                      onChange={e => setParcelGrupoFormFin(f => ({ ...f, primeiraData: e.target.value }))}
+                    />
+                  </div>
+                </div>
+
+                {nParcelas > 104 && (
+                  <p className="text-xs text-destructive font-medium">Isso resultaria em {nParcelas} parcelas — aumente o valor da parcela.</p>
+                )}
+
+                {/* Preview — pensado para print/screenshot enviar ao cliente */}
+                {previewParcelas.length > 0 && (
+                  <div className="rounded-xl border-2 border-indigo-200 dark:border-indigo-800 bg-background overflow-hidden">
+                    <div className="bg-indigo-50 dark:bg-indigo-950/30 px-4 py-3 border-b border-indigo-200 dark:border-indigo-800">
+                      <p className="text-[10px] font-bold uppercase tracking-wide text-indigo-600 dark:text-indigo-400">Acordo de Parcelamento</p>
+                      {clienteNomeGrupo && <p className="text-sm font-bold text-foreground">{clienteNomeGrupo}</p>}
+                      <p className="text-xs text-muted-foreground mt-1">
+                        Dívida total: <span className="font-semibold text-foreground">{fmtBRLGrupo(valorTotal)}</span>
+                        {entradaNum > 0 && <> · Entrada: <span className="font-semibold text-foreground">{fmtBRLGrupo(entradaNum)}</span></>}
+                        {" · "}{nParcelas}x {nParcelas > 1 && previewParcelas[previewParcelas.length - 1]?.v !== valorParcelaNum ? "de até" : "de"} <span className="font-semibold text-foreground">{fmtBRLGrupo(valorParcelaNum)}</span> {nParcelas !== 1 ? "semanais" : "semanal"}
+                        {nParcelas > 1 && previewParcelas[previewParcelas.length - 1]?.v !== valorParcelaNum && " (última ajustada para fechar o total)"}
+                      </p>
+                    </div>
+                    <div className="divide-y text-sm">
+                      {entradaNum > 0 && (
+                        <div className="flex justify-between px-4 py-2 text-xs bg-muted/20">
+                          <span className="text-muted-foreground">Entrada · {fmtDt(localToday())} (hoje)</span>
+                          <span className="font-semibold">{fmtBRLGrupo(entradaNum)}</span>
+                        </div>
+                      )}
+                      {previewParcelas.map(p => {
+                        const idx = p.index - 1;
+                        return (
+                          <div key={p.index} className="flex justify-between items-center px-4 py-2 text-xs gap-2">
+                            <span className="text-muted-foreground flex items-center gap-1.5 min-w-0">
+                              Parcela {p.index}/{nParcelas} ·
+                              {parcelGrupoEditingIndexFin === idx ? (
+                                <Input
+                                  type="date"
+                                  autoFocus
+                                  value={p.data}
+                                  onChange={(e) => {
+                                    const v = e.target.value;
+                                    setParcelGrupoDateOverridesFin(prev => ({ ...prev, [idx]: v }));
+                                  }}
+                                  onBlur={() => setParcelGrupoEditingIndexFin(null)}
+                                  className="h-6 w-[124px] text-xs px-1.5 py-0"
+                                />
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => setParcelGrupoEditingIndexFin(idx)}
+                                  className="underline decoration-dotted underline-offset-2 hover:text-foreground"
+                                  title="Clique para alterar a data desta parcela"
+                                >
+                                  {fmtDt(p.data)}
+                                </button>
+                              )}
+                            </span>
+                            <span className="font-semibold shrink-0">{fmtBRLGrupo(p.v)}</span>
+                          </div>
+                        );
+                      })}
+                      <div className="flex justify-between px-4 py-2.5 text-sm font-bold bg-indigo-50 dark:bg-indigo-950/30">
+                        <span>Total do acordo</span>
+                        <span>{fmtBRLGrupo(entradaNum + previewParcelas.reduce((s, p) => s + p.v, 0))}</span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2">
+                <Button variant="outline" onClick={() => setParcelandoGrupoFin(null)} disabled={parcelGrupoSalvandoFin}>Cancelar</Button>
+                <Button
+                  onClick={criarParcelamentoGrupoFin}
+                  disabled={!podeSalvar || parcelGrupoSalvandoFin}
+                  className="bg-indigo-600 hover:bg-indigo-700 text-white"
+                >
+                  {parcelGrupoSalvandoFin ? "Salvando…" : `Criar ${nParcelas}x${entradaNum > 0 ? " + entrada" : ""}`}
                 </Button>
               </div>
             </DialogContent>
