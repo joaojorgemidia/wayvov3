@@ -13,7 +13,7 @@ import { ptBR } from "date-fns/locale";
 import { BarChart, Bar, XAxis, YAxis, ResponsiveContainer, CartesianGrid, Tooltip as RechartsTooltip } from "recharts";
 import { useCompany } from "@/contexts/CompanyContext";
 import { sanitizeWhatsAppNumber } from "@/lib/whatsapp";
-import { DEFAULT_COBRANCA_CONFIG, isLoca2Rodas } from "@/lib/companies";
+import { DEFAULT_COBRANCA_CONFIG, isLoca2Rodas, CobrancaConfig } from "@/lib/companies";
 import { VehicleFilterChips, VehicleFilter } from "@/components/VehicleFilterChips";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -77,6 +77,28 @@ function classifyPendenciaEncerramento(
     }
   }
   return dueStr <= encerrarDataISO ? { action: "preserve" } : { action: "remove" };
+}
+
+// Multa + juros de uma cobrança pendente já vencida na data de encerramento — mesma fórmula
+// usada em FinanceiroPage ao confirmar um pagamento atrasado manualmente (multa fixa +
+// juros %/mês sobre o valor + juros fixo/dia, tudo proporcional aos dias de atraso até a
+// data de encerramento). Sem isso, a cobrança consolidada de encerramento saía sem o
+// acréscimo por atraso que o cliente já devia nas cobranças originais.
+function calcAcrescimoAtraso(
+  rental: Rental,
+  entry: FinancialEntry,
+  cobrancaCfg: CobrancaConfig,
+  encerrarDataISO: string,
+): number {
+  const dueStr = entry.dataPrevista || entry.data;
+  if (!dueStr) return 0;
+  const daysOverdue = Math.max(0, differenceInDays(parseISO(encerrarDataISO), parseISO(dueStr)));
+  if (daysOverdue <= 0) return 0;
+  const multa = rental.multaAtraso || cobrancaCfg.multaAtraso || 0;
+  const jurosMes = rental.jurosAtrasoMes || cobrancaCfg.jurosMes || 0;
+  const jurosCalc = (entry.valor * (jurosMes / 100 / 30)) * daysOverdue;
+  const jurosDiarioFix = (cobrancaCfg.jurosDiario || 0) * daysOverdue;
+  return Math.round((multa + jurosCalc + jurosDiarioFix) * 100) / 100;
 }
 
 // Aplica classifyPendenciaEncerramento sobre um array de FinancialEntry (todas as entradas
@@ -853,7 +875,12 @@ export default function LocacoesPage() {
     let finalEntries = remaining;
     let unificadoCount = 0;
     if (encerrarUnificar && pendentesQueFicam.length > 1) {
-      const total = Math.round(pendentesQueFicam.reduce((s, e) => s + e.valor, 0) * 100) / 100;
+      // Cada cobrança já vencida entra com multa+juros pelos dias de atraso até a data de
+      // encerramento (mesma fórmula do Financeiro) — senão a cobrança consolidada saía sem
+      // o acréscimo que o cliente já devia nas cobranças originais.
+      const acrescimos = new Map(pendentesQueFicam.map(e => [e.id, calcAcrescimoAtraso(encerrarRental, e, cobrancaCfg, encerrarData)]));
+      const valorFinal = (e: FinancialEntry) => e.valor + (acrescimos.get(e.id) || 0);
+      const total = Math.round(pendentesQueFicam.reduce((s, e) => s + valorFinal(e), 0) * 100) / 100;
       // Rótulo curto por item pro texto que vai pro boleto do cliente — a descrição bruta de
       // algumas categorias (ex.: multa, com número de auto/RENAINF/órgão) é informação interna
       // demais para o boleto. O detalhe completo continua em consolidatedItems, usado só na
@@ -872,7 +899,10 @@ export default function LocacoesPage() {
         return CATEGORIA_LABEL_CURTO[e.categoria] || e.categoria || "Cobrança";
       };
       const itensTexto = pendentesQueFicam
-        .map(e => `• ${itemLabelCurto(e)} — R$ ${e.valor.toFixed(2)}`)
+        .map(e => {
+          const acr = acrescimos.get(e.id) || 0;
+          return `• ${itemLabelCurto(e)} — R$ ${valorFinal(e).toFixed(2)}${acr > 0 ? ` (inclui R$ ${acr.toFixed(2)} de multa/juros por atraso)` : ""}`;
+        })
         .join("\n");
       const consolidada: FinancialEntry = {
         id: crypto.randomUUID(),
@@ -893,7 +923,7 @@ export default function LocacoesPage() {
           originalEntryId: e.id,
           descricao: e.descricao || e.categoria,
           categoria: e.categoria,
-          valor: e.valor,
+          valor: valorFinal(e),
           dataPrevista: e.dataPrevista || e.data,
         })),
       };
@@ -1784,7 +1814,9 @@ export default function LocacoesPage() {
                   encerrarRental, encerrarPendencias, encerrarSelectedIds, encerrarData,
                 ).remaining;
                 if (pendentesQueFicamPreview.length <= 1) return null;
-                const totalPreview = pendentesQueFicamPreview.reduce((s, e) => s + e.valor, 0);
+                const totalPreview = pendentesQueFicamPreview.reduce(
+                  (s, e) => s + e.valor + calcAcrescimoAtraso(encerrarRental, e, cobrancaCfg, encerrarData), 0,
+                );
                 return (
                   <div className="rounded-md border border-primary/30 bg-primary/5 p-3">
                     <div className="flex items-start gap-3">
