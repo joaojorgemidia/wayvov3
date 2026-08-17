@@ -21,7 +21,7 @@ import {
   Bell, Wrench, MoreHorizontal, Phone, Copy,
   CalendarClock, ExternalLink, Search, TrendingUp,
   LayoutDashboard, SlidersHorizontal, Check, ChevronDown, ChevronUp, AlertCircle,
-  Scissors, X, Pencil, Loader2, FileText, Handshake, EyeOff,
+  Scissors, X, Pencil, Loader2, FileText, Handshake, EyeOff, Droplet, ClipboardCheck,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useDataCacheSnapshot } from "@/lib/data-cache";
@@ -37,6 +37,7 @@ import { DEFAULT_COBRANCA_CONFIG } from "@/lib/companies";
 import { buildWhatsAppUrl } from "@/lib/whatsapp";
 import { localToday } from "@/lib/utils";
 import { cancelAsaasEntries } from "@/lib/asaas";
+import { useCollections } from "@/hooks/useCollections";
 
 const SNOOZE_LS_KEY = "wayvo-cobranca-snooze";
 function readSnoozeMap(): Record<string, string> {
@@ -190,6 +191,7 @@ function tokensFor(item: RowItem): Record<string, string> {
 export default function CobrancasSemanaPage() {
   const { activeCompany } = useCompany();
   const cache = useDataCacheSnapshot();
+  const { pendings: collectionPendings } = useCollections();
   const [confirmItem, setConfirmItem] = useState<RowItem | null>(null);
   const [confirmValor, setConfirmValor] = useState("");
   const [confirmValorEditado, setConfirmValorEditado] = useState(false);
@@ -2627,6 +2629,11 @@ export default function CobrancasSemanaPage() {
             const temLocacaoEncerrada = rentalIdsEncerrados.length > 0;
             const algumOculto = rentalIdsEncerrados.some(id => rentalsById.get(id)?.pagamentosOcultos);
             const clienteTelefone = debtDetailClientId ? clientsById.get(debtDetailClientId)?.telefone ?? null : null;
+            // Outras pendências do cliente fora de cobrança em dinheiro (troca de óleo,
+            // vistoria) — mesma fonte usada pela régua de cobrança automática (useCollections),
+            // pra não duplicar a regra de "o que conta como vencido" em dois lugares.
+            const outrasPendencias = collectionPendings.filter(p =>
+              p.clienteId === debtDetailClientId && (p.module === "oleo" || p.module === "vistoria"));
 
             return (
               <>
@@ -2744,6 +2751,23 @@ export default function CobrancasSemanaPage() {
                       </div>
                     ) : <div />}
                   </div>
+
+                  {/* ── Outras pendências (troca de óleo, vistoria) ── */}
+                  {outrasPendencias.length > 0 && (
+                    <div className="flex flex-wrap items-center gap-1.5 mt-2">
+                      {outrasPendencias.map(p => (
+                        <span
+                          key={`${p.module}-${p.entityId}`}
+                          title={p.descricao}
+                          className="flex items-center gap-1 text-[10px] font-semibold text-amber-700 dark:text-amber-400 bg-amber-100 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-700 rounded-full px-2 py-1"
+                        >
+                          {p.module === "oleo" ? <Droplet className="h-3 w-3" /> : <ClipboardCheck className="h-3 w-3" />}
+                          {p.module === "oleo" ? "Troca de óleo" : "Vistoria"} em atraso
+                          {p.daysLate > 0 && ` · ${p.daysLate}d`}
+                        </span>
+                      ))}
+                    </div>
+                  )}
                 </div>
 
                 {/* ── Conteúdo rolável ── */}
