@@ -1,4 +1,4 @@
-import type { Motorcycle, Client, Rental, Fine, Maintenance, FinancialEntry, SicoobTransaction, CategorizationRule } from "@/lib/types";
+import type { Motorcycle, Client, Rental, Fine, Maintenance, FinancialEntry, SicoobTransaction, CategorizationRule, LegalCase, LegalCaseStatus, LegalCaseUpdate } from "@/lib/types";
 
 export interface BankAccountData {
   id: string;
@@ -355,6 +355,61 @@ export function categorizationRuleToDb(rule: CategorizationRule): any {
     usos_count: rule.usosCount ?? 0,
     last_used_at: rule.lastUsedAt || null,
     ativo: rule.ativo ?? true,
+  };
+}
+
+// ─── Módulo Jurídico ──────────────────────────────────────────
+// legal_cases/legal_case_updates ficam FORA do cache global (data-cache.ts/DataContext)
+// de propósito — são consultadas direto do Supabase pela tela de Jurídico e pelo botão
+// "Enviar para Jurídico" em Locações, nunca pelo pipeline loadXxx/saveXxx genérico
+// (o advogado externo não tem acesso à empresa via user_companies, então não faz
+// sentido essas tabelas entrarem no mesmo carregamento em massa das demais).
+
+export function dbToLegalCase(r: any): LegalCase {
+  return {
+    id: r.id, companyId: r.company_id, rentalId: r.rental_id ?? null, clientId: r.client_id ?? null,
+    companyNome: r.company_nome || "", clienteNome: r.cliente_nome || "",
+    clienteCpf: r.cliente_cpf ?? null, clienteTelefone: r.cliente_telefone ?? null, clienteEndereco: r.cliente_endereco ?? null,
+    contratoNumero: r.contrato_numero ?? null, motoPlaca: r.moto_placa ?? null, motoModelo: r.moto_modelo ?? null,
+    dataInicioContrato: r.data_inicio_contrato ?? null, dataFimContrato: r.data_fim_contrato ?? null,
+    saldoPendenteSnapshot: Number(r.saldo_pendente_snapshot) || 0,
+    detalhePendencias: Array.isArray(r.detalhe_pendencias) ? r.detalhe_pendencias : [],
+    status: (r.status as LegalCaseStatus) || "nao_iniciado",
+    valorRecuperado: Number(r.valor_recuperado) || 0, valorEmRecuperacao: Number(r.valor_em_recuperacao) || 0,
+    openedBy: r.opened_by ?? null, openedAt: r.opened_at, closedAt: r.closed_at ?? null,
+    createdAt: r.created_at, updatedAt: r.updated_at,
+  };
+}
+
+export function legalCaseToDb(c: Partial<LegalCase>): any {
+  const out: any = {};
+  if (c.companyId !== undefined) out.company_id = c.companyId;
+  if (c.rentalId !== undefined) out.rental_id = c.rentalId;
+  if (c.clientId !== undefined) out.client_id = c.clientId;
+  if (c.companyNome !== undefined) out.company_nome = c.companyNome;
+  if (c.clienteNome !== undefined) out.cliente_nome = c.clienteNome;
+  if (c.clienteCpf !== undefined) out.cliente_cpf = c.clienteCpf;
+  if (c.clienteTelefone !== undefined) out.cliente_telefone = c.clienteTelefone;
+  if (c.clienteEndereco !== undefined) out.cliente_endereco = c.clienteEndereco;
+  if (c.contratoNumero !== undefined) out.contrato_numero = c.contratoNumero;
+  if (c.motoPlaca !== undefined) out.moto_placa = c.motoPlaca;
+  if (c.motoModelo !== undefined) out.moto_modelo = c.motoModelo;
+  if (c.dataInicioContrato !== undefined) out.data_inicio_contrato = c.dataInicioContrato;
+  if (c.dataFimContrato !== undefined) out.data_fim_contrato = c.dataFimContrato;
+  if (c.saldoPendenteSnapshot !== undefined) out.saldo_pendente_snapshot = c.saldoPendenteSnapshot;
+  if (c.detalhePendencias !== undefined) out.detalhe_pendencias = c.detalhePendencias;
+  if (c.status !== undefined) out.status = c.status;
+  if (c.valorRecuperado !== undefined) out.valor_recuperado = c.valorRecuperado;
+  if (c.valorEmRecuperacao !== undefined) out.valor_em_recuperacao = c.valorEmRecuperacao;
+  if (c.openedBy !== undefined) out.opened_by = c.openedBy;
+  if (c.closedAt !== undefined) out.closed_at = c.closedAt;
+  return out;
+}
+
+export function dbToLegalCaseUpdate(r: any): LegalCaseUpdate {
+  return {
+    id: r.id, caseId: r.case_id, authorId: r.author_id ?? null,
+    authorLabel: r.author_label || "", body: r.body || "", createdAt: r.created_at,
   };
 }
 

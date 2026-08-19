@@ -11,7 +11,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
-import { Plus, Loader2, Shield, ShieldCheck, Eye, Pencil, Trash2 } from "lucide-react";
+import { Plus, Loader2, Shield, ShieldCheck, Eye, Pencil, Trash2, Scale } from "lucide-react";
 import { toast } from "sonner";
 import { Navigate } from "react-router-dom";
 import { usePermissions } from "@/hooks/usePermissions";
@@ -28,11 +28,13 @@ const ROLE_LABELS: Record<string, string> = {
   admin: "Administrador",
   operador: "Operador",
   visualizador: "Visualizador",
+  juridico: "Jurídico (externo)",
 };
 const ROLE_ICONS: Record<string, React.ReactNode> = {
   admin: <ShieldCheck className="h-3 w-3" />,
   operador: <Shield className="h-3 w-3" />,
   visualizador: <Eye className="h-3 w-3" />,
+  juridico: <Scale className="h-3 w-3" />,
 };
 
 export default function UsuariosPage() {
@@ -71,11 +73,17 @@ export default function UsuariosPage() {
 
     const { data: allRoles } = await supabase.from("user_roles").select("user_id, role");
     const { data: allCompanies } = await supabase.from("user_companies").select("user_id, company_id");
+    // Usuários "juridico" (advogado externo) nunca têm linha em user_companies — o
+    // acesso deles é só via legal_company_access (ver admin-create-user/
+    // admin-manage-user). Sem isso, eles nunca apareceriam pra serem gerenciados aqui.
+    const { data: allLegalAccess } = await supabase.from("legal_company_access").select("user_id, company_id");
     const { data: companyRows } = await supabase.from("companies").select("id, nome");
+
+    const allAccessRows = [...(allCompanies || []), ...(allLegalAccess || [])];
 
     // Filtra empresas pelo que o usuário logado tem permissão
     const myCompanyIds = new Set(
-      (allCompanies || [])
+      allAccessRows
         .filter((c: any) => c.user_id === currentUser?.id)
         .map((c: any) => c.company_id)
     );
@@ -91,7 +99,7 @@ export default function UsuariosPage() {
         email: p.email,
         roles: (allRoles || []).filter((r: any) => r.user_id === p.user_id).map((r: any) => r.role),
         // Mostra apenas as locadoras que o usuário logado tem acesso
-        companies: (allCompanies || [])
+        companies: allAccessRows
           .filter((c: any) => c.user_id === p.user_id && (isSuperAdmin || myCompanyIds.has(c.company_id)))
           .map((c: any) => c.company_id),
       }))
@@ -261,11 +269,17 @@ export default function UsuariosPage() {
                     <SelectItem value="admin">Administrador</SelectItem>
                     <SelectItem value="operador">Operador</SelectItem>
                     <SelectItem value="visualizador">Visualizador</SelectItem>
+                    <SelectItem value="juridico">Jurídico (externo)</SelectItem>
                   </SelectContent>
                 </Select>
+                {newRole === "juridico" && (
+                  <p className="text-xs text-muted-foreground">
+                    Acesso restrito só aos casos do módulo Jurídico — não enxerga o resto do sistema.
+                  </p>
+                )}
               </div>
               <div className="space-y-2">
-                <Label>Locadoras com acesso *</Label>
+                <Label>{newRole === "juridico" ? "Empresas com acesso aos casos jurídicos *" : "Locadoras com acesso *"}</Label>
                 <div className="space-y-2">
                   {companies.map(c => (
                     <label key={c.id} className="flex items-center gap-2 cursor-pointer">
@@ -374,11 +388,17 @@ export default function UsuariosPage() {
                   <SelectItem value="admin">Administrador</SelectItem>
                   <SelectItem value="operador">Operador</SelectItem>
                   <SelectItem value="visualizador">Visualizador</SelectItem>
+                  <SelectItem value="juridico">Jurídico (externo)</SelectItem>
                 </SelectContent>
               </Select>
+              {editRole === "juridico" && (
+                <p className="text-xs text-muted-foreground">
+                  Acesso restrito só aos casos do módulo Jurídico — não enxerga o resto do sistema.
+                </p>
+              )}
             </div>
             <div className="space-y-2">
-              <Label>Locadoras com acesso</Label>
+              <Label>{editRole === "juridico" ? "Empresas com acesso aos casos jurídicos" : "Locadoras com acesso"}</Label>
               <div className="space-y-2">
                 {companies.map(c => (
                   <label key={c.id} className="flex items-center gap-2 cursor-pointer">

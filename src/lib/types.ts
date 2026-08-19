@@ -300,6 +300,53 @@ export interface CategorizationRule {
   ativo: boolean;
 }
 
+export type LegalCaseStatus = "nao_iniciado" | "em_andamento" | "sucesso" | "falha";
+
+export interface LegalCasePendencia {
+  descricao: string;
+  valor: number;
+  vencimento: string | null; // ISO date
+}
+
+// Caso jurídico: os dados de contrato/locatário/moto são snapshot (congelados na
+// abertura do caso) — não vêm de Rental/Client, porque a tela do advogado externo
+// nunca tem acesso a essas tabelas (ver migração 20260818120100_add_legal_module.sql).
+export interface LegalCase {
+  id: string;
+  companyId: string;
+  rentalId: string | null;
+  clientId: string | null;
+  companyNome: string;
+  clienteNome: string;
+  clienteCpf: string | null;
+  clienteTelefone: string | null;
+  clienteEndereco: string | null;
+  contratoNumero: string | null;
+  motoPlaca: string | null;
+  motoModelo: string | null;
+  dataInicioContrato: string | null;
+  dataFimContrato: string | null;
+  saldoPendenteSnapshot: number;
+  detalhePendencias: LegalCasePendencia[];
+  status: LegalCaseStatus;
+  valorRecuperado: number;
+  valorEmRecuperacao: number;
+  openedBy: string | null;
+  openedAt: string;
+  closedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface LegalCaseUpdate {
+  id: string;
+  caseId: string;
+  authorId: string | null;
+  authorLabel: string;
+  body: string;
+  createdAt: string;
+}
+
 export const DEFAULT_CHECKLIST_ITEMS = [
   "Freio dianteiro",
   "Freio traseiro",

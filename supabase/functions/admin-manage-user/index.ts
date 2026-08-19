@@ -52,15 +52,23 @@ Deno.serve(async (req) => {
     // Um admin de empresa só pode mexer em usuários que já são exclusivamente
     // das empresas dele — nunca em alguém de outra empresa nem em um superadmin.
     if (!callerIsSuperAdmin) {
-      const [{ data: targetRoleRows }, { data: targetCompanyRows }] = await Promise.all([
+      // Inclui legal_company_access além de user_companies: um usuário "juridico"
+      // (advogado externo) nunca tem linha em user_companies (ver admin-create-user),
+      // então olhar só ali deixaria QUALQUER admin gerenciar QUALQUER advogado,
+      // mesmo de uma empresa que ele não gerencia.
+      const [{ data: targetRoleRows }, { data: targetCompanyRows }, { data: targetLegalAccessRows }] = await Promise.all([
         adminClient.from("user_roles").select("role").eq("user_id", user_id),
         adminClient.from("user_companies").select("company_id").eq("user_id", user_id),
+        adminClient.from("legal_company_access").select("company_id").eq("user_id", user_id),
       ]);
       const targetRoles = (targetRoleRows || []).map((r: any) => r.role);
       if (targetRoles.includes("superadmin")) {
         return json({ error: "Você não pode gerenciar um superadmin" }, 403);
       }
-      const targetCompanyIds = (targetCompanyRows || []).map((c: any) => c.company_id);
+      const targetCompanyIds = [
+        ...(targetCompanyRows || []).map((c: any) => c.company_id),
+        ...(targetLegalAccessRows || []).map((c: any) => c.company_id),
+      ];
       const outsideCaller = targetCompanyIds.some((cid: string) => !callerCompanyIds.includes(cid));
       if (targetCompanyIds.length > 0 && outsideCaller) {
         return json({ error: "Você só pode gerenciar usuários da sua própria empresa" }, 403);
@@ -71,6 +79,7 @@ Deno.serve(async (req) => {
       if (user_id === caller.id) return json({ error: "Você não pode excluir a si mesmo" }, 400);
       await adminClient.from("user_roles").delete().eq("user_id", user_id);
       await adminClient.from("user_companies").delete().eq("user_id", user_id);
+      await adminClient.from("legal_company_access").delete().eq("user_id", user_id);
       await adminClient.from("profiles").delete().eq("user_id", user_id);
       const { error } = await adminClient.auth.admin.deleteUser(user_id);
       if (error) return json({ error: error.message }, 400);
@@ -111,11 +120,22 @@ Deno.serve(async (req) => {
       }
 
       if (Array.isArray(company_ids)) {
+        // "juridico" (advogado externo) usa legal_company_access, nunca user_companies
+        // (mesmo motivo do admin-create-user: user_companies libera clients/rentals/
+        // financial_entries inteiros via RLS). Limpa as DUAS tabelas antes de gravar,
+        // pra não deixar resíduo de acesso se o papel do usuário mudou nessa edição.
+        const effectiveRole = role || (
+          await adminClient.from("user_roles").select("role").eq("user_id", user_id).maybeSingle()
+        ).data?.role;
         await adminClient.from("user_companies").delete().eq("user_id", user_id);
+        await adminClient.from("legal_company_access").delete().eq("user_id", user_id);
         if (company_ids.length) {
-          await adminClient.from("user_companies").insert(
-            company_ids.map((cid: string) => ({ user_id, company_id: cid })),
-          );
+          const rows = company_ids.map((cid: string) => ({ user_id, company_id: cid }));
+          if (effectiveRole === "juridico") {
+            await adminClient.from("legal_company_access").insert(rows);
+          } else {
+            await adminClient.from("user_companies").insert(rows);
+          }
         }
       }
 

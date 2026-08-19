@@ -1,6 +1,6 @@
 import React, { Suspense } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Route, Routes } from "react-router-dom";
+import { BrowserRouter, Route, Routes, Navigate } from "react-router-dom";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -9,6 +9,7 @@ import { CompanyProvider } from "@/contexts/CompanyContext";
 import { DataProvider } from "@/contexts/DataContext";
 import { Layout } from "@/components/Layout";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
+import { usePermissions } from "@/hooks/usePermissions";
 
 const Index = React.lazy(() => import("./pages/Index"));
 const LandingPage = React.lazy(() => import("./pages/LandingPage"));
@@ -35,19 +36,27 @@ const SyncMigrationPage = React.lazy(() => import("./pages/SyncMigrationPage"));
 const RebuildAluguelPage = React.lazy(() => import("./pages/RebuildAluguelPage"));
 const ConfiguracoesPage = React.lazy(() => import("./pages/ConfiguracoesPage"));
 const ContratosPage = React.lazy(() => import("./pages/ContratosPage"));
+const JuridicoPage = React.lazy(() => import("./pages/JuridicoPage"));
 const LoginPage = React.lazy(() => import("./pages/LoginPage"));
 const SignupPage = React.lazy(() => import("./pages/SignupPage"));
 const ForgotPasswordPage = React.lazy(() => import("./pages/ForgotPasswordPage"));
 const ResetPasswordPage = React.lazy(() => import("./pages/ResetPasswordPage"));
 const NotFound = React.lazy(() => import("./pages/NotFound"));
 
-const ProtectedApp = () => (
-  <CompanyProvider>
-    <DataProvider>
-      <Layout />
-    </DataProvider>
-  </CompanyProvider>
-);
+const ProtectedApp = () => {
+  // Usuário jurídico (advogado externo) não tem acesso a nenhuma empresa via
+  // user_companies — o shell normal (seletor de empresa, sidebar, resto das
+  // páginas) não funciona pra ele. Manda direto pra tela dedicada.
+  const { isJuridicoOnly } = usePermissions();
+  if (isJuridicoOnly) return <Navigate to="/juridico" replace />;
+  return (
+    <CompanyProvider>
+      <DataProvider>
+        <Layout />
+      </DataProvider>
+    </CompanyProvider>
+  );
+};
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -79,6 +88,7 @@ const App = () => (
               <Route path="/forgot-password" element={<ForgotPasswordPage />} />
               <Route path="/reset-password" element={<ResetPasswordPage />} />
               <Route element={<ProtectedRoute />}>
+                <Route path="/juridico" element={<JuridicoPage />} />
                 <Route element={<ProtectedApp />}>
                   <Route path="/dashboard" element={<Index />} />
                   <Route path="/motos" element={<MotosPage />} />

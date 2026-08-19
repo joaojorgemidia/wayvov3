@@ -23,7 +23,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Table, TableHeader, TableBody, TableHead, TableRow, TableCell } from "@/components/ui/table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Plus, Search, FileText, Eye, Trash2, Pencil, XCircle, History, CheckCircle2, MoreHorizontal, Wallet, AlertTriangle, Flag, CalendarClock, Copy, Bike, EyeOff } from "lucide-react";
+import { Plus, Search, FileText, Eye, Trash2, Pencil, XCircle, History, CheckCircle2, MoreHorizontal, Wallet, AlertTriangle, Flag, CalendarClock, Copy, Bike, EyeOff, Scale } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuLabel, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import RentalWizard from "@/components/locacoes/RentalWizard";
@@ -964,6 +964,80 @@ export default function LocacoesPage() {
     setEncerrarUnificar(true);
   };
 
+  const [enviandoJuridico, setEnviandoJuridico] = useState<string | null>(null);
+  // Confirmação via diálogo em tela (não window.confirm — nativo trava a aba em
+  // automação de navegador e foge do padrão do resto desta página, que já usa Dialog
+  // pra tudo que precisa de confirmação, ex.: "Excluir Locação").
+  const [enviarJuridicoRental, setEnviarJuridicoRental] = useState<Rental | null>(null);
+
+  // Abre um caso no módulo Jurídico a partir de uma locação encerrada com saldo
+  // pendente. Os dados de contrato/locatário/moto e a lista de cobranças ficam
+  // congelados (snapshot) no momento do envio — ver
+  // supabase/migrations/20260818120100_add_legal_module.sql pro motivo (o advogado
+  // externo nunca consulta clients/rentals/financial_entries diretamente).
+  const confirmEnviarJuridico = async (r: Rental) => {
+    const pendentes = cache.financial.filter(e => e.rentalId === r.id && e.tipo === "receita" && !e.pago);
+    if (pendentes.length === 0) {
+      toast.error("Essa locação não tem saldo pendente.");
+      setEnviarJuridicoRental(null);
+      return;
+    }
+
+    setEnviandoJuridico(r.id);
+    try {
+      const { data: existente } = await supabase
+        .from("legal_cases")
+        .select("id")
+        .eq("rental_id", r.id)
+        .in("status", ["nao_iniciado", "em_andamento"])
+        .maybeSingle();
+      if (existente) {
+        toast.info("Já existe um caso jurídico em aberto para esta locação.");
+        setEnviarJuridicoRental(null);
+        return;
+      }
+
+      const today = localToday();
+      const detalhePendencias = pendentes.map(e => ({
+        descricao: e.descricao || "Cobrança",
+        valor: Math.round((e.valor + calcAcrescimoAtraso(r, e, cobrancaCfg, today)) * 100) / 100,
+        vencimento: e.dataPrevista || e.data || null,
+      }));
+      const saldoPendenteSnapshot = Math.round(detalhePendencias.reduce((s, p) => s + p.valor, 0) * 100) / 100;
+      const client = clients.find(c => c.id === r.clienteId);
+      const moto = motos.find(m => m.id === r.motoId);
+      const endereco = client
+        ? [client.rua, client.numero, client.bairro, client.cidade, client.estado].filter(Boolean).join(", ")
+        : "";
+
+      const { error } = await supabase.from("legal_cases").insert({
+        company_id: activeCompany.id,
+        rental_id: r.id,
+        client_id: r.clienteId,
+        company_nome: activeCompany.nome,
+        cliente_nome: client?.nome || getRentalClientLabel(r),
+        cliente_cpf: client?.cpf || null,
+        cliente_telefone: client?.telefone || null,
+        cliente_endereco: endereco || null,
+        contrato_numero: getNumero(r),
+        moto_placa: moto?.placa || null,
+        moto_modelo: moto?.modelo || null,
+        data_inicio_contrato: r.dataInicio || null,
+        data_fim_contrato: r.dataFim || r.dataFimContrato || null,
+        saldo_pendente_snapshot: saldoPendenteSnapshot,
+        detalhe_pendencias: detalhePendencias,
+      });
+      if (error) {
+        toast.error("Erro ao enviar para o Jurídico: " + error.message);
+        return;
+      }
+      toast.success("Caso enviado para o Jurídico.");
+      setEnviarJuridicoRental(null);
+    } finally {
+      setEnviandoJuridico(null);
+    }
+  };
+
   const openTrocarMoto = (r: Rental) => {
     setTrocarMotoRental(r);
     setTrocarMotoNovaId("");
@@ -1357,6 +1431,17 @@ export default function LocacoesPage() {
                         onClick={() => { setTrocaVencimentoRental(r); setNovoDiaVencimento(null); }}
                       >
                         <CalendarClock className="h-3.5 w-3.5" />
+                      </Button>
+                    )}
+                    {showActions === "finalizada" && canEdit && (pendenteTotalPorRental.get(r.id) || 0) > 0 && (
+                      <Button
+                        variant="ghost" size="sm"
+                        className="h-7 w-7 p-0 text-purple-600 hover:text-purple-700"
+                        title="Enviar para o Jurídico"
+                        disabled={enviandoJuridico === r.id}
+                        onClick={() => setEnviarJuridicoRental(r)}
+                      >
+                        <Scale className="h-3.5 w-3.5" />
                       </Button>
                     )}
                     {canDelete && (
@@ -2088,6 +2173,43 @@ export default function LocacoesPage() {
             <Button variant="outline" onClick={() => setDeleteTarget(null)}>Cancelar</Button>
             <Button variant="destructive" className="gap-2" onClick={() => deleteTarget && handleDelete(deleteTarget)}>
               <Trash2 className="h-4 w-4" /> Excluir permanentemente
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Enviar para o Jurídico */}
+      <Dialog open={!!enviarJuridicoRental} onOpenChange={o => { if (!o) setEnviarJuridicoRental(null); }}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Scale className="h-5 w-5 text-purple-600" />
+              Enviar para o Jurídico
+            </DialogTitle>
+          </DialogHeader>
+          {enviarJuridicoRental && (
+            <div className="space-y-3">
+              <div className="rounded-md bg-muted/50 p-3 text-sm space-y-1">
+                <p><span className="text-muted-foreground">Cliente:</span> {getRentalClientLabel(enviarJuridicoRental)}</p>
+                <p><span className="text-muted-foreground">Placa:</span> <span className="font-mono font-bold">{getMotoPlaca(enviarJuridicoRental.motoId)}</span></p>
+                <p><span className="text-muted-foreground">Saldo pendente:</span> <span className="font-bold">R$ {cache.financial
+                  .filter(e => e.rentalId === enviarJuridicoRental.id && e.tipo === "receita" && !e.pago)
+                  .reduce((s, e) => s + e.valor + calcAcrescimoAtraso(enviarJuridicoRental, e, cobrancaCfg, localToday()), 0)
+                  .toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</span></p>
+              </div>
+              <p className="text-sm text-muted-foreground">
+                O contrato, os dados do locatário e a lista de cobranças pendentes ficam disponíveis pro advogado acompanhar. Isso não apaga nem altera nada aqui — só abre o caso.
+              </p>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEnviarJuridicoRental(null)} disabled={!!enviandoJuridico}>Cancelar</Button>
+            <Button
+              className="gap-2 bg-purple-600 hover:bg-purple-700 text-white"
+              disabled={!!enviandoJuridico}
+              onClick={() => enviarJuridicoRental && confirmEnviarJuridico(enviarJuridicoRental)}
+            >
+              <Scale className="h-4 w-4" /> {enviandoJuridico ? "Enviando…" : "Confirmar envio"}
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -76,9 +76,18 @@ Deno.serve(async (req) => {
     // Add role
     await adminClient.from("user_roles").insert({ user_id: userId, role });
 
-    // Add companies
-    const companyRows = company_ids.map((cid: string) => ({ user_id: userId, company_id: cid }));
-    await adminClient.from("user_companies").insert(companyRows);
+    // "juridico" (advogado externo) NUNCA recebe user_companies — isso liberaria acesso
+    // a clients/rentals/financial_entries inteiros via RLS, não só aos casos jurídicos
+    // (ver supabase/migrations/20260818120100_add_legal_module.sql). O acesso dele é
+    // só em legal_company_access, consultada exclusivamente pelas policies de
+    // legal_cases/legal_case_updates.
+    if (role === "juridico") {
+      const accessRows = company_ids.map((cid: string) => ({ user_id: userId, company_id: cid }));
+      await adminClient.from("legal_company_access").insert(accessRows);
+    } else {
+      const companyRows = company_ids.map((cid: string) => ({ user_id: userId, company_id: cid }));
+      await adminClient.from("user_companies").insert(companyRows);
+    }
 
     return new Response(JSON.stringify({ success: true, user_id: userId }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },

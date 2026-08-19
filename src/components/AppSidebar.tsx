@@ -1,7 +1,7 @@
 import {
   Bike, LayoutDashboard, Users, FileText, DollarSign, Wrench,
   AlertTriangle, BarChart3, Droplets, Search,
-  Package, MapPin, UserSearch, ChevronDown, MoreHorizontal, Landmark, ShieldCheck, History, BellRing, Settings, Building2, FileSignature
+  Package, MapPin, UserSearch, ChevronDown, MoreHorizontal, Landmark, ShieldCheck, History, BellRing, Settings, Building2, FileSignature, Scale
 } from "lucide-react";
 import { WayvoLogo } from "@/components/WayvoLogo";
 import { useAuth } from "@/contexts/AuthContext";
@@ -73,6 +73,12 @@ const adminItems: MenuItem[] = [
   { title: "Usuários", url: "/usuarios", icon: ShieldCheck },
 ];
 
+// Só quem gerencia cobrança (admin/operador) abre casos jurídicos — o item some pra
+// quem só visualiza. A tela em si roda fora do sidebar (rota própria em /juridico).
+const legalItems: MenuItem[] = [
+  { title: "Jurídico", url: "/juridico", icon: Scale },
+];
+
 const superAdminItems: MenuItem[] = [
   { title: "Empresas", url: "/empresas", icon: Building2 },
 ];
@@ -83,7 +89,7 @@ export function AppSidebar() {
   const location = useLocation();
   const { isAdmin } = useAuth();
   const { activeCompany } = useCompany();
-  const { canManageEmpresas } = usePermissions();
+  const { canManageEmpresas, isOperador } = usePermissions();
   const showCarrosTab = isLoca2Rodas(activeCompany);
 
   const navItems = showCarrosTab
@@ -210,7 +216,7 @@ export function AppSidebar() {
                   {!collapsed && (
                     <CollapsibleContent>
                       <div className="ml-6 mt-1 space-y-0.5 border-l border-sidebar-border pl-3">
-                        {[...moreItems, ...(isAdmin ? adminItems : []), ...(canManageEmpresas ? superAdminItems : [])].map((item) => {
+                        {[...moreItems, ...((isAdmin || isOperador) ? legalItems : []), ...(isAdmin ? adminItems : []), ...(canManageEmpresas ? superAdminItems : [])].map((item) => {
                           const isActive = location.pathname === item.url;
                           return (
                             <SidebarMenuButton key={item.title} asChild>
