@@ -491,14 +491,14 @@ export function buildReincidenciaMessage(opts: {
   const linhas = [
     `Oi, ${primeiroNome}!`,
     "",
-    `A troca de óleo da sua moto *${placa}* já venceu — o limite era *${proxOleoKm.toLocaleString("pt-BR")} Km*${diasTxt}.`,
+    `A troca de óleo da sua moto *${placa}* já venceu, o limite era *${proxOleoKm.toLocaleString("pt-BR")} Km*${diasTxt}.`,
     "",
     `Se já trocou, nos confirma:`,
     `- Dia da troca`,
     `- Km no momento da troca`,
     `- Foto do painel`,
     "",
-    `Se ainda não trocou, corre pra fazer o quanto antes — é importante pra sua moto.`,
+    `Se ainda não trocou, corre pra fazer o quanto antes, é importante pra sua moto.`,
   ];
   return linhas.join("\n");
 }

@@ -634,6 +634,7 @@ export default function TrocaOleoPage() {
     const clienteNome = clienteInfo?.nome ?? "";
     const telefone = clienteInfo?.telefone ?? "";
     const clienteId = clienteInfo?.id ?? null;
+    const last = lastOilChange(moto);
     const lateCount = clientLateCount(clienteId, motos, rentals, brandConfig, globalConfig.windowKm);
 
     // Sempre que VENCIDA: mensagem curta + palavra-chave/média de atraso disponíveis via tokens.
@@ -680,6 +681,8 @@ export default function TrocaOleoPage() {
           rental: rentals.find((r) => r.motoId === moto.id && r.status === "ativa") ?? null,
           cliente: clients.find((c) => c.id === clienteId) ?? null,
           oil: {
+            kmTroca: last?.km,
+            dataTroca: last?.data,
             proxOleoKm: status.proxOleoKm,
             kmAtraso: status.kmAtraso,
             diasSemTroca: status.diasDesdeUltima,

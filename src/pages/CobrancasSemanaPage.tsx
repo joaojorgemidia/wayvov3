@@ -2633,6 +2633,33 @@ export default function CobrancasSemanaPage() {
             const outrasPendencias = collectionPendings.filter(p =>
               p.clienteId === debtDetailClientId && (p.module === "oleo" || p.module === "vistoria"));
 
+            const clienteNomeCompleto = (debtDetailClientId ? clientsById.get(debtDetailClientId)?.nome : null)
+              || debtDetailItem?.clienteNome || debtDetailEntries[0]?.clienteNome || "";
+
+            // Texto pronto pra colar no WhatsApp: cada cobrança em atraso com valor
+            // atualizado (já com juros/multa) e o link do boleto — quando ainda não tem
+            // boleto gerado, avisa em vez de deixar a linha sem link.
+            const handleCopiarCobranca = () => {
+              const primeiroNome = clienteNomeCompleto.split(" ")[0] || "";
+              const linhas: string[] = [
+                `Olá, ${primeiroNome}! Você tem ${atrasadas.length} cobrança${atrasadas.length !== 1 ? "s" : ""} em atraso, total ${fmtBRL(totalAtrasado)}.`,
+                "",
+              ];
+              atrasadas.forEach(e => {
+                const due = parseISO(e.dataPrevista || e.data);
+                const days = due ? diffDays(today, due) : 0;
+                const valorAtualizado = calcValorAtualizado(e, days);
+                const periodo = buildPeriodo(e) || getCatLabel(e);
+                const link = e.asaasInvoiceUrl || e.asaasBoletoUrl;
+                linhas.push(`• ${periodo}, ${fmtBRL(valorAtualizado)}, venc. ${due ? due.toLocaleDateString("pt-BR") : "—"}`);
+                linhas.push(link || "(boleto ainda não gerado)");
+                linhas.push("");
+              });
+              linhas.push("Qualquer dúvida, estamos à disposição.");
+              navigator.clipboard.writeText(linhas.join("\n"));
+              toast.success("Texto de cobrança copiado!");
+            };
+
             return (
               <>
                 {/* ── Cabeçalho ── */}
@@ -2676,6 +2703,16 @@ export default function CobrancasSemanaPage() {
                       >
                         <Copy className="h-3 w-3" />
                         Copiar
+                      </button>
+                    )}
+                    {atrasadas.length > 0 && (
+                      <button
+                        title="Copiar texto de cobrança com o link de cada boleto em atraso"
+                        onClick={handleCopiarCobranca}
+                        className="flex items-center gap-1 text-[11px] font-semibold text-foreground/70 hover:text-foreground bg-background border border-border rounded-lg px-2.5 py-1.5 transition-colors hover:bg-accent"
+                      >
+                        <Receipt className="h-3 w-3" />
+                        Copiar cobrança
                       </button>
                     )}
                     {atrasadas.length > 0 && (

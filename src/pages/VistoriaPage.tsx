@@ -21,7 +21,7 @@ import { useCompany } from "@/contexts/CompanyContext";
 import { isLoca2Rodas } from "@/lib/companies";
 import { VehicleFilterChips, VehicleFilter } from "@/components/VehicleFilterChips";
 import { Motorcycle } from "@/lib/types";
-import { formatDate } from "@/lib/alerts";
+import { formatDate, deadlineDate } from "@/lib/alerts";
 import { buildWhatsAppUrl, sanitizeWhatsAppNumber } from "@/lib/whatsapp";
 import { applyTokens, buildAllTokens } from "@/lib/message-tokens";
 import { DEFAULT_STAGES } from "@/lib/collections";
@@ -752,6 +752,7 @@ export default function VistoriaPage() {
           moto={registerMoto}
           companyId={companyId}
           locatarioNome={activeRenterByMoto.get(registerMoto.id) ?? ""}
+          intervalDays={settings.interval_days}
           onClose={() => setRegisterMoto(null)}
           onSaved={async () => {
             setRegisterMoto(null);
@@ -960,12 +961,14 @@ function RegisterDialog({
   moto,
   companyId,
   locatarioNome,
+  intervalDays,
   onClose,
   onSaved,
 }: {
   moto: Motorcycle;
   companyId: string;
   locatarioNome?: string;
+  intervalDays: number;
   onClose: () => void;
   onSaved: () => void | Promise<void>;
 }) {
@@ -1073,7 +1076,17 @@ function RegisterDialog({
           if (upErr) console.warn("Falha ao atualizar km_atual:", upErr.message);
         }
       }
-      toast.success("Vistoria registrada");
+      const primeiroNome = (locatarioNome || "").trim().split(/\s+/)[0] || null;
+      const proximaData = deadlineDate(data, intervalDays);
+      const resumo = [
+        primeiroNome,
+        `placa ${moto.placa}`,
+        formatDate(data),
+        kmNum != null ? `${kmNum.toLocaleString("pt-BR")} km` : null,
+      ].filter(Boolean).join(" · ");
+      toast.success(`Vistoria registrada — ${resumo}`, {
+        description: proximaData ? `Próxima vistoria: ${formatDate(proximaData)}` : undefined,
+      });
       await onSaved();
     } finally {
       setSaving(false);
