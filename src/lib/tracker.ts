@@ -4,6 +4,7 @@
 
 import * as brasilsat from "@/lib/brasilsat";
 import * as velotrack from "@/lib/velotrack";
+import * as gt06 from "@/lib/gt06";
 import { companyKey, type TrackerProvider, type DeviceInfo, type DeviceTrack, type PlaybackPoint, type AlarmRecord } from "@/lib/tracker-types";
 
 export type { TrackerProvider, DeviceInfo, DeviceTrack, PlaybackPoint, AlarmRecord };
@@ -80,9 +81,32 @@ const velotrackDriver: TrackerDriver = {
   clearConfig: velotrack.clearVelotrackConfig,
 };
 
+// GT06: aparelho avulso sem plataforma — servidor TCP próprio (gt06-server/,
+// numa VPS) grava a última posição direto no Supabase. Sem credenciais reais;
+// "conectar" só amarra o provedor à empresa ativa (ver gt06.ts authenticate()).
+const gt06Driver: TrackerDriver = {
+  label: "GT06 (avulso)",
+  credentialFields: [],
+  authenticate: (config) => gt06.authenticate(config as unknown as gt06.Gt06Config),
+  getDeviceList: (token) => gt06.getDeviceList(token as unknown as gt06.Gt06Token),
+  trackDevices: (token) => gt06.trackDevices(token as unknown as gt06.Gt06Token),
+  getPlayback: () => gt06.getPlayback(),
+  getAlarms: () => gt06.getAlarms(),
+  setMileage: () => gt06.setMileage(),
+  setRelay: () => gt06.setRelay(),
+  loadDeviceNames: gt06.loadDeviceNames,
+  saveDeviceName: gt06.saveDeviceName,
+  loadKmSyncConfig: gt06.loadKmSyncConfig,
+  saveKmSyncConfig: gt06.saveKmSyncConfig,
+  loadConfig: (companyId) => gt06.loadGt06Config(companyId) as unknown as AnyTrackerConfig | null,
+  saveConfig: (companyId, cfg) => gt06.saveGt06Config(companyId, cfg as unknown as gt06.Gt06Config),
+  clearConfig: gt06.clearGt06Config,
+};
+
 export const DRIVERS: Record<TrackerProvider, TrackerDriver> = {
   brasilsat: brasilsatDriver,
   velotrack: velotrackDriver,
+  gt06: gt06Driver,
 };
 
 // ─── Provedor escolhido pela empresa ──────────────────────────────────────────

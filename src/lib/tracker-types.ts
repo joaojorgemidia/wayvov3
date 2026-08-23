@@ -1,6 +1,6 @@
 // Tipos compartilhados entre os provedores de rastreamento GPS (BrasilSat, Velotrack, ...)
 
-export type TrackerProvider = "brasilsat" | "velotrack";
+export type TrackerProvider = "brasilsat" | "velotrack" | "gt06";
 
 export interface DeviceTrack {
   imei: string;

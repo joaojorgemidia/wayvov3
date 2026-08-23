@@ -116,6 +116,10 @@ interface DeviceDetailProps {
   displayName: string;
   displayImei: string;
   relayLoading: boolean;
+  // GT06 (avulso) não suporta km/bloqueio remoto — protocolo básico não reporta
+  // km rodado, e nem todo aparelho clone tem o relé de corte de energia.
+  showKm: boolean;
+  showRelay: boolean;
   onClose: () => void;
   onRename: () => void;
   onBlock: () => void;
@@ -124,7 +128,7 @@ interface DeviceDetailProps {
 }
 
 function DeviceDetail({
-  track, device, displayName, displayImei, relayLoading,
+  track, device, displayName, displayImei, relayLoading, showKm, showRelay,
   onClose, onRename, onBlock, onUnblock, onUpdateKm,
 }: DeviceDetailProps) {
   const { color } = statusLabel(track);
@@ -166,6 +170,9 @@ function DeviceDetail({
       : []),
     ...(track.temperature != null
       ? [{ label: "Temperatura", value: `${track.temperature}°C`, icon: <Thermometer className="h-3.5 w-3.5" /> }]
+      : []),
+    ...(track.address
+      ? [{ label: "Endereço", value: <span className="text-[11px]">{track.address}</span> }]
       : []),
     {
       label: "IMEI",
@@ -230,34 +237,38 @@ function DeviceDetail({
       </div>
 
       {/* Ações */}
-      <div className="px-3 py-2.5 border-t space-y-1">
-        <button
-          onClick={onUpdateKm}
-          className="flex items-center gap-1.5 w-full text-xs text-muted-foreground hover:text-foreground hover:bg-muted px-2 py-1.5 rounded-md transition-colors"
-        >
-          <Milestone className="h-3.5 w-3.5" /> Atualizar quilometragem
-        </button>
+      {(showKm || showRelay) && (
+        <div className="px-3 py-2.5 border-t space-y-1">
+          {showKm && (
+            <button
+              onClick={onUpdateKm}
+              className="flex items-center gap-1.5 w-full text-xs text-muted-foreground hover:text-foreground hover:bg-muted px-2 py-1.5 rounded-md transition-colors"
+            >
+              <Milestone className="h-3.5 w-3.5" /> Atualizar quilometragem
+            </button>
+          )}
 
-        {isBlocked ? (
-          <button
-            onClick={onUnblock}
-            disabled={relayLoading}
-            className="flex items-center gap-1.5 w-full text-xs text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/20 px-2 py-1.5 rounded-md transition-colors disabled:opacity-50"
-          >
-            {relayLoading ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Unlock className="h-3.5 w-3.5" />}
-            Desbloquear dispositivo
-          </button>
-        ) : (
-          <button
-            onClick={onBlock}
-            disabled={relayLoading}
-            className="flex items-center gap-1.5 w-full text-xs text-amber-600 hover:bg-amber-50 dark:hover:bg-amber-950/20 px-2 py-1.5 rounded-md transition-colors disabled:opacity-50"
-          >
-            {relayLoading ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Lock className="h-3.5 w-3.5" />}
-            Bloquear dispositivo
-          </button>
-        )}
-      </div>
+          {showRelay && (isBlocked ? (
+            <button
+              onClick={onUnblock}
+              disabled={relayLoading}
+              className="flex items-center gap-1.5 w-full text-xs text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/20 px-2 py-1.5 rounded-md transition-colors disabled:opacity-50"
+            >
+              {relayLoading ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Unlock className="h-3.5 w-3.5" />}
+              Desbloquear dispositivo
+            </button>
+          ) : (
+            <button
+              onClick={onBlock}
+              disabled={relayLoading}
+              className="flex items-center gap-1.5 w-full text-xs text-amber-600 hover:bg-amber-50 dark:hover:bg-amber-950/20 px-2 py-1.5 rounded-md transition-colors disabled:opacity-50"
+            >
+              {relayLoading ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Lock className="h-3.5 w-3.5" />}
+              Bloquear dispositivo
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -385,13 +396,17 @@ export default function RastreamentoPage() {
     if (auth && Date.now() < auth.token.expires_at) return auth.token;
     const saved = driver.loadConfig(companyId);
     if (!saved) throw new Error("Configure as credenciais primeiro");
-    const token = await driver.authenticate(saved);
+    const token = await driver.authenticate({ ...saved, companyId });
     setAuth(prev => prev ? { ...prev, token } : null);
     return token;
   }, [auth, companyId, driver]);
 
   // ── Sincronização km rastreador ↔ sistema ────────────────────────────────
   const syncKm = useCallback(async (freshTracks: DeviceTrack[]): Promise<boolean> => {
+    // GT06 não reporta km rodado (protocolo básico não tem esse dado) — sem isso,
+    // a chamada abaixo cairia no catch de driver.setMileage() (que lança erro de
+    // propósito) a cada ciclo de fetch, gerando toast de erro sem motivo real.
+    if (provider === "gt06") return false;
     // Usa dados REAIS para que o sync funcione mesmo com modo demo ativo
     const motos = getRealDataCache().motos;
     if (!driver || !motos.length || !freshTracks.length) return false;
@@ -464,7 +479,7 @@ export default function RastreamentoPage() {
     }
 
     return anySynced;
-  }, [getValidToken, customNames, getDisplayName, auth, companyId, driver]);
+  }, [getValidToken, customNames, getDisplayName, auth, companyId, driver, provider]);
 
   // ── Conexão ────────────────────────────────────────────────────────────────
   const connect = useCallback(async (providerArg: TrackerProvider, cfg: AnyTrackerConfig) => {
@@ -474,7 +489,11 @@ export default function RastreamentoPage() {
     }
     setConnecting(true);
     try {
-      const token   = await drv.authenticate(cfg);
+      // companyId sempre vai junto — a maioria dos provedores ignora esse campo
+      // extra, mas o GT06 precisa dele pra filtrar a tabela pela empresa ATIVA
+      // (um usuário pode administrar mais de uma empresa; sem isso, apareceriam
+      // dispositivos de outra empresa misturados — ver gt06.ts).
+      const token   = await drv.authenticate({ ...cfg, companyId });
       const devices = await drv.getDeviceList(token);
       setProvider(providerArg);
       setAuth({ token, devices });
@@ -561,6 +580,12 @@ export default function RastreamentoPage() {
     }, 80);
     return () => clearTimeout(id);
   }, [selectedImei, tracks]);
+
+  // ── GT06 não tem histórico/alarmes (fora do escopo v1) — as abas somem da
+  // barra, então garante que a aba ativa nunca fica "presa" numa delas ──────
+  useEffect(() => {
+    if (provider === "gt06" && activeTab !== "mapa") setActiveTab("mapa");
+  }, [provider, activeTab]);
 
   // ── invalidateSize ao trocar de aba ─────────────────────────────────────
   useEffect(() => {
@@ -911,8 +936,13 @@ export default function RastreamentoPage() {
         <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col min-h-0">
           <TabsList className="mx-4 mt-2 w-fit shrink-0">
             <TabsTrigger value="mapa"><MapPin className="h-3.5 w-3.5 mr-1.5" />Mapa</TabsTrigger>
-            <TabsTrigger value="historico"><History className="h-3.5 w-3.5 mr-1.5" />Histórico</TabsTrigger>
-            <TabsTrigger value="alarmes"><Bell className="h-3.5 w-3.5 mr-1.5" />Alarmes</TabsTrigger>
+            {/* GT06 (avulso) não tem histórico de trajeto nem alarmes — fora do escopo v1 */}
+            {provider !== "gt06" && (
+              <TabsTrigger value="historico"><History className="h-3.5 w-3.5 mr-1.5" />Histórico</TabsTrigger>
+            )}
+            {provider !== "gt06" && (
+              <TabsTrigger value="alarmes"><Bell className="h-3.5 w-3.5 mr-1.5" />Alarmes</TabsTrigger>
+            )}
           </TabsList>
 
           {/* ── Tab: Mapa ── */}
@@ -1041,6 +1071,8 @@ export default function RastreamentoPage() {
                     displayName={getDisplayName(selectedImei, selectedTrack.deviceName)}
                     displayImei={privacy ? maskImei(selectedImei) : selectedImei}
                     relayLoading={relayLoading.has(selectedImei)}
+                    showKm={provider !== "gt06"}
+                    showRelay={provider !== "gt06"}
                     onClose={() => setSelectedImei(null)}
                     onRename={() => { setRenameValue(getDisplayName(selectedImei, selectedTrack.deviceName)); setRenameOpen(true); }}
                     onBlock={() => handleBlock(selectedImei)}
@@ -1204,7 +1236,9 @@ export default function RastreamentoPage() {
               </div>
             ))}
             <p className="text-xs text-muted-foreground">
-              As credenciais são salvas localmente neste dispositivo.
+              {dialogProvider === "gt06"
+                ? "Este rastreador usa um servidor próprio — não precisa de login. Sem credenciais aqui."
+                : "As credenciais são salvas localmente neste dispositivo."}
             </p>
             <Button className="w-full" onClick={() => connect(dialogProvider, config)} disabled={connecting}>
               {connecting
@@ -1213,37 +1247,40 @@ export default function RastreamentoPage() {
               {connecting ? "Conectando..." : "Conectar"}
             </Button>
 
-            {/* Seção: Sincronização de KM */}
-            <div className="border-t pt-4 space-y-3">
-              <div className="flex items-center gap-2">
-                <Sliders className="h-4 w-4 text-muted-foreground" />
-                <span className="text-sm font-semibold">Sincronização de quilometragem</span>
-              </div>
-              <div className="grid gap-1.5">
-                <Label>Margem de erro (km)</Label>
+            {/* Seção: Sincronização de KM — não se aplica ao GT06 (protocolo básico
+                não reporta km rodado) */}
+            {dialogProvider !== "gt06" && (
+              <div className="border-t pt-4 space-y-3">
                 <div className="flex items-center gap-2">
-                  <Input
-                    type="number"
-                    min={0}
-                    step={10}
-                    placeholder="0"
-                    value={kmMarginInput}
-                    onChange={e => setKmMarginInput(e.target.value)}
-                    onKeyDown={e => e.key === "Enter" && handleSaveKmConfig()}
-                  />
-                  <span className="text-sm text-muted-foreground shrink-0">km</span>
+                  <Sliders className="h-4 w-4 text-muted-foreground" />
+                  <span className="text-sm font-semibold">Sincronização de quilometragem</span>
                 </div>
-                <p className="text-xs text-muted-foreground">
-                  Valor adicionado ao KM do sistema ao sincronizar com o rastreador.
-                  {kmConfig.marginKm > 0 && (
-                    <span className="font-medium text-primary"> Atual: +{kmConfig.marginKm} km</span>
-                  )}
-                </p>
+                <div className="grid gap-1.5">
+                  <Label>Margem de erro (km)</Label>
+                  <div className="flex items-center gap-2">
+                    <Input
+                      type="number"
+                      min={0}
+                      step={10}
+                      placeholder="0"
+                      value={kmMarginInput}
+                      onChange={e => setKmMarginInput(e.target.value)}
+                      onKeyDown={e => e.key === "Enter" && handleSaveKmConfig()}
+                    />
+                    <span className="text-sm text-muted-foreground shrink-0">km</span>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Valor adicionado ao KM do sistema ao sincronizar com o rastreador.
+                    {kmConfig.marginKm > 0 && (
+                      <span className="font-medium text-primary"> Atual: +{kmConfig.marginKm} km</span>
+                    )}
+                  </p>
+                </div>
+                <Button size="sm" variant="outline" className="w-full" onClick={handleSaveKmConfig}>
+                  <Milestone className="h-3.5 w-3.5 mr-1.5" /> Salvar margem
+                </Button>
               </div>
-              <Button size="sm" variant="outline" className="w-full" onClick={handleSaveKmConfig}>
-                <Milestone className="h-3.5 w-3.5 mr-1.5" /> Salvar margem
-              </Button>
-            </div>
+            )}
           </div>
         </DialogContent>
       </Dialog>
