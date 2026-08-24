@@ -1212,7 +1212,11 @@ export default function FinanceiroPage() {
     return "none";
   }, [clients, form.clienteId, form.clienteNome]);
 
-  const getCatLabel = useCallback((value: string, tipo: "receita" | "despesa") => {
+  const getCatLabel = useCallback((value: string, tipo: "receita" | "despesa", tags?: string[] | null) => {
+    // Um lançamento de "juros_atraso" com a tag saldo_parcial não é só juros/multa — é o
+    // saldo que sobrou porque o pagamento recebido não cobriu nem o aluguel, então rotular
+    // como "Juros por Atraso" é enganoso (caso do Wilton Alves Cordeiro, 24/08).
+    if (value === "juros_atraso" && tags?.includes("saldo_parcial")) return "Saldo Parcial";
     return (CATEGORIAS[tipo] || []).find(c => c.value === value)?.label || value;
   }, [CATEGORIAS]);
 
@@ -2924,12 +2928,16 @@ export default function FinanceiroPage() {
           obs = obs.replace(/\s*•\s*Pago via [^•]+/g, "").trim();
           obs = (obs ? obs + " " : "") + `• Pago via ${confirmPayBank}`;
         }
-        // Para aluguéis em atraso: se o usuário pagou mais do que o valor do contrato
-        // mas não cobriu tudo (pendente > 0), salva o que foi efetivamente recebido para
-        // não perder a diferença no fluxo de caixa. Se cobriu tudo (feePago), preserva
-        // o valor original para não inflar a categoria aluguel com os acréscimos.
+        // Para aluguéis em atraso: se sobrou pendente (pagou menos que o total com
+        // multa/juros, seja abaixo ou acima do valor base do contrato), salva o que foi
+        // efetivamente recebido — senão o aluguel fica marcado como "pago" no valor cheio
+        // mesmo quando só entrou uma parte, duplicando o valor que já está registrado à
+        // parte no lançamento de saldo pendente (caso do Vinicius Oliveira, RCA0B15,
+        // semana 04/08: recebeu R$200 mas o aluguel de R$317,90 foi marcado como pago
+        // integralmente). Se cobriu tudo (pendente ~0), preserva o valor original para
+        // não inflar a categoria aluguel com os acréscimos, que ficam no juros_atraso.
         const savedValor = (isRentalPayment && daysOverdue > 0)
-          ? (pendente > 0.009 && finalValor > e.valor ? finalValor : e.valor)
+          ? (pendente > 0.009 ? finalValor : e.valor)
           : finalValor;
         return { ...e, pago: true, valor: savedValor, data: payDate, conta: finalConta, observacao: obs };
       } else {
@@ -2988,11 +2996,16 @@ export default function FinanceiroPage() {
     // removido pela limpeza acima (só remove os não pagos), então sem essa checagem
     // o "confirmar de novo" criava um segundo lançamento idêntico.
     const jaTemFeePago = deduped.some(e => e.categoria === "juros_atraso" && e.fixedOriginId === aluguelOrigemId && e.pago);
-    if (isRentalPayment && temAcrescimo && !jaTemFeePago) {
-      // Quando o valor recebido cobre tudo (pendente ≤ 0), ainda assim cria o lançamento
-      // de juros/multa pelo valor total dos acréscimos, mas já marcado como pago.
-      const feeAmount = pendente > 0.009 ? pendente : (multa + totalJuros);
-      const feePago   = pendente <= 0.009;
+    // Quando o valor recebido cobre tudo (pendente ≤ 0), ainda assim cria o lançamento
+    // de juros/multa pelo valor total dos acréscimos, mas já marcado como pago.
+    const feeAmount = pendente > 0.009 ? pendente : (multa + totalJuros);
+    const feePago   = pendente <= 0.009;
+    // Confirma antes de gerar a cobrança de juros/multa (ou saldo parcial) — não deve
+    // acontecer só como efeito colateral silencioso de confirmar o pagamento.
+    const gerarFeeEntry = isRentalPayment && temAcrescimo && !jaTemFeePago && confirm(
+      `Gerar cobrança de juros/multa (ou saldo parcial) no valor de R$ ${feeAmount.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}?`,
+    );
+    if (gerarFeeEntry) {
       const dueFmt = dueDateStr ? new Date(dueDateStr + "T12:00:00").toLocaleDateString("pt-BR") : "?";
       // A referência semanal do juros é a da cobrança original em atraso (dueDate),
       // nunca a do dia em que o pagamento foi confirmado — senão o juros aparece
@@ -3059,7 +3072,12 @@ export default function FinanceiroPage() {
     const restanteBase = isPartialEligible && !temAcrescimo && finalValor < confirmToggleEntry.valor - 0.009
       ? Math.round((confirmToggleEntry.valor - finalValor) * 100) / 100
       : 0;
-    if (restanteBase > 0) {
+    // Confirma antes de gerar a cobrança do saldo restante — não deve acontecer só como
+    // efeito colateral silencioso de confirmar um pagamento parcial.
+    const gerarSaldoRestante = restanteBase > 0 && confirm(
+      `Gerar cobrança do saldo restante de R$ ${restanteBase.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}?`,
+    );
+    if (gerarSaldoRestante) {
       const dueFmt = dueDateStr ? new Date(dueDateStr + "T12:00:00").toLocaleDateString("pt-BR") : "?";
       const restanteEntry: FinancialEntry = {
         id: crypto.randomUUID(),
@@ -4442,7 +4460,7 @@ export default function FinanceiroPage() {
                     const motoPlaca = e.motoId ? (motos.find(m => m.id === e.motoId)?.placa || e.placa || null) : (e.placa || null);
                     const rawClientName = e.clienteId ? (clients.find(c => c.id === e.clienteId)?.nome || e.clienteNome || null) : (e.clienteNome || null);
                     const fmtClientName = rawClientName ? rawClientName.split(" ").map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(" ") : null;
-                    const catLabel = getCatLabel(e.categoria, e.tipo);
+                    const catLabel = getCatLabel(e.categoria, e.tipo, e.tags);
                     const overdue = isOverdue(e);
                     const fmtDate = (d: string) => { try { return format(parseISO(d), "dd/MM"); } catch { return d; } };
                     const effectiveDate = !e.pago && e.dataPrevista ? e.dataPrevista : e.data;
@@ -6288,7 +6306,7 @@ export default function FinanceiroPage() {
             const motoPlaca = de.motoId ? (motos.find(m => m.id === de.motoId)?.placa || de.placa || null) : (de.placa || null);
             const rawClientName = de.clienteId ? (clients.find(c => c.id === de.clienteId)?.nome || de.clienteNome || null) : (de.clienteNome || null);
             const fmtName = rawClientName ? rawClientName.split(" ").map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(" ") : null;
-            const catLabel = getCatLabel(de.categoria, de.tipo);
+            const catLabel = getCatLabel(de.categoria, de.tipo, de.tags);
             const overdue = isOverdue(de);
             const bankBadge = de.conta ? getBankBadge(de.conta) : null;
             // Referência de período (Semana/Quinzena/Mês XX: dd/MM até dd/MM)
