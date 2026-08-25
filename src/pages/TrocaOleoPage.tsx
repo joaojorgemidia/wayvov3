@@ -366,7 +366,7 @@ export default function TrocaOleoPage() {
         } else {
           // Adiamento expirou → dias de atraso contam a partir do dia seguinte ao prazo
           const diasAposSnooze = Math.floor((todayMs - snoozeMs) / msDia) + 1;
-          const kmPart = status.kmAtraso > 0 ? ` · +${status.kmAtraso.toLocaleString("pt-BR")} km` : "";
+          const kmPart = status.kmAtraso > 0 ? ` · +${status.kmAtraso.toLocaleString("pt-BR", { maximumFractionDigits: 0 })} km` : "";
           status = {
             ...status,
             diasDesdeUltima: diasAposSnooze,
@@ -569,32 +569,32 @@ export default function TrocaOleoPage() {
     linhas.push(`Sua moto *${moto.placa}*${moto.modelo ? ` (${moto.modelo})` : ""} está com o óleo novo.`);
     linhas.push("");
     if (excesoKm > 0) {
-      linhas.push(`Troca realizada com *${excesoKm.toLocaleString("pt-BR")} km* além do limite recomendado.`);
+      linhas.push(`Troca realizada com *${excesoKm.toLocaleString("pt-BR", { maximumFractionDigits: 0 })} km* além do limite recomendado.`);
       linhas.push("");
     }
-    linhas.push(`Realizada em ${km.toLocaleString("pt-BR")} Km · ${dataFmt}.`);
+    linhas.push(`Realizada em ${km.toLocaleString("pt-BR", { maximumFractionDigits: 0 })} Km · ${dataFmt}.`);
     linhas.push("");
     if (cfg.filterKm && trocouFiltro) {
       const proxFiltroKm = km + cfg.filterKm;
-      linhas.push(`Próxima troca de óleo: *${proxOleoKm.toLocaleString("pt-BR")} Km*`);
-      linhas.push(`Próxima troca de filtro: *${proxFiltroKm.toLocaleString("pt-BR")} Km*`);
+      linhas.push(`Próxima troca de óleo: *${proxOleoKm.toLocaleString("pt-BR", { maximumFractionDigits: 0 })} Km*`);
+      linhas.push(`Próxima troca de filtro: *${proxFiltroKm.toLocaleString("pt-BR", { maximumFractionDigits: 0 })} Km*`);
     } else {
-      linhas.push(`Próxima troca de óleo: *${proxOleoKm.toLocaleString("pt-BR")} Km*`);
+      linhas.push(`Próxima troca de óleo: *${proxOleoKm.toLocaleString("pt-BR", { maximumFractionDigits: 0 })} Km*`);
     }
     linhas.push("");
     linhas.push("Qualquer dúvida, estamos à disposição.");
     const mensagem = linhas.join("\n");
 
     const highlights: { label: string; value: string; tone: "primary" | "warning" | "danger" }[] = [
-      { label: "Próxima troca de óleo", value: `${proxOleoKm.toLocaleString("pt-BR")} km`, tone: "primary" },
+      { label: "Próxima troca de óleo", value: `${proxOleoKm.toLocaleString("pt-BR", { maximumFractionDigits: 0 })} km`, tone: "primary" },
     ];
     if (excesoKm > 0) {
-      highlights.push({ label: "Passou do limite", value: `+${excesoKm.toLocaleString("pt-BR")} km`, tone: "danger" });
+      highlights.push({ label: "Passou do limite", value: `+${excesoKm.toLocaleString("pt-BR", { maximumFractionDigits: 0 })} km`, tone: "danger" });
     }
     if (cfg.filterKm && trocouFiltro) {
       highlights.push({
         label: "Próxima troca de filtro",
-        value: `${(km + cfg.filterKm).toLocaleString("pt-BR")} km`,
+        value: `${(km + cfg.filterKm).toLocaleString("pt-BR", { maximumFractionDigits: 0 })} km`,
         tone: "warning",
       });
     }
@@ -656,7 +656,7 @@ export default function TrocaOleoPage() {
       ? [{ label: "Reincidência", value: `${lateCount + 1}ª ocorrência`, tone: "danger" as const }]
       : [];
     const mediaHL = mediaKm != null && amostras > 0
-      ? [{ label: `Média (últimas ${amostras})`, value: `+${Math.round(mediaKm).toLocaleString("pt-BR")} km`, tone: "warning" as const }]
+      ? [{ label: `Média (últimas ${amostras})`, value: `+${Math.round(mediaKm).toLocaleString("pt-BR", { maximumFractionDigits: 0 })} km`, tone: "warning" as const }]
       : [];
     // Seleciona a etapa da régua de cobrança (1ª, 2ª ou 3ª) por nº de cobranças anteriores.
     const stage = Math.min(3, lateCount + 1);
@@ -669,7 +669,7 @@ export default function TrocaOleoPage() {
         cliente: clienteNome,
         telefone,
         highlights: [
-          { label: "Atraso", value: `+${status.kmAtraso.toLocaleString("pt-BR")} km`, tone: "danger" },
+          { label: "Atraso", value: `+${status.kmAtraso.toLocaleString("pt-BR", { maximumFractionDigits: 0 })} km`, tone: "danger" },
           ...mediaHL,
           ...reincidenteHL,
         ],
@@ -723,12 +723,12 @@ export default function TrocaOleoPage() {
       linhas.push(`Passando para confirmar a situação da sua moto *${moto.placa}*${moto.modelo ? ` (${moto.modelo})` : ""}. ✅`);
     }
     linhas.push("");
-    linhas.push(`📍 *Próxima troca de óleo:* ${proxOleoKm.toLocaleString("pt-BR")} Km`);
-    linhas.push(`🔵 *Km atual:* ${kmAtual.toLocaleString("pt-BR")} Km`);
+    linhas.push(`📍 *Próxima troca de óleo:* ${proxOleoKm.toLocaleString("pt-BR", { maximumFractionDigits: 0 })} Km`);
+    linhas.push(`🔵 *Km atual:* ${kmAtual.toLocaleString("pt-BR", { maximumFractionDigits: 0 })} Km`);
     if (kmPassouLimite) {
-      linhas.push(`🔴 *Ultrapassou:* +${kmAtraso.toLocaleString("pt-BR")} Km além do limite`);
+      linhas.push(`🔴 *Ultrapassou:* +${kmAtraso.toLocaleString("pt-BR", { maximumFractionDigits: 0 })} Km além do limite`);
     } else {
-      linhas.push(`🟢 *Restam:* ${kmRestantes.toLocaleString("pt-BR")} Km`);
+      linhas.push(`🟢 *Restam:* ${kmRestantes.toLocaleString("pt-BR", { maximumFractionDigits: 0 })} Km`);
     }
     linhas.push("");
     if (kmPassouLimite) {
@@ -751,12 +751,12 @@ export default function TrocaOleoPage() {
       telefone,
       highlights: kmPassouLimite
         ? [
-            { label: "Próxima troca", value: `${proxOleoKm.toLocaleString("pt-BR")} km`, tone: "primary" as const },
-            { label: "Ultrapassou", value: `+${kmAtraso.toLocaleString("pt-BR")} km`, tone: "danger" as const },
+            { label: "Próxima troca", value: `${proxOleoKm.toLocaleString("pt-BR", { maximumFractionDigits: 0 })} km`, tone: "primary" as const },
+            { label: "Ultrapassou", value: `+${kmAtraso.toLocaleString("pt-BR", { maximumFractionDigits: 0 })} km`, tone: "danger" as const },
           ]
         : [
-            { label: "Próxima troca", value: `${proxOleoKm.toLocaleString("pt-BR")} km`, tone: "primary" as const },
-            { label: "Restam", value: `${kmRestantes.toLocaleString("pt-BR")} km`, tone: isAtencao ? "warning" : "primary" as const },
+            { label: "Próxima troca", value: `${proxOleoKm.toLocaleString("pt-BR", { maximumFractionDigits: 0 })} km`, tone: "primary" as const },
+            { label: "Restam", value: `${kmRestantes.toLocaleString("pt-BR", { maximumFractionDigits: 0 })} km`, tone: isAtencao ? "warning" : "primary" as const },
           ],
       templateKey,
       motoId: moto.id,
@@ -788,7 +788,7 @@ export default function TrocaOleoPage() {
         <KpiCard
           icon={<Activity className="h-4 w-4" />}
           title="Atraso Médio por Troca"
-          value={kpis.atrasoMedioKm == null ? "—" : `${Math.round(kpis.atrasoMedioKm).toLocaleString("pt-BR")} km`}
+          value={kpis.atrasoMedioKm == null ? "—" : `${Math.round(kpis.atrasoMedioKm).toLocaleString("pt-BR", { maximumFractionDigits: 0 })} km`}
           hint={`${kpis.atrasoAmostras} troca(s) com atraso`}
           tone={
             kpis.atrasoMedioKm == null ? "neutral"
@@ -864,8 +864,8 @@ export default function TrocaOleoPage() {
               />
             </div>
             <p className="text-xs text-muted-foreground">
-              de <span className="font-semibold text-foreground">{kmRange[0].toLocaleString("pt-BR")} km</span>{" "}
-              até <span className="font-semibold text-foreground">{kmRange[1].toLocaleString("pt-BR")} km</span>
+              de <span className="font-semibold text-foreground">{kmRange[0].toLocaleString("pt-BR", { maximumFractionDigits: 0 })} km</span>{" "}
+              até <span className="font-semibold text-foreground">{kmRange[1].toLocaleString("pt-BR", { maximumFractionDigits: 0 })} km</span>
             </p>
           </div>
           {showVehicleFilter && (
@@ -1220,13 +1220,13 @@ function OilTable({
                     <SituationBadge situation={status.situation} label={status.label} />
                   </td>
                   <td className="px-4 py-3 font-semibold text-foreground">
-                    {(m.kmAtual ?? 0).toLocaleString("pt-BR")} Km
+                    {(m.kmAtual ?? 0).toLocaleString("pt-BR", { maximumFractionDigits: 0 })} Km
                   </td>
                   <td className="px-4 py-3">
                     {last ? (
                       <>
                         <div className="font-semibold text-foreground">
-                          {last.km.toLocaleString("pt-BR")} Km
+                          {last.km.toLocaleString("pt-BR", { maximumFractionDigits: 0 })} Km
                         </div>
                         <div className="text-xs text-muted-foreground">{formatDate(last.data)}</div>
                       </>
@@ -1235,10 +1235,10 @@ function OilTable({
                     )}
                   </td>
                   <td className={`px-4 py-3 font-semibold ${status.situation === "vencida" ? "text-destructive" : "text-foreground"}`}>
-                    <div>{status.proxOleoKm.toLocaleString("pt-BR")} Km</div>
+                    <div>{status.proxOleoKm.toLocaleString("pt-BR", { maximumFractionDigits: 0 })} Km</div>
                     {status.proxFiltroKm != null && (
                       <div className="text-xs font-normal text-muted-foreground">
-                        Filtro: {status.proxFiltroKm.toLocaleString("pt-BR")} Km
+                        Filtro: {status.proxFiltroKm.toLocaleString("pt-BR", { maximumFractionDigits: 0 })} Km
                       </div>
                     )}
                   </td>
@@ -1303,10 +1303,10 @@ function OilTable({
                               .map((r) => (
                                 <li key={r.id} className="text-muted-foreground flex items-center gap-2 group">
                                   <span className="text-foreground font-medium">{formatDate(r.data)}</span>{" "}
-                                  — {r.km.toLocaleString("pt-BR")} Km
+                                  — {r.km.toLocaleString("pt-BR", { maximumFractionDigits: 0 })} Km
                                   <button
                                     onClick={() => {
-                                      if (confirm(`Excluir a troca de ${formatDate(r.data)} (${r.km.toLocaleString("pt-BR")} Km)? Isso não pode ser desfeito.`)) {
+                                      if (confirm(`Excluir a troca de ${formatDate(r.data)} (${r.km.toLocaleString("pt-BR", { maximumFractionDigits: 0 })} Km)? Isso não pode ser desfeito.`)) {
                                         onDeleteHistorico(m, r.id);
                                       }
                                     }}
@@ -1437,11 +1437,11 @@ function RegisterOilDialog({
             {cfg && (
               <p className="text-xs text-muted-foreground">
                 Intervalo configurado: óleo a cada{" "}
-                <span className="font-semibold text-foreground">{cfg.oilKm.toLocaleString("pt-BR")} km</span>
+                <span className="font-semibold text-foreground">{cfg.oilKm.toLocaleString("pt-BR", { maximumFractionDigits: 0 })} km</span>
                 {cfg.filterKm && (
                   <>
                     {" "}· filtro a cada{" "}
-                    <span className="font-semibold text-foreground">{cfg.filterKm.toLocaleString("pt-BR")} km</span>
+                    <span className="font-semibold text-foreground">{cfg.filterKm.toLocaleString("pt-BR", { maximumFractionDigits: 0 })} km</span>
                   </>
                 )}
               </p>
@@ -1531,7 +1531,7 @@ function EditMotoDialog({
             />
             {moto?.kmAtual != null && (
               <p className="text-xs text-muted-foreground">
-                Valor atual: {moto.kmAtual.toLocaleString("pt-BR")} km
+                Valor atual: {moto.kmAtual.toLocaleString("pt-BR", { maximumFractionDigits: 0 })} km
               </p>
             )}
           </div>

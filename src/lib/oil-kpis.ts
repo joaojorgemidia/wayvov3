@@ -199,53 +199,39 @@ export function getOilStatus(
   const proxFiltroKm = cfg.filterKm ? last.km + cfg.filterKm : null;
   const kmRestantes = proxOleoKm - kmAtual;
   const kmAtraso = Math.max(0, kmAtual - proxOleoKm);
-  const overdueDays = globalCfg.overdueDays ?? 10;
   const msDia = 1000 * 60 * 60 * 24;
-  const diasDesdeUltima = Math.floor(
-    (Date.now() - new Date(last.data).getTime()) / msDia,
-  );
-  const minTrocas = globalCfg.adaptiveMinTrocas ?? 3;
-  const pace = adaptivePace(m, rentals, cfg.oilKm, globalCfg.windowKm, minTrocas);
+  // Km manda — dias só é rede de segurança pra moto SEM histórico de troca
+  // nenhum (branch !last acima). Com histórico, dias parada em estoque não
+  // deve empurrar a moto pra "vencida" sozinha (ela pode ficar meses parada
+  // sem problema); só o km rodado importa. "Dias" aqui vira só informativo,
+  // e só conta a partir de quando a moto está alugada de novo — parada em
+  // estoque não soma (ver confirmEncerrar em LocacoesPage.tsx, que já zera o
+  // km da troca automaticamente ao voltar pro estoque).
+  const activeRental = rentals.find((r) => r.motoId === m.id && r.status === "ativa");
+  const diasDesdeUltima = activeRental?.dataInicio
+    ? Math.floor((Date.now() - new Date(activeRental.dataInicio).getTime()) / msDia)
+    : null;
 
+  // "Vencida" também é km-only: passou do limite por mais que a própria janela
+  // de tolerância (windowKm) — a mesma margem usada pra avisar "chegando perto"
+  // antes do limite, agora usada de forma simétrica depois dele.
   let situation: OilSituation;
-  if (pace == null) {
-    // Sem histórico confiável (locatário novo, ou sem `minTrocas` trocas
-    // consecutivas dentro da tolerância de km): usa o prazo fixo de dias como
-    // rede de segurança, já que não há ritmo próprio comprovado para confiar.
-    if (diasDesdeUltima > overdueDays) {
-      situation = "vencida";
-    } else if (kmAtraso > 0 || kmRestantes <= globalCfg.windowKm) {
-      situation = "atencao";
-    } else {
-      situation = "ok";
-    }
+  if (kmAtraso > globalCfg.windowKm) {
+    situation = "vencida";
+  } else if (kmAtraso > 0 || kmRestantes <= globalCfg.windowKm) {
+    situation = "atencao";
   } else {
-    // Locatário disciplinado: as últimas trocas sempre ficaram dentro da
-    // tolerância de km. Em vez do prazo fixo genérico, usa o ritmo real dele
-    // (km/dia e dias/troca) — assim quem só é mais devagar por rodar menos
-    // não é marcado como vencido apenas por ter passado o prazo padrão.
-    const toleranciaDias = globalCfg.windowKm / pace.kmPorDia;
-    const prazoAdaptado = pace.diasPorTroca + toleranciaDias;
-    if (kmAtraso > 0) {
-      // já passou do km limite: projeta o consumo dele em `overdueDays`
-      const projecao = pace.kmPorDia * overdueDays;
-      situation = projecao > globalCfg.windowKm ? "vencida" : "atencao";
-    } else if (diasDesdeUltima > prazoAdaptado) {
-      situation = "vencida";
-    } else if (kmRestantes <= globalCfg.windowKm || diasDesdeUltima > pace.diasPorTroca) {
-      situation = "atencao";
-    } else {
-      situation = "ok";
-    }
+    situation = "ok";
   }
+  const diasTxt = diasDesdeUltima != null ? ` · ${diasDesdeUltima}d rodados` : "";
   const label =
     situation === "vencida"
-      ? `Vencida (${diasDesdeUltima} dias sem troca · +${kmAtraso.toLocaleString("pt-BR")} km)`
+      ? `Vencida (+${kmAtraso.toLocaleString("pt-BR", { maximumFractionDigits: 0 })} km${diasTxt})`
       : situation === "atencao"
         ? kmAtraso > 0
-          ? `Atenção (+${kmAtraso.toLocaleString("pt-BR")} km · ${diasDesdeUltima}d)`
-          : `Próxima (${kmRestantes.toLocaleString("pt-BR")} km)`
-        : `Em dia (${kmRestantes.toLocaleString("pt-BR")} km)`;
+          ? `Atenção (+${kmAtraso.toLocaleString("pt-BR", { maximumFractionDigits: 0 })} km${diasTxt})`
+          : `Próxima (${kmRestantes.toLocaleString("pt-BR", { maximumFractionDigits: 0 })} km)`
+        : `Em dia (${kmRestantes.toLocaleString("pt-BR", { maximumFractionDigits: 0 })} km)`;
   return { situation, label, proxOleoKm, proxFiltroKm, kmRestantes, kmAtraso, diasDesdeUltima };
 }
 
@@ -464,8 +450,8 @@ export function buildAtrasoMessage(opts: {
     "",
     `Identificamos que sua moto *${placa}*${modelo ? ` (${modelo})` : ""} está com a *troca de óleo vencida*. ⚠️`,
     "",
-    `📍 *Limite era:* ${proxOleoKm.toLocaleString("pt-BR")} Km`,
-    `🔴 *Km atual:* ${kmAtual.toLocaleString("pt-BR")} Km (+${kmAtraso.toLocaleString("pt-BR")} Km além do limite)`,
+    `📍 *Limite era:* ${proxOleoKm.toLocaleString("pt-BR", { maximumFractionDigits: 0 })} Km`,
+    `🔴 *Km atual:* ${kmAtual.toLocaleString("pt-BR", { maximumFractionDigits: 0 })} Km (+${kmAtraso.toLocaleString("pt-BR", { maximumFractionDigits: 0 })} Km além do limite)`,
     ...(diasSemTroca != null
       ? [`⏱️ *Sem registro de troca há:* ${diasSemTroca} dias`]
       : []),
@@ -491,7 +477,7 @@ export function buildReincidenciaMessage(opts: {
   const linhas = [
     `Oi, ${primeiroNome}!`,
     "",
-    `A troca de óleo da sua moto *${placa}* já venceu, o limite era *${proxOleoKm.toLocaleString("pt-BR")} Km*${diasTxt}.`,
+    `A troca de óleo da sua moto *${placa}* já venceu, o limite era *${proxOleoKm.toLocaleString("pt-BR", { maximumFractionDigits: 0 })} Km*${diasTxt}.`,
     "",
     `Se já trocou, nos confirma:`,
     `- Dia da troca`,
