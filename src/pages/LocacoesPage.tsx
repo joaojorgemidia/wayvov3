@@ -1025,11 +1025,16 @@ export default function LocacoesPage() {
   // "ativa" — a partir daí o gerador automático de cobranças (efeito mais acima nesta
   // página) retoma sozinho, contando a partir da última cobrança de aluguel já existente.
   const [reativarLegalCase, setReativarLegalCase] = useState<{ id: string; status: string } | null>(null);
+  // Cobrança(s) consolidada(s) geradas no encerramento (ver confirmEncerrar) — cada item
+  // representa um período de aluguel que já foi substituído por essa cobrança única.
+  // Precisa disso pra reativação não recriar cobrança pra um período já resolvido.
+  const [reativarConsolidacoes, setReativarConsolidacoes] = useState<{ id: string; valor: number; pago: boolean; datas: string[] }[]>([]);
   const openReativar = async (r: Rental) => {
     setReativarRental(r);
     setReativarData(localToday());
     setReativarObs("");
     setReativarLegalCase(null);
+    setReativarConsolidacoes([]);
     try {
       const { data } = await supabase
         .from("legal_cases")
@@ -1041,12 +1046,29 @@ export default function LocacoesPage() {
     } catch {
       // Consulta best-effort — não bloqueia a reativação se falhar.
     }
+    try {
+      const { data } = await supabase
+        .from("financial_entries")
+        .select("id,valor,pago,consolidated_items")
+        .eq("rental_id", r.id)
+        .contains("tags", ["consolidacao"]);
+      if (data) {
+        setReativarConsolidacoes(data.map((c: any) => ({
+          id: c.id,
+          valor: Number(c.valor) || 0,
+          pago: !!c.pago,
+          datas: (c.consolidated_items || []).map((i: any) => i.dataPrevista).filter(Boolean),
+        })));
+      }
+    } catch {
+      // Best-effort — se falhar, a reativação segue sem esse contexto.
+    }
   };
   // Não dá pra reativar numa moto que já está com outro contrato ativo agora.
   const reativarConflito = reativarRental
     ? rentals.find(x => x.motoId === reativarRental.motoId && x.status === "ativa" && x.id !== reativarRental.id)
     : null;
-  const confirmReativar = () => {
+  const confirmReativar = async () => {
     if (!reativarRental) return;
     if (reativarConflito) {
       toast.error("Essa moto já está em outro contrato ativo — troque a moto antes de reativar, ou encerre o contrato atual dela.");
@@ -1065,14 +1087,72 @@ export default function LocacoesPage() {
       kmFim: null,
       observacoes: obs,
     };
+
+    // Regenera a série de aluguel a partir de agora — sem isso, planos "Moto no Final"
+    // nunca mais recebem cobrança nenhuma (o efeito de auto-renovação sempre pula esse
+    // plano de propósito, assumindo que a série inteira já existe desde a criação do
+    // contrato). Períodos que já foram pagos via cobrança consolidada de encerramento
+    // (ver confirmEncerrar) não são recriados — isso é rastreado via reativarConsolidacoes.
+    try {
+      const client = clients.find(c => c.id === reativarRental.clienteId);
+      if (client && reativarRental.gerarCobrancaPagamento && reativarRental.valorDiario > 0 && reativarRental.dataFimContrato) {
+        const currentFinancial = loadFinancial();
+        const rentalId = reativarRental.id;
+        const motoPlaca = getMotoPlaca(reativarRental.motoId);
+        const numContrato = !reativarRental.numero
+          ? `#${rentalId.slice(0, 6).toUpperCase()}`
+          : reativarRental.createdAt >= "2026-06-01" ? `L${String(reativarRental.numero).padStart(5, "0")}MV` : `#${String(reativarRental.numero).padStart(5, "0")}`;
+        const obsExtra = obs ? ` - ${obs}` : "";
+        const ctx: AssociationContext = { motos, clients, rentals: loadRentals() };
+        const aluguelDoRental = currentFinancial.filter(e => e.rentalId === rentalId && e.categoria === "aluguel");
+        const aluguelGroupId = aluguelDoRental.find(e => e.recurringGroupId)?.recurringGroupId ?? crypto.randomUUID();
+        const existingByDate = new Map(
+          aluguelDoRental.filter(e => !e.pago && e.data >= reativarData).map(e => [e.data, e]),
+        );
+        const paidDates = new Set(aluguelDoRental.filter(e => e.pago).map(e => e.data));
+        // Datas já resolvidas via cobrança consolidada de encerramento — não recriar.
+        const consolidatedDates = new Set(reativarConsolidacoes.flatMap(c => c.datas));
+
+        const startDate = parseISO(reativarRental.dataInicio);
+        const contratoEnd = parseISO(reativarRental.dataFimContrato);
+        const planoCategoria2 = classifyPlano(reativarRental.plano);
+        const horizonte12m = addMonths(new Date(), 12);
+        const endDate = planoCategoria2 !== "moto_no_final"
+          ? (contratoEnd > horizonte12m ? contratoEnd : horizonte12m)
+          : contratoEnd;
+        const prePaga = !!reativarRental.cobrancaPrePaga;
+        const advanceFromStart = (d: Date): Date => {
+          if (reativarRental.frequenciaPagamento === "semanal") return addWeeks(d, 1);
+          if (reativarRental.frequenciaPagamento === "quinzenal") return addDays(d, 15);
+          return addMonths(d, 1);
+        };
+        const firstCharge = prePaga ? startDate : advanceFromStart(startDate);
+
+        const novasEntradas = buildAluguelCharges({
+          rental: reativarRental, client, motoPlaca, numContrato, obsExtra, ctx,
+          aluguelSerieId: `aluguel-${rentalId}`, aluguelGroupId,
+          startIdx: 1, startDate: firstCharge, endDate,
+          existingByDate, deletedDates: consolidatedDates,
+          paidDates, isEditing: true, today: reativarData,
+        });
+        if (novasEntradas.length > 0) {
+          await saveFinancial([...currentFinancial, ...novasEntradas]);
+        }
+      }
+    } catch (err) {
+      console.error(err);
+      toast.error("Locação reativada, mas houve um erro ao regenerar as cobranças de aluguel — confira manualmente.");
+    }
+
     persist(loadRentals().map(x => x.id === reativarRental.id ? updated : x));
     if (reativarRental.motoId) {
       saveMotos(loadMotos().map(m => m.id === reativarRental.motoId ? { ...m, status: "alugada" as const } : m));
     }
-    toast.success("Locação reativada — as próximas cobranças de aluguel voltam a ser geradas normalmente.");
+    toast.success("Locação reativada e cobranças de aluguel regeneradas.");
     setReativarRental(null);
     setReativarObs("");
     setReativarLegalCase(null);
+    setReativarConsolidacoes([]);
   };
 
   const [enviandoJuridico, setEnviandoJuridico] = useState<string | null>(null);
@@ -2077,7 +2157,7 @@ export default function LocacoesPage() {
       </Dialog>
 
       {/* Reativar Locação Dialog */}
-      <Dialog open={!!reativarRental} onOpenChange={() => { setReativarRental(null); setReativarObs(""); setReativarLegalCase(null); }}>
+      <Dialog open={!!reativarRental} onOpenChange={() => { setReativarRental(null); setReativarObs(""); setReativarLegalCase(null); setReativarConsolidacoes([]); }}>
         <DialogContent className="sm:max-w-lg">
           <DialogHeader>
             <DialogTitle className="text-success flex items-center gap-2">
@@ -2100,10 +2180,34 @@ export default function LocacoesPage() {
                 </div>
               ) : (
                 <p className="text-xs text-muted-foreground">
-                  A locação volta a ficar <strong>ativa</strong> e a moto volta a ficar <strong>alugada</strong>. As cobranças
-                  já canceladas/unificadas no encerramento não são refeitas — a partir de agora, as próximas cobranças de
-                  aluguel voltam a ser geradas normalmente.
+                  A locação volta a ficar <strong>ativa</strong> e a moto volta a ficar <strong>alugada</strong>. A série de
+                  cobranças de aluguel é regenerada a partir de hoje até o fim do contrato — os períodos já resolvidos por
+                  uma cobrança consolidada de encerramento (veja abaixo) não são recriados.
                 </p>
+              )}
+
+              {reativarConsolidacoes.length > 0 && (
+                <div className="space-y-2">
+                  {reativarConsolidacoes.map(c => (
+                    <div
+                      key={c.id}
+                      className={`rounded-md border p-3 text-sm flex items-center justify-between gap-3 ${
+                        c.pago ? "border-success/30 bg-success/10 text-success" : "border-destructive/40 bg-destructive/10 text-destructive"
+                      }`}
+                    >
+                      <span>
+                        Cobrança consolidada do encerramento ({c.datas.length} período{c.datas.length !== 1 ? "s" : ""}
+                        {" "}agrupado{c.datas.length !== 1 ? "s" : ""}) — <strong>R$ {c.valor.toFixed(2)}</strong>
+                      </span>
+                      <span className="font-semibold shrink-0">{c.pago ? "Quitada" : "Em aberto"}</span>
+                    </div>
+                  ))}
+                  {reativarConsolidacoes.some(c => !c.pago) && (
+                    <p className="text-xs text-destructive">
+                      Tem cobrança consolidada ainda em aberto — confirme se o cliente realmente já acertou antes de reativar.
+                    </p>
+                  )}
+                </div>
               )}
 
               {reativarLegalCase && (
