@@ -170,20 +170,28 @@ function computeContratoAlerta(
   // locatário costuma pagar várias semanas adiantado, então a próxima cobrança PENDENTE já
   // cai naturalmente longe no futuro sem que isso signifique nenhum problema de geração —
   // o que importa é se a série continua sendo estendida, não se está tudo pago.
-  // Não se aplica a "Moto no Final": esse plano nunca é "estendido" aos poucos (o efeito de
-  // auto-renovação sempre pula esse plano, de propósito — a série inteira já nasce completa
-  // na criação/edição do contrato, indo até o fim do contrato). Sem essa exclusão, o alerta
-  // dispara "sem cobrança futura" erroneamente assim que a série de parcelas natural termina,
-  // mesmo o contrato tendo terminado certinho.
-  if (rental.gerarCobrancaPagamento && (rental.valorDiario || 0) > 0 && planoCategoria !== "moto_no_final") {
-    const periodDays = rental.frequenciaPagamento === "quinzenal" ? 15 : rental.frequenciaPagamento === "mensal" ? 30 : 7;
-    const limite = addDays(new Date(today + "T00:00:00"), periodDays * 2);
-    // Não alerta se a série já foi gerada até o fim do contrato — não há mais nada a gerar.
-    const fimContrato = rental.dataFimContrato ? parseISO(rental.dataFimContrato) : null;
-    const semCobranca = !ultimaAluguelGerada
-      || (parseISO(ultimaAluguelGerada) < limite && (!fimContrato || parseISO(ultimaAluguelGerada) < fimContrato));
-    if (semCobranca) {
+  if (rental.gerarCobrancaPagamento && (rental.valorDiario || 0) > 0) {
+    // Locação ativa sem NENHUMA cobrança de aluguel gerada é sempre um erro, qualquer que
+    // seja o plano — nunca deveria acontecer (ex.: falha silenciosa ao salvar o contrato).
+    if (!ultimaAluguelGerada) {
       return { tipo: "cobranca_futura_ausente", texto: "Sem cobrança futura gerada" };
+    }
+    // A partir daqui, já existe pelo menos uma cobrança gerada — o que resta checar é se a
+    // série CONTINUA sendo estendida pro futuro. Isso não se aplica a "Moto no Final": esse
+    // plano nunca é "estendido" aos poucos (o efeito de auto-renovação sempre pula esse
+    // plano, de propósito — a série inteira já nasce completa na criação/edição do contrato,
+    // indo até o fim do contrato). Sem essa exclusão, o alerta dispararia "sem cobrança
+    // futura" erroneamente assim que a série de parcelas natural termina, mesmo o contrato
+    // tendo terminado certinho.
+    if (planoCategoria !== "moto_no_final") {
+      const periodDays = rental.frequenciaPagamento === "quinzenal" ? 15 : rental.frequenciaPagamento === "mensal" ? 30 : 7;
+      const limite = addDays(new Date(today + "T00:00:00"), periodDays * 2);
+      // Não alerta se a série já foi gerada até o fim do contrato — não há mais nada a gerar.
+      const fimContrato = rental.dataFimContrato ? parseISO(rental.dataFimContrato) : null;
+      const semCobranca = parseISO(ultimaAluguelGerada) < limite && (!fimContrato || parseISO(ultimaAluguelGerada) < fimContrato);
+      if (semCobranca) {
+        return { tipo: "cobranca_futura_ausente", texto: "Sem cobrança futura gerada" };
+      }
     }
   }
 
