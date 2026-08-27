@@ -10,6 +10,7 @@
  */
 
 import { Motorcycle, Client, Rental } from "@/lib/types";
+import { classifyPlano } from "@/lib/rental-plano";
 
 export type TokenMap = Record<string, string>;
 
@@ -240,10 +241,10 @@ export function tokensByContext(
 
 // ============== Helpers de formatação ==============
 const fmtKm = (n: number | null | undefined) =>
-  n == null ? "" : `${n.toLocaleString("pt-BR")} Km`;
+  n == null ? "" : `${n.toLocaleString("pt-BR", { maximumFractionDigits: 0 })} Km`;
 
 const fmtNumber = (n: number | null | undefined) =>
-  n == null ? "" : n.toLocaleString("pt-BR");
+  n == null ? "" : n.toLocaleString("pt-BR", { maximumFractionDigits: 0 });
 
 const fmtMoney = (n: number | null | undefined) =>
   n == null
@@ -301,7 +302,7 @@ export function rentalTokens(r?: Rental | null): TokenMap {
     "{PROXIMO_PAGAMENTO}": fmtDate(r.proximoPagamento),
     "{VALOR_DIARIO}": fmtMoney(r.valorDiario),
     "{VALOR_CAUCAO}": fmtMoney(r.valorCaucao),
-    "{PLANO}": r.plano === "moto_no_final" ? "Moto no Final" : r.plano === "aluguel" ? "Aluguel" : "",
+    "{PLANO}": classifyPlano(r.plano) === "moto_no_final" ? "Moto no Final" : classifyPlano(r.plano) === "aluguel" ? "Aluguel" : (r.plano || ""),
     "{FREQUENCIA_PAGAMENTO}": r.frequenciaPagamento ?? "",
     "{LOCAL_RETIRADA}": r.localRetirada ?? "",
     "{LOCAL_DEVOLUCAO}": r.localDevolucao ?? "",

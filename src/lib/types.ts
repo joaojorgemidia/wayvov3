@@ -210,6 +210,7 @@ export interface FinancialEntry {
   data: string; // ISO date — data do pagamento
   dataPrevista?: string; // ISO date — data prevista / vencimento
   dataOriginal?: string; // ISO date — data original do vencimento (preservada em reagendamentos)
+  adiadoAte?: string | null; // ISO date — "Adiar" da fila de cobranças: oculta até essa data sem alterar dataPrevista
   motoId: string | null;
   rentalId: string | null;
   clienteId: string | null;

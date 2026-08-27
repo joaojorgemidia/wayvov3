@@ -16,7 +16,7 @@ import {
 } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
-  CalendarDays, AlertTriangle, CheckCircle2, User, Bike,
+  CalendarDays, AlertTriangle, CheckCircle2, User, Bike, Car,
   Wallet, ShieldCheck, Receipt, Coins, Tag, MessageCircle,
   Bell, Wrench, MoreHorizontal, Phone, Copy,
   CalendarClock, ExternalLink, Search, TrendingUp,
@@ -39,13 +39,6 @@ import { localToday } from "@/lib/utils";
 import { cancelAsaasEntries } from "@/lib/asaas";
 import { useCollections } from "@/hooks/useCollections";
 
-const SNOOZE_LS_KEY = "wayvo-cobranca-snooze";
-function readSnoozeMap(): Record<string, string> {
-  try { return JSON.parse(localStorage.getItem(SNOOZE_LS_KEY) || "{}"); } catch { return {}; }
-}
-function writeSnoozeMap(map: Record<string, string>) {
-  localStorage.setItem(SNOOZE_LS_KEY, JSON.stringify(map));
-}
 
 const WEEK_LONG = ["Domingo", "Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado"];
 const WEEK_SHORT = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
@@ -123,6 +116,7 @@ interface RowItem {
   placa: string | null;
   modelo: string | null;
   motoId: string | null;
+  categoriaVeiculo: "moto" | "carro" | null;
   totalPendente: number;
   semanasEmAtraso: number;
   pendingCount: number;
@@ -135,7 +129,7 @@ const MSG_TYPES: MsgType[] = [
     label: "Dia do pagamento",
     icon: CalendarDays,
     tone: "primary",
-    template: "Olá {NOME}! Passando para lembrar que hoje é o dia do seu pagamento de *{VALOR}* referente ao aluguel da moto *{PLACA}*. Qualquer dúvida é só chamar!",
+    template: "Olá {NOME}! Passando para lembrar que hoje é o dia do seu pagamento de *{VALOR}* referente ao aluguel {DO_VEICULO} *{PLACA}*. Qualquer dúvida é só chamar!",
     highlights: (item) => [{ label: "Valor", value: fmtBRL(item.entry.valor || 0), tone: "primary" }],
   },
   {
@@ -154,7 +148,7 @@ const MSG_TYPES: MsgType[] = [
     label: "Lembrete de pagamento",
     icon: Bell,
     tone: "warning",
-    template: "Olá {NOME}! Passando para lembrar do pagamento de *{VALOR}* referente à moto *{PLACA}*, com vencimento em *{DATA_VENCIMENTO}*. Se já tiver pago, desconsidere. Obrigado!",
+    template: "Olá {NOME}! Passando para lembrar do pagamento de *{VALOR}* referente {A_VEICULO} *{PLACA}*, com vencimento em *{DATA_VENCIMENTO}*. Se já tiver pago, desconsidere. Obrigado!",
     highlights: (item) => [
       { label: "Valor", value: fmtBRL(item.entry.valor || 0), tone: "primary" },
       { label: "Vencimento", value: item.due?.toLocaleDateString("pt-BR") || "—", tone: "warning" },
@@ -165,26 +159,36 @@ const MSG_TYPES: MsgType[] = [
     label: "Moto em manutenção",
     icon: Wrench,
     tone: "warning",
-    template: "Olá {NOME}! Informamos que a moto *{PLACA}* está em manutenção no momento. Assim que estiver pronta entraremos em contato. Agradecemos a compreensão!",
-    highlights: (item) => [{ label: "Moto", value: item.placa || "—", tone: "warning" }],
+    template: "Olá {NOME}! Informamos que {ARTIGO_VEICULO} *{PLACA}* está em manutenção no momento. Assim que estiver pronta entraremos em contato. Agradecemos a compreensão!",
+    highlights: (item) => [{ label: item.categoriaVeiculo === "carro" ? "Carro" : "Moto", value: item.placa || "—", tone: "warning" }],
   },
   {
     key: "encerramento-manutencao",
     label: "Encerramento de manutenção",
     icon: CheckCircle2,
     tone: "primary",
-    template: "Olá {NOME}! Boa notícia! A moto *{PLACA}* está pronta e já pode ser retirada. Aguardamos você!",
-    highlights: (item) => [{ label: "Moto", value: item.placa || "—", tone: "primary" }],
+    template: "Olá {NOME}! Boa notícia! {ARTIGO_VEICULO_CAP} *{PLACA}* está pronta e já pode ser retirada. Aguardamos você!",
+    highlights: (item) => [{ label: item.categoriaVeiculo === "carro" ? "Carro" : "Moto", value: item.placa || "—", tone: "primary" }],
   },
 ];
 
 function tokensFor(item: RowItem): Record<string, string> {
+  // Loca2Rodas aluga moto e carro na mesma frota — mensagens de pagamento/manutenção
+  // sempre diziam "moto" mesmo quando a cobrança era de um carro, confundindo o
+  // locatário. Esses tokens (com concordância de artigo em português) deixam o texto
+  // certo pros dois casos sem duplicar cada template.
+  const isCarro = item.categoriaVeiculo === "carro";
   return {
     "{NOME}": item.clienteNome,
     "{PLACA}": item.placa || "—",
     "{VALOR}": fmtBRL(item.entry.valor || 0),
     "{DATA_VENCIMENTO}": item.due?.toLocaleDateString("pt-BR") || "—",
     "{DIAS_ATRASO}": String(item.daysLate),
+    "{VEICULO}": isCarro ? "carro" : "moto",
+    "{ARTIGO_VEICULO}": isCarro ? "o carro" : "a moto",
+    "{ARTIGO_VEICULO_CAP}": isCarro ? "O carro" : "A moto",
+    "{DO_VEICULO}": isCarro ? "do carro" : "da moto",
+    "{A_VEICULO}": isCarro ? "ao carro" : "à moto",
   };
 }
 
@@ -213,7 +217,13 @@ export default function CobrancasSemanaPage() {
   const [adiarEntry, setAdiarEntry] = useState<FinancialEntry | null>(null);
   const [adiarDate, setAdiarDate] = useState("");
   const [adiarAtrasadas, setAdiarAtrasadas] = useState<FinancialEntry[]>([]);
-  const [snoozeMap, setSnoozeMap] = useState<Record<string, string>>(() => readSnoozeMap());
+  // Persistido em financial_entries.adiado_ate (Supabase) — não em localStorage, para
+  // não sumir ao trocar de navegador/dispositivo ou o navegador limpar dados do site.
+  const snoozeMap = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const e of cache.financial) { if (e.adiadoAte) map[e.id] = e.adiadoAte; }
+    return map;
+  }, [cache.financial]);
   const [loadingBoleto, setLoadingBoleto] = useState<string | null>(null);
   const [generatingBoleto, setGeneratingBoleto] = useState<string | null>(null);
   const [parcelandoEntry, setParcelandoEntry] = useState<FinancialEntry | null>(null);
@@ -437,6 +447,7 @@ export default function CobrancasSemanaPage() {
         placa: m?.placa || e.placa || null,
         modelo: m?.modelo || null,
         motoId: m?.id || null,
+        categoriaVeiculo: m?.categoriaVeiculo || null,
         totalPendente: st?.totalPendente ?? (e.valor || 0),
         semanasEmAtraso: st?.semanasEmAtraso ?? (daysLate > 0 && (e.categoria || "").toLowerCase() === "aluguel" ? 1 : 0),
         pendingCount: st?.pendingCount ?? (daysLate > 0 ? 1 : 0),
@@ -749,7 +760,15 @@ export default function CobrancasSemanaPage() {
         ? Math.round((totalDevido - valor) * 100) / 100
         : 0;
       let finalEntries = next;
-      if (restanteBase > 0) {
+      // Confirma antes de gerar a cobrança do saldo restante — é uma cobrança nova sendo
+      // lançada pro cliente, não deve acontecer só como efeito colateral silencioso de
+      // confirmar um pagamento parcial.
+      const gerarSaldoRestante = restanteBase > 0 && confirm(
+        `Recebido R$ ${valor.toLocaleString("pt-BR", { minimumFractionDigits: 2 })} de um total de ` +
+        `R$ ${totalDevido.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}. Gerar cobrança do saldo ` +
+        `restante de R$ ${restanteBase.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}?`,
+      );
+      if (gerarSaldoRestante) {
         const dueDateStrRest = item.entry.dataPrevista || item.entry.data;
         const dueFmt = dueDateStrRest ? new Date(dueDateStrRest + "T12:00:00").toLocaleDateString("pt-BR") : "?";
         const restanteEntry: FinancialEntry = {
@@ -878,7 +897,7 @@ export default function CobrancasSemanaPage() {
         `✅ *PAGAMENTO CONFIRMADO*`,
         ``,
         `LOCATÁRIO: ${item.clienteNome || "[NOME]"}`,
-        `MOTO: ${motoLinha}`,
+        `${moto?.categoriaVeiculo === "carro" ? "CARRO" : "MOTO"}: ${motoLinha}`,
         `VENCIMENTO: ${vencimento}${semanaTxt ? ` (${semanaTxt})` : ""}`,
         ``,
         `💰 *VALORES*`,
@@ -941,38 +960,66 @@ export default function CobrancasSemanaPage() {
     setReschedDate(toISODate(base));
   };
 
-  const applyAdiarAtrasadas = () => {
+  // Persiste o adiamento em financial_entries.adiado_ate (Supabase) — não altera
+  // data_prevista nem gera juros, só oculta a cobrança da fila de atraso até a data.
+  const persistAdiado = async (idToDate: Map<string, string | null>) => {
+    const next = loadFinancial().map(e => idToDate.has(e.id) ? { ...e, adiadoAte: idToDate.get(e.id) } : e);
+    await saveFinancial(next);
+  };
+
+  const applyAdiarAtrasadas = async () => {
     if (!adiarAtrasadas.length || !adiarDate) return;
-    const newMap = { ...readSnoozeMap() };
-    adiarAtrasadas.forEach(e => { newMap[e.id] = adiarDate; });
-    writeSnoozeMap(newMap);
-    setSnoozeMap(newMap);
-    const d = new Date(adiarDate + "T00:00:00").toLocaleDateString("pt-BR");
-    toast.success(`${adiarAtrasadas.length} cobrança${adiarAtrasadas.length !== 1 ? "s" : ""} adiada${adiarAtrasadas.length !== 1 ? "s" : ""} para ${d}`);
-    setAdiarEntry(null);
-    setAdiarAtrasadas([]);
-    setDebtDetailClientId(null);
+    try {
+      await persistAdiado(new Map(adiarAtrasadas.map(e => [e.id, adiarDate])));
+      const d = new Date(adiarDate + "T00:00:00").toLocaleDateString("pt-BR");
+      toast.success(`${adiarAtrasadas.length} cobrança${adiarAtrasadas.length !== 1 ? "s" : ""} adiada${adiarAtrasadas.length !== 1 ? "s" : ""} para ${d}`);
+      setAdiarEntry(null);
+      setAdiarAtrasadas([]);
+      setDebtDetailClientId(null);
+    } catch (err) {
+      console.error(err);
+      toast.error("Erro ao adiar cobranças");
+    }
   };
 
-  const applyRescheduleClient = () => {
+  const applyRescheduleClient = async () => {
     if (!reschedClientItems.length || !reschedClientDate) return;
-    const newMap = { ...readSnoozeMap() };
-    reschedClientItems.forEach(i => { newMap[i.entry.id] = reschedClientDate; });
-    writeSnoozeMap(newMap);
-    setSnoozeMap(newMap);
-    const d = new Date(reschedClientDate + "T00:00:00").toLocaleDateString("pt-BR");
-    toast.success(`${reschedClientItems.length} cobrança${reschedClientItems.length !== 1 ? "s" : ""} adiada${reschedClientItems.length !== 1 ? "s" : ""} para ${d}`);
-    setReschedClientItems([]);
+    try {
+      await persistAdiado(new Map(reschedClientItems.map(i => [i.entry.id, reschedClientDate])));
+      const d = new Date(reschedClientDate + "T00:00:00").toLocaleDateString("pt-BR");
+      toast.success(`${reschedClientItems.length} cobrança${reschedClientItems.length !== 1 ? "s" : ""} adiada${reschedClientItems.length !== 1 ? "s" : ""} para ${d}`);
+      setReschedClientItems([]);
+    } catch (err) {
+      console.error(err);
+      toast.error("Erro ao adiar cobranças");
+    }
   };
 
-  const applyReschedule = (newDate: string) => {
+  const applyReschedule = async (newDate: string) => {
     const target = reschedItem;
     if (!target || !newDate) return;
-    const newMap = { ...readSnoozeMap(), [target.entry.id]: newDate };
-    writeSnoozeMap(newMap);
-    setSnoozeMap(newMap);
-    toast.success(`Cobrança adiada para ${new Date(newDate + "T00:00:00").toLocaleDateString("pt-BR")}`);
-    setReschedItem(null);
+    try {
+      await persistAdiado(new Map([[target.entry.id, newDate]]));
+      toast.success(`Cobrança adiada para ${new Date(newDate + "T00:00:00").toLocaleDateString("pt-BR")}`);
+      setReschedItem(null);
+    } catch (err) {
+      console.error(err);
+      toast.error("Erro ao adiar cobrança");
+    }
+  };
+
+  // Cancela o adiamento de uma cobrança — sem isso, uma cobrança adiada nunca aparece
+  // como "em atraso" de novo (mesmo já vencida), e por isso fica fora do "Parcelar
+  // dívida" (que só considera atrasadas): não tinha nenhuma forma de desfazer um adiamento
+  // antes da data escolhida chegar.
+  const removerAdiamento = async (entryId: string) => {
+    try {
+      await persistAdiado(new Map([[entryId, null]]));
+      toast.success("Adiamento removido — a cobrança volta a contar como em atraso.");
+    } catch (err) {
+      console.error(err);
+      toast.error("Erro ao remover adiamento");
+    }
   };
 
   // Oculta (ou mostra de volta) as cobranças de contrato(s) encerrado(s) na fila de
@@ -989,7 +1036,7 @@ export default function CobrancasSemanaPage() {
       : "Cobranças voltaram a aparecer em Pagamentos.");
   };
 
-  const quickReschedule = (item: RowItem, deltaDays: number) => {
+  const quickReschedule = async (item: RowItem, deltaDays: number) => {
     // Base = HOJE (ou o vencimento, se ainda for futuro). Assim "Adiar +N dias"
     // sempre joga a cobrança para N dias à frente de hoje quando já está vencida,
     // tirando ela do estado "vencido" enquanto a locadora aguarda o cliente.
@@ -999,10 +1046,13 @@ export default function CobrancasSemanaPage() {
     const nd = new Date(base);
     nd.setDate(nd.getDate() + deltaDays);
     const iso = toISODate(nd);
-    const newMap = { ...readSnoozeMap(), [item.entry.id]: iso };
-    writeSnoozeMap(newMap);
-    setSnoozeMap(newMap);
-    toast.success(`Adiado para ${nd.toLocaleDateString("pt-BR")}`);
+    try {
+      await persistAdiado(new Map([[item.entry.id, iso]]));
+      toast.success(`Adiado para ${nd.toLocaleDateString("pt-BR")}`);
+    } catch (err) {
+      console.error(err);
+      toast.error("Erro ao adiar cobrança");
+    }
   };
 
   const handleIgnore = async (item: RowItem) => {
@@ -2038,7 +2088,7 @@ export default function CobrancasSemanaPage() {
                 )}
                 {confirmItem.placa && (
                   <div className="flex justify-between">
-                    <span className="text-muted-foreground">Moto:</span>
+                    <span className="text-muted-foreground">{confirmItem.categoriaVeiculo === "carro" ? "Carro:" : "Moto:"}</span>
                     <span className="font-medium">{confirmItem.placa}{confirmItem.modelo ? ` · ${confirmItem.modelo}` : ""}</span>
                   </div>
                 )}
@@ -2597,6 +2647,16 @@ export default function CobrancasSemanaPage() {
                         ? <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-medium">✓ pago {dateStr}</span>
                         : <span className="text-[10px] text-muted-foreground">venc. {dateStr}</span>
                       }
+                      {snoozedUntil && (
+                        <button
+                          title="Remover adiamento — volta a contar como em atraso"
+                          onClick={() => removerAdiamento(e.id)}
+                          className="flex items-center gap-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-400 hover:text-amber-700 dark:hover:text-amber-300 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 rounded px-1 py-px transition-colors"
+                        >
+                          adiada até {new Date(snoozedUntil + "T00:00:00").toLocaleDateString("pt-BR")}
+                          <X className="h-2.5 w-2.5" />
+                        </button>
+                      )}
                     </div>
                   </div>
                   <div className="flex items-center gap-1.5 flex-shrink-0">
@@ -3378,7 +3438,8 @@ function RowItemView({
             <span className="text-[13px] font-semibold truncate flex-1 leading-none">{item.clienteNome}</span>
           )}
           {item.placa && (
-            <span className="font-mono text-[9px] bg-muted/70 border border-border/50 rounded-[3px] px-1.5 py-px tracking-[.5px] text-muted-foreground flex-shrink-0">
+            <span className="flex items-center gap-1 font-mono text-[9px] bg-muted/70 border border-border/50 rounded-[3px] px-1.5 py-px tracking-[.5px] text-muted-foreground flex-shrink-0">
+              {item.categoriaVeiculo === "carro" && <Car className="h-2.5 w-2.5" />}
               {item.placa}
             </span>
           )}

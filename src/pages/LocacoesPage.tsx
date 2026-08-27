@@ -8,6 +8,7 @@ import { lastOilChange } from "@/lib/oil-kpis";
 import { useDataCacheSnapshot } from "@/lib/data-cache";
 import { resolveAssociations, AssociationContext } from "@/lib/financial-associations";
 import { computeSemanaPeriodo } from "@/lib/cobranca-week-stats";
+import { classifyPlano } from "@/lib/rental-plano";
 import { addWeeks, addDays, addMonths, isBefore, isEqual, parseISO, differenceInDays, startOfMonth, endOfMonth, subMonths, isWithinInterval, format } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { BarChart, Bar, XAxis, YAxis, ResponsiveContainer, CartesianGrid, Tooltip as RechartsTooltip } from "recharts";
@@ -23,7 +24,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Table, TableHeader, TableBody, TableHead, TableRow, TableCell } from "@/components/ui/table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Plus, Search, FileText, Eye, Trash2, Pencil, XCircle, History, CheckCircle2, MoreHorizontal, Wallet, AlertTriangle, Flag, CalendarClock, Copy, Bike, EyeOff, Scale } from "lucide-react";
+import { Plus, Search, FileText, Eye, Trash2, Pencil, XCircle, History, CheckCircle2, MoreHorizontal, Wallet, AlertTriangle, Flag, CalendarClock, Copy, Bike, EyeOff, Scale, RotateCcw } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuLabel, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import RentalWizard from "@/components/locacoes/RentalWizard";
@@ -48,8 +49,12 @@ const PERIODOS_LOCACOES = [
  * - período nem começou (início do período > data de encerramento) → remove (cobrança futura, contrato já não existe mais).
  * - contrato termina NO MEIO do período (pré ou pós-pago, tanto faz) → preserva e corrige o
  *   valor para diária real × dias efetivamente usados, sinalizando na observação.
- * Para categorias fora de aluguel (ou frequência não semanal, sem período calculável), usa
- * só a data de vencimento: vencida preserva, futura remove.
+ * Para aluguel com frequência não semanal (sem período calculável) e para caução (parcelas
+ * futuras de um plano que não existe mais), usa só a data de vencimento: vencida preserva,
+ * futura remove — essas categorias são recorrentes/atreladas ao contrato continuar existindo.
+ * Qualquer outra categoria (multa, manutenção, venda, peças, outras receitas...) é uma dívida
+ * avulsa já gerada por algo que já aconteceu — o vencimento é só o prazo de pagamento, não tem
+ * relação com o contrato seguir ou não, então SEMPRE preserva, nunca remove automaticamente.
  * OBS: `valorDiario` no cadastro da locação guarda o valor do PERÍODO (semana), não de 1 dia
  * — a diária real é valorDiario / 7.
  */
@@ -76,7 +81,10 @@ function classifyPendenciaEncerramento(
       return { action: "preserve", novoValor, nota, diasUsados };
     }
   }
-  return dueStr <= encerrarDataISO ? { action: "preserve" } : { action: "remove" };
+  if (categoria === "aluguel" || categoria === "caucao") {
+    return dueStr <= encerrarDataISO ? { action: "preserve" } : { action: "remove" };
+  }
+  return { action: "preserve" };
 }
 
 // Multa + juros de uma cobrança pendente já vencida na data de encerramento — mesma fórmula
@@ -150,6 +158,8 @@ function computeContratoAlerta(
   ultimaAluguelGerada?: string | null,
 ): { tipo: "cobranca_futura_ausente" | "periodo_encerrado" | "ultima_parcela" | "plano_concluido"; texto: string; diasExpirado?: number } | null {
   const today = new Date().toISOString().slice(0, 10);
+  const planoCategoria = classifyPlano(rental.plano);
+  const totalEsperado = planoCategoria === "moto_no_final" ? totalPagamentosEsperados(rental) : null;
 
   // Cobrança futura sumida: locação ativa com cobrança automática ligada, mas cuja última
   // cobrança de aluguel GERADA (paga ou não) está aquém do horizonte esperado (2x o período
@@ -160,7 +170,12 @@ function computeContratoAlerta(
   // locatário costuma pagar várias semanas adiantado, então a próxima cobrança PENDENTE já
   // cai naturalmente longe no futuro sem que isso signifique nenhum problema de geração —
   // o que importa é se a série continua sendo estendida, não se está tudo pago.
-  if (rental.gerarCobrancaPagamento && (rental.valorDiario || 0) > 0) {
+  // Não se aplica a "Moto no Final": esse plano nunca é "estendido" aos poucos (o efeito de
+  // auto-renovação sempre pula esse plano, de propósito — a série inteira já nasce completa
+  // na criação/edição do contrato, indo até o fim do contrato). Sem essa exclusão, o alerta
+  // dispara "sem cobrança futura" erroneamente assim que a série de parcelas natural termina,
+  // mesmo o contrato tendo terminado certinho.
+  if (rental.gerarCobrancaPagamento && (rental.valorDiario || 0) > 0 && planoCategoria !== "moto_no_final") {
     const periodDays = rental.frequenciaPagamento === "quinzenal" ? 15 : rental.frequenciaPagamento === "mensal" ? 30 : 7;
     const limite = addDays(new Date(today + "T00:00:00"), periodDays * 2);
     // Não alerta se a série já foi gerada até o fim do contrato — não há mais nada a gerar.
@@ -172,7 +187,7 @@ function computeContratoAlerta(
     }
   }
 
-  if (rental.plano === "aluguel" || !rental.plano || (rental.plano !== "moto_no_final" && rental.plano !== "aluguel")) {
+  if (planoCategoria !== "moto_no_final") {
     // Só Aluguel (e qualquer plano não reconhecido): avisa quando período contratado terminou
     if (rental.dataFimContrato && today >= rental.dataFimContrato) {
       const dias = differenceInDays(new Date(today + "T00:00:00"), new Date(rental.dataFimContrato + "T00:00:00"));
@@ -180,14 +195,13 @@ function computeContratoAlerta(
     }
   }
 
-  if (rental.plano === "moto_no_final") {
-    const total = totalPagamentosEsperados(rental);
-    if (total != null) {
-      if (pagas >= total) {
+  if (planoCategoria === "moto_no_final") {
+    if (totalEsperado != null) {
+      if (pagas >= totalEsperado) {
         return { tipo: "plano_concluido", texto: "Plano concluído" };
       }
-      if (pagas === total - 1) {
-        return { tipo: "ultima_parcela", texto: `Última parcela (${pagas + 1}/${total})` };
+      if (pagas === totalEsperado - 1) {
+        return { tipo: "ultima_parcela", texto: `Última parcela (${pagas + 1}/${totalEsperado})` };
       }
     }
     // Também avisa pelo prazo de data fim
@@ -366,6 +380,11 @@ export default function LocacoesPage() {
   const [encerrarSelectedIds, setEncerrarSelectedIds] = useState<Set<string>>(new Set());
   const [encerrarUnificar, setEncerrarUnificar] = useState(true);
 
+  // Reativação de locação finalizada (ex: cliente quitou a inadimplência e vai continuar)
+  const [reativarRental, setReativarRental] = useState<Rental | null>(null);
+  const [reativarData, setReativarData] = useState(localToday());
+  const [reativarObs, setReativarObs] = useState("");
+
   // Troca de moto (mesma locação continua, só o veículo muda)
   const [trocarMotoRental, setTrocarMotoRental] = useState<Rental | null>(null);
   const [trocarMotoNovaId, setTrocarMotoNovaId] = useState("");
@@ -424,7 +443,7 @@ export default function LocacoesPage() {
 
     for (const rental of rentals) {
       if (rental.status !== "ativa" || !rental.gerarCobrancaPagamento || rental.valorDiario <= 0) continue;
-      if (rental.plano === "moto_no_final") continue; // fim natural pelo nº de parcelas
+      if (classifyPlano(rental.plano) === "moto_no_final") continue; // fim natural pelo nº de parcelas
 
       const aluguelDoRental = aluguelPorRental.get(rental.id) || [];
       // Locação nova (nenhuma cobrança gerada ainda) — handleSaveRental já cuida disso.
@@ -722,7 +741,7 @@ export default function LocacoesPage() {
       // Locações continuam gerando cobrança além do fim do contrato enquanto ativas — só
       // "Moto no Final" tem fim natural pelo nº de parcelas (mesmo critério de computeContratoAlerta).
       const horizonte12m = addMonths(new Date(), 12);
-      const endDate = rental.plano !== "moto_no_final" && rental.status === "ativa"
+      const endDate = classifyPlano(rental.plano) !== "moto_no_final" && rental.status === "ativa"
         ? (contratoEnd > horizonte12m ? contratoEnd : horizonte12m)
         : contratoEnd;
       const prePaga = !!rental.cobrancaPrePaga;
@@ -859,7 +878,26 @@ export default function LocacoesPage() {
 
     if (encerrarRental.motoId) {
       const allMotos = loadMotos();
-      const updatedMotos = allMotos.map(m => m.id === encerrarRental.motoId ? { ...m, status: "disponivel" as const } : m);
+      const kmFimNum = encerrarKmFim ? Number(encerrarKmFim) : null;
+      const updatedMotos = allMotos.map(m => {
+        if (m.id !== encerrarRental.motoId) return m;
+        const updates: Partial<Motorcycle> = { status: "disponivel" as const };
+        // Troca de óleo automática ao voltar pro estoque: na prática da empresa
+        // a moto já sai revisada/com óleo trocado antes de alugar de novo, então
+        // zera o "relógio" de km aqui (a contagem de dias só volta a rodar
+        // quando ela for alugada de novo — parada em estoque não conta, ver
+        // getOilStatus em oil-kpis.ts). Mesmo padrão já usado ao iniciar uma
+        // locação (handleSaveRental) e ao trocar de moto no meio do contrato.
+        if (kmFimNum) {
+          const lastChange = lastOilChange(m);
+          if (!lastChange || lastChange.km < kmFimNum) {
+            const oilRecord: OilChangeRecord = { id: crypto.randomUUID(), data: encerrarData, km: kmFimNum };
+            updates.historicoOleo = [...(m.historicoOleo || []), oilRecord];
+          }
+          if (!m.kmAtual || m.kmAtual < kmFimNum) updates.kmAtual = kmFimNum;
+        }
+        return { ...m, ...updates };
+      });
       saveMotos(updatedMotos);
     }
 
@@ -892,6 +930,14 @@ export default function LocacoesPage() {
       const acrescimos = new Map(pendentesQueFicam.map(e => [e.id, calcAcrescimoAtraso(encerrarRental, e, cobrancaCfg, encerrarData)]));
       const valorFinal = (e: FinancialEntry) => e.valor + (acrescimos.get(e.id) || 0);
       const total = Math.round(pendentesQueFicam.reduce((s, e) => s + valorFinal(e), 0) * 100) / 100;
+      // Confirma antes de juntar as cobranças — é uma cobrança nova sendo gerada (e as
+      // originais canceladas no Asaas), não deve acontecer só como efeito colateral de
+      // marcar a checkbox "Unificar" e clicar em Encerrar.
+      const confirmaUnificar = confirm(
+        `Unificar ${pendentesQueFicam.length} cobranças pendentes numa única cobrança de ` +
+        `R$ ${total.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}? Os boletos originais serão cancelados.`,
+      );
+      if (confirmaUnificar) {
       // Rótulo curto por item pro texto que vai pro boleto do cliente — a descrição bruta de
       // algumas categorias (ex.: multa, com número de auto/RENAINF/órgão) é informação interna
       // demais para o boleto. O detalhe completo continua em consolidatedItems, usado só na
@@ -944,6 +990,7 @@ export default function LocacoesPage() {
       const idsUnificados = new Set(pendentesQueFicam.map(e => e.id));
       finalEntries = [...remaining.filter(e => !idsUnificados.has(e.id)), consolidada];
       unificadoCount = pendentesQueFicam.length;
+      }
     }
 
     if (removedCount > 0 || ajusteCount > 0 || unificadoCount > 0) {
@@ -962,6 +1009,62 @@ export default function LocacoesPage() {
     setEncerrarPendencias([]);
     setEncerrarSelectedIds(new Set());
     setEncerrarUnificar(true);
+  };
+
+  // Reativação de locação finalizada — ex.: cliente quitou a inadimplência que motivou
+  // o encerramento e vai continuar alugando. Não tenta desfazer o encerramento anterior
+  // (cobranças canceladas/unificadas continuam como histórico); só volta o contrato a
+  // "ativa" — a partir daí o gerador automático de cobranças (efeito mais acima nesta
+  // página) retoma sozinho, contando a partir da última cobrança de aluguel já existente.
+  const [reativarLegalCase, setReativarLegalCase] = useState<{ id: string; status: string } | null>(null);
+  const openReativar = async (r: Rental) => {
+    setReativarRental(r);
+    setReativarData(localToday());
+    setReativarObs("");
+    setReativarLegalCase(null);
+    try {
+      const { data } = await supabase
+        .from("legal_cases")
+        .select("id,status")
+        .eq("rental_id", r.id)
+        .in("status", ["nao_iniciado", "em_andamento"])
+        .maybeSingle();
+      if (data) setReativarLegalCase(data as { id: string; status: string });
+    } catch {
+      // Consulta best-effort — não bloqueia a reativação se falhar.
+    }
+  };
+  // Não dá pra reativar numa moto que já está com outro contrato ativo agora.
+  const reativarConflito = reativarRental
+    ? rentals.find(x => x.motoId === reativarRental.motoId && x.status === "ativa" && x.id !== reativarRental.id)
+    : null;
+  const confirmReativar = () => {
+    if (!reativarRental) return;
+    if (reativarConflito) {
+      toast.error("Essa moto já está em outro contrato ativo — troque a moto antes de reativar, ou encerre o contrato atual dela.");
+      return;
+    }
+    const obs = [
+      reativarRental.observacoes,
+      `--- Reativação ---`,
+      `Data: ${new Date(reativarData + "T00:00:00").toLocaleDateString("pt-BR")}`,
+      reativarObs ? `Obs: ${reativarObs}` : "",
+    ].filter(Boolean).join("\n");
+    const updated: Rental = {
+      ...reativarRental,
+      status: "ativa",
+      dataFim: null,
+      kmFim: null,
+      observacoes: obs,
+    };
+    persist(loadRentals().map(x => x.id === reativarRental.id ? updated : x));
+    if (reativarRental.motoId) {
+      saveMotos(loadMotos().map(m => m.id === reativarRental.motoId ? { ...m, status: "alugada" as const } : m));
+    }
+    toast.success("Locação reativada — as próximas cobranças de aluguel voltam a ser geradas normalmente.");
+    setReativarRental(null);
+    setReativarObs("");
+    setReativarLegalCase(null);
   };
 
   const [enviandoJuridico, setEnviandoJuridico] = useState<string | null>(null);
@@ -1442,6 +1545,16 @@ export default function LocacoesPage() {
                         onClick={() => setEnviarJuridicoRental(r)}
                       >
                         <Scale className="h-3.5 w-3.5" />
+                      </Button>
+                    )}
+                    {showActions === "finalizada" && canEdit && (
+                      <Button
+                        variant="ghost" size="sm"
+                        className="h-7 w-7 p-0 text-success hover:text-success"
+                        title="Reativar locação"
+                        onClick={() => openReativar(r)}
+                      >
+                        <RotateCcw className="h-3.5 w-3.5" />
                       </Button>
                     )}
                     {canDelete && (
@@ -1955,6 +2068,65 @@ export default function LocacoesPage() {
         </DialogContent>
       </Dialog>
 
+      {/* Reativar Locação Dialog */}
+      <Dialog open={!!reativarRental} onOpenChange={() => { setReativarRental(null); setReativarObs(""); setReativarLegalCase(null); }}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="text-success flex items-center gap-2">
+              <RotateCcw className="h-5 w-5" />
+              Reativar Locação {reativarRental ? getNumero(reativarRental) : ""}
+            </DialogTitle>
+          </DialogHeader>
+          {reativarRental && (
+            <div className="space-y-4">
+              <div className="rounded-md bg-muted/50 p-3 text-sm space-y-1">
+                <p><span className="text-muted-foreground">Placa:</span> <span className="font-mono font-bold">{getMotoPlaca(reativarRental.motoId)}</span></p>
+                <p><span className="text-muted-foreground">Cliente:</span> {getRentalClientLabel(reativarRental)}</p>
+                <p><span className="text-muted-foreground">Encerrada em:</span> {reativarRental.dataFim ? new Date(reativarRental.dataFim + "T00:00:00").toLocaleDateString("pt-BR") : "—"}</p>
+              </div>
+
+              {reativarConflito ? (
+                <div className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
+                  Essa moto já está em outro contrato ativo ({getRentalClientLabel(reativarConflito)}) — não dá pra reativar
+                  esta locação nela agora. Troque a moto desse outro contrato ou encerre-o antes de continuar.
+                </div>
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  A locação volta a ficar <strong>ativa</strong> e a moto volta a ficar <strong>alugada</strong>. As cobranças
+                  já canceladas/unificadas no encerramento não são refeitas — a partir de agora, as próximas cobranças de
+                  aluguel voltam a ser geradas normalmente.
+                </p>
+              )}
+
+              {reativarLegalCase && (
+                <div className="rounded-md border border-warning/40 bg-warning/10 p-3 text-sm text-warning flex items-start justify-between gap-3">
+                  <span>Existe um caso aberto no Jurídico pra essa locação — considere atualizar ou encerrar ele lá.</span>
+                  <Button variant="outline" size="sm" className="shrink-0" onClick={() => navigate("/juridico")}>
+                    Abrir Jurídico
+                  </Button>
+                </div>
+              )}
+
+              <div className="space-y-2">
+                <Label>Data da reativação</Label>
+                <Input type="date" value={reativarData} onChange={e => setReativarData(e.target.value)} />
+              </div>
+
+              <div className="space-y-2">
+                <Label>Observações</Label>
+                <Textarea placeholder="Ex: cliente quitou a inadimplência em 25/08..." value={reativarObs} onChange={e => setReativarObs(e.target.value)} rows={3} />
+              </div>
+            </div>
+          )}
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button variant="outline" onClick={() => { setReativarRental(null); setReativarObs(""); setReativarLegalCase(null); }}>Cancelar</Button>
+            <Button onClick={confirmReativar} disabled={!!reativarConflito} className="gap-2 bg-success hover:bg-success/90">
+              <RotateCcw className="h-4 w-4" /> Confirmar Reativação
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* Trocar Moto — a locação continua a mesma, só o veículo muda */}
       <Dialog open={!!trocarMotoRental} onOpenChange={() => setTrocarMotoRental(null)}>
         <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
@@ -2094,6 +2266,30 @@ export default function LocacoesPage() {
                 {viewRental.localDevolucao && <div><span className="text-muted-foreground">Devolução:</span> {viewRental.localDevolucao}</div>}
               </div>
 
+              {viewRental.clienteId && (() => {
+                const client = clients.find(c => c.id === viewRental.clienteId);
+                if (!client || (!client.emergenciaNome1 && !client.emergenciaNome2)) return null;
+                return (
+                  <div className="border-t pt-2">
+                    <h4 className="font-semibold text-sm mb-2">Contatos de Emergência</h4>
+                    <div className="grid grid-cols-2 gap-4 text-sm">
+                      {client.emergenciaNome1 && (
+                        <div>
+                          <span className="text-muted-foreground">1º contato:</span> {client.emergenciaNome1}
+                          {client.emergenciaTel1 && <> — {client.emergenciaTel1}</>}
+                        </div>
+                      )}
+                      {client.emergenciaNome2 && (
+                        <div>
+                          <span className="text-muted-foreground">2º contato:</span> {client.emergenciaNome2}
+                          {client.emergenciaTel2 && <> — {client.emergenciaTel2}</>}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })()}
+
               {viewRental.caucaoParcelado && viewRental.parcelasCaucao.length > 0 && (
                 <div>
                   <h4 className="font-semibold text-sm mb-2">Parcelas do Caução</h4>
@@ -2142,6 +2338,13 @@ export default function LocacoesPage() {
                       <XCircle className="h-3.5 w-3.5" /> Encerrar Locação
                     </Button>
                   )}
+                </div>
+              )}
+              {viewRental.status === "finalizada" && canEdit && (
+                <div className="flex gap-2 border-t pt-3">
+                  <Button variant="outline" size="sm" className="gap-1 text-success border-success/30 hover:text-success" onClick={() => { setViewRental(null); openReativar(viewRental); }}>
+                    <RotateCcw className="h-3.5 w-3.5" /> Reativar Locação
+                  </Button>
                 </div>
               )}
             </div>
