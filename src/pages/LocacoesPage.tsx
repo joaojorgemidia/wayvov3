@@ -177,18 +177,12 @@ function computeContratoAlerta(
       return { tipo: "cobranca_futura_ausente", texto: "Sem cobrança futura gerada" };
     }
     // A partir daqui, já existe pelo menos uma cobrança gerada — o que resta checar é se a
-    // série CONTINUA sendo estendida pro futuro. Isso não se aplica a "Moto no Final": esse
-    // plano nunca é "estendido" aos poucos (o efeito de auto-renovação sempre pula esse
-    // plano, de propósito — a série inteira já nasce completa na criação/edição do contrato,
-    // indo até o fim do contrato). Sem essa exclusão, o alerta dispararia "sem cobrança
-    // futura" erroneamente assim que a série de parcelas natural termina, mesmo o contrato
-    // tendo terminado certinho.
-    if (planoCategoria !== "moto_no_final") {
+    // série CONTINUA sendo estendida pro futuro. Vale pra qualquer plano: nenhum tem "fim
+    // natural" — a locação só para de gerar cobrança com um encerramento explícito.
+    {
       const periodDays = rental.frequenciaPagamento === "quinzenal" ? 15 : rental.frequenciaPagamento === "mensal" ? 30 : 7;
       const limite = addDays(new Date(today + "T00:00:00"), periodDays * 2);
-      // Não alerta se a série já foi gerada até o fim do contrato — não há mais nada a gerar.
-      const fimContrato = rental.dataFimContrato ? parseISO(rental.dataFimContrato) : null;
-      const semCobranca = parseISO(ultimaAluguelGerada) < limite && (!fimContrato || parseISO(ultimaAluguelGerada) < fimContrato);
+      const semCobranca = parseISO(ultimaAluguelGerada) < limite;
       if (semCobranca) {
         return { tipo: "cobranca_futura_ausente", texto: "Sem cobrança futura gerada" };
       }
@@ -451,7 +445,9 @@ export default function LocacoesPage() {
 
     for (const rental of rentals) {
       if (rental.status !== "ativa" || !rental.gerarCobrancaPagamento || rental.valorDiario <= 0) continue;
-      if (classifyPlano(rental.plano) === "moto_no_final") continue; // fim natural pelo nº de parcelas
+      // Nenhum plano tem "fim natural" pelo nº de parcelas — enquanto a locação estiver
+      // ativa, a cobrança continua sendo gerada mesmo passado o fim nominal do contrato.
+      // Só um encerramento explícito (confirmEncerrar) para a geração.
 
       const aluguelDoRental = aluguelPorRental.get(rental.id) || [];
       // Locação nova (nenhuma cobrança gerada ainda) — handleSaveRental já cuida disso.
@@ -746,10 +742,10 @@ export default function LocacoesPage() {
     if (rental.gerarCobrancaPagamento && rental.valorDiario > 0 && rental.dataFimContrato) {
       const startDate = parseISO(rental.dataInicio);
       const contratoEnd = parseISO(rental.dataFimContrato);
-      // Locações continuam gerando cobrança além do fim do contrato enquanto ativas — só
-      // "Moto no Final" tem fim natural pelo nº de parcelas (mesmo critério de computeContratoAlerta).
+      // Locações continuam gerando cobrança além do fim do contrato enquanto ativas,
+      // qualquer que seja o plano — só um encerramento explícito para a geração.
       const horizonte12m = addMonths(new Date(), 12);
-      const endDate = classifyPlano(rental.plano) !== "moto_no_final" && rental.status === "ativa"
+      const endDate = rental.status === "ativa"
         ? (contratoEnd > horizonte12m ? contratoEnd : horizonte12m)
         : contratoEnd;
       const prePaga = !!rental.cobrancaPrePaga;
@@ -1115,11 +1111,8 @@ export default function LocacoesPage() {
 
         const startDate = parseISO(reativarRental.dataInicio);
         const contratoEnd = parseISO(reativarRental.dataFimContrato);
-        const planoCategoria2 = classifyPlano(reativarRental.plano);
         const horizonte12m = addMonths(new Date(), 12);
-        const endDate = planoCategoria2 !== "moto_no_final"
-          ? (contratoEnd > horizonte12m ? contratoEnd : horizonte12m)
-          : contratoEnd;
+        const endDate = contratoEnd > horizonte12m ? contratoEnd : horizonte12m;
         const prePaga = !!reativarRental.cobrancaPrePaga;
         const advanceFromStart = (d: Date): Date => {
           if (reativarRental.frequenciaPagamento === "semanal") return addWeeks(d, 1);
