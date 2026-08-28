@@ -13,6 +13,13 @@ import { CAPEX_CATEGORIES } from "@/lib/financeiro-constants";
 const fmt = (v: number) =>
   `R$ ${v.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
+// Contratos "Moto no Final" costumam durar anos (900+ dias) — mostrar isso só em dias
+// fica ilegível numa tile pequena, então passa pra meses acima de ~2 meses.
+function formatDuracaoDias(dias: number): string {
+  if (dias < 60) return `${Math.round(dias)}d`;
+  return `${Math.round(dias / 30)}m`;
+}
+
 const PERIODS = [
   { label: "Este mês", getFrom: () => startOfMonth(new Date()) },
   { label: "30d", getFrom: () => subDays(new Date(), 30) },
@@ -78,14 +85,18 @@ export const Dashboard = memo(function Dashboard() {
     const novosContratos = rentals.filter(r => inRange(r.dataInicio)).length;
     const cac = novosContratos > 0 ? marketingSpend / novosContratos : (contratosAtivos.length > 0 ? marketingSpend / contratosAtivos.length : 0);
 
-    // Duração média das locações que iniciaram no período
+    // Duração média CONTRATADA (fim do contrato − início) das locações que iniciaram no
+    // período — não é quanto tempo já passou (isso sempre daria um número baixo pra
+    // locação recém-criada, mesmo em contratos de anos como "Moto no Final"), é a
+    // duração combinada em contrato. Só entra quem tem data de fim de contrato definida.
     const locacoesPeriodo = rentals.filter(r => inRange(r.dataInicio));
-    const duracaoMedia = locacoesPeriodo.length > 0
-      ? locacoesPeriodo.reduce((sum, r) => {
-          const fim = r.dataFim ? new Date(r.dataFim + "T00:00:00") : new Date();
+    const locacoesPeriodoComContrato = locacoesPeriodo.filter(r => !!r.dataFimContrato);
+    const duracaoMedia = locacoesPeriodoComContrato.length > 0
+      ? locacoesPeriodoComContrato.reduce((sum, r) => {
+          const fim = new Date(r.dataFimContrato + "T00:00:00");
           const inicio = new Date(r.dataInicio + "T00:00:00");
           return sum + Math.max(0, Math.round((fim.getTime() - inicio.getTime()) / 86400000));
-        }, 0) / locacoesPeriodo.length
+        }, 0) / locacoesPeriodoComContrato.length
       : 0;
 
     return {
@@ -472,9 +483,9 @@ export const Dashboard = memo(function Dashboard() {
               </div>
               <div className="pl-4">
                 <p className="text-3xl font-bold tracking-tight tabular-nums font-mono text-violet-600">
-                  {Math.round(stats.duracaoMedia)}<span className="text-xl">d</span>
+                  {formatDuracaoDias(stats.duracaoMedia)}
                 </p>
-                <p className="text-xs text-muted-foreground mt-1">duração média</p>
+                <p className="text-xs text-muted-foreground mt-1">duração contratada média</p>
               </div>
             </div>
             <div className="border-t border-slate-100 pt-3 space-y-2">
