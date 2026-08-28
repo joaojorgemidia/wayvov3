@@ -8,6 +8,7 @@ import {
 import { format, isWithinInterval, parseISO, startOfMonth, subDays } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { getOilStatus, loadBrandConfig, loadGlobalConfig } from "@/lib/oil-kpis";
+import { CAPEX_CATEGORIES } from "@/lib/financeiro-constants";
 
 const fmt = (v: number) =>
   `R$ ${v.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -43,7 +44,13 @@ export const Dashboard = memo(function Dashboard() {
 
   const stats = useMemo(() => {
     const receitasPeriodo = financial.filter(e => !e.ignorada && e.tipo === "receita" && e.pago && inRange(e.data));
-    const despesasPeriodo = financial.filter(e => !e.ignorada && e.tipo === "despesa" && e.pago && inRange(e.data));
+    const despesasPeriodoTodas = financial.filter(e => !e.ignorada && e.tipo === "despesa" && e.pago && inRange(e.data));
+    // Compra de moto é investimento (CAPEX), não custo operacional — fica de fora do
+    // "Lucro" da visão geral pra uma compra grande não fazer parecer que o mês foi ruim
+    // quando na verdade é dinheiro virando patrimônio da frota (mesmo critério do DRE
+    // em Relatórios, que já separa isso do EBITDA/Resultado Operacional).
+    const despesasPeriodo = despesasPeriodoTodas.filter(e => !CAPEX_CATEGORIES.has(e.categoria));
+    const investimentoCapex = despesasPeriodoTodas.filter(e => CAPEX_CATEGORIES.has(e.categoria)).reduce((s, e) => s + e.valor, 0);
     const entradas = receitasPeriodo.reduce((s, e) => s + e.valor, 0);
     const saidas = despesasPeriodo.reduce((s, e) => s + e.valor, 0);
     const lucro = entradas - saidas;
@@ -82,7 +89,7 @@ export const Dashboard = memo(function Dashboard() {
       : 0;
 
     return {
-      entradas, saidas, lucro,
+      entradas, saidas, lucro, investimentoCapex,
       revpavd, ticketMedio, taxaUtilizacao,
       frotaTotal, alugadas, disponiveis,
       contratosAtivosCount: contratosAtivos.length,
@@ -102,7 +109,7 @@ export const Dashboard = memo(function Dashboard() {
       try { const d = parseISO(s); return d >= prevFrom && d <= prevTo; } catch { return false; }
     };
     const receitaPrev = financial.filter(e => !e.ignorada && e.tipo === "receita" && e.pago && inPrev(e.data)).reduce((s, e) => s + e.valor, 0);
-    const despesaPrev = financial.filter(e => !e.ignorada && e.tipo === "despesa" && e.pago && inPrev(e.data)).reduce((s, e) => s + e.valor, 0);
+    const despesaPrev = financial.filter(e => !e.ignorada && e.tipo === "despesa" && e.pago && !CAPEX_CATEGORIES.has(e.categoria) && inPrev(e.data)).reduce((s, e) => s + e.valor, 0);
     const lucroPrev = receitaPrev - despesaPrev;
     const pct = (cur: number, prev: number) => prev === 0 ? (cur === 0 ? 0 : 100) : ((cur - prev) / Math.abs(prev)) * 100;
     return { lucroDelta: pct(stats.lucro, lucroPrev) };
@@ -359,6 +366,15 @@ export const Dashboard = memo(function Dashboard() {
                     {fmt(stats.lucro)}
                   </span>
                 </div>
+                {stats.investimentoCapex > 0 && (
+                  <div className="flex items-center justify-between" title="Compra de moto — investimento em patrimônio, não entra no Resultado acima">
+                    <div className="flex items-center gap-2">
+                      <span className="w-2 h-2 rounded-full bg-blue-400" />
+                      <span className="text-xs text-muted-foreground">Investido em moto (fora do resultado)</span>
+                    </div>
+                    <span className="text-xs font-mono font-bold text-blue-500 tabular-nums">− {fmt(stats.investimentoCapex)}</span>
+                  </div>
+                )}
                 <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
                   <div
                     className="h-full bg-red-400 rounded-full transition-all"

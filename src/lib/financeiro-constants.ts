@@ -77,6 +77,14 @@ export const DEFAULT_CATEGORIAS = {
   ],
 };
 
+/**
+ * Categorias de despesa que são investimento (CAPEX), não custo operacional — ex.: comprar
+ * uma moto é aportar patrimônio, não "gastar" no sentido operacional. Precisa ficar fora do
+ * lucro operacional/líquido mostrado nos KPIs, senão uma compra grande de moto faz parecer
+ * que o mês foi ruim quando na verdade é dinheiro virando patrimônio da frota.
+ */
+export const CAPEX_CATEGORIES = new Set(["compra_moto"]);
+
 /** Categorias geradas automaticamente pelo sistema — sempre exibidas, não podem ser removidas. */
 export const SYSTEM_CATEGORY_VALUES = new Set([
   "aluguel",

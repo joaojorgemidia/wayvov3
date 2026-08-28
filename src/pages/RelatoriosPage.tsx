@@ -6,7 +6,7 @@ import { InfoTooltip } from "@/components/InfoTooltip";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { format, parseISO, isWithinInterval, startOfMonth, endOfMonth, subMonths, subDays } from "date-fns";
 import { ptBR } from "date-fns/locale";
-import { DEFAULT_CATEGORIAS } from "@/lib/financeiro-constants";
+import { DEFAULT_CATEGORIAS, CAPEX_CATEGORIES } from "@/lib/financeiro-constants";
 import { classifyPlano } from "@/lib/rental-plano";
 
 const planoLabel: Record<string, string> = { aluguel: "Só Aluguel", moto_no_final: "Moto no Final" };
@@ -45,15 +45,13 @@ const PERIODS = [
 
 // Categorias de despesa que são custo operacional direto
 const CUSTOS_OP = new Set(["manutencao_despesa", "lava_jato", "rastreador", "seguro", "multa_transito"]);
-// Categorias que são capex/investimento
-const CAPEX = new Set(["compra_moto"]);
 // Pass-through que não entram no P&L
 const PASS_THROUGH = new Set(["transferencia", "ajuste_saldo", "fatura_cartao"]);
 
 function dreClassificarDespesa(cat: string): "operacional" | "admin" | "capex" | "passthrough" {
   if (PASS_THROUGH.has(cat)) return "passthrough";
   if (CUSTOS_OP.has(cat)) return "operacional";
-  if (CAPEX.has(cat)) return "capex";
+  if (CAPEX_CATEGORIES.has(cat)) return "capex";
   return "admin";
 }
 
