@@ -4663,8 +4663,20 @@ export default function FinanceiroPage() {
                                 // dataOriginal = vencimento da cobrança que gerou o juros/taxa.
                                 // NUNCA usar dataPrevista/data aqui: é a data em que o
                                 // pagamento foi confirmado, não a semana em atraso.
-                                const due = e.dataOriginal ? parseISO(e.dataOriginal) : (e.dataPrevista ? parseISO(e.dataPrevista) : parseISO(e.data));
-                                refSemanal = calcRefFromRental(due, e.rentalId);
+                                const dueStr = e.dataOriginal || e.dataPrevista || e.data;
+                                // Taxa/juros de uma fatura Asaas que quitou uma consolidação de
+                                // encerramento não corresponde a uma semana real do ciclo — calcular
+                                // a semana a partir da data faria aparecer um número inventado (ex.:
+                                // "Semana 08" pra uma cobrança que na verdade juntou as semanas 5-7).
+                                const consolidacao = e.rentalId
+                                  ? entries.find(o => o.rentalId === e.rentalId && (o.tags || []).includes("consolidacao") && (o.dataPrevista === dueStr || o.data === dueStr))
+                                  : undefined;
+                                if (consolidacao) {
+                                  refSemanal = "Ref.: Consolidação encerramento";
+                                } else {
+                                  const due = e.dataOriginal ? parseISO(e.dataOriginal) : (e.dataPrevista ? parseISO(e.dataPrevista) : parseISO(e.data));
+                                  refSemanal = calcRefFromRental(due, e.rentalId);
+                                }
                               }
                             }
                             const hasContent = !!(obsText || parcelaLabel || refSemanal);

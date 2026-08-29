@@ -1367,10 +1367,12 @@ export default function LocacoesPage() {
 
   // Copia de uma vez o telefone (DDI 55 + DDD + número, só dígitos) de todos os locatários
   // com locação ativa — pra colar direto em ferramentas de disparo em massa (ex: WhatsApp Business).
+  // Carros nunca entram aqui — locação de carro tem cobrança/vistoria/troca de óleo
+  // tratada à parte, numa aba separada, e não deve se misturar no disparo em massa de motos.
   const handleCopyActivePhones = () => {
     const seen = new Set<string>();
     const numbers: string[] = [];
-    rentalsScoped.filter(r => r.status === "ativa").forEach(r => {
+    rentalsScoped.filter(r => r.status === "ativa" && (motos.find(m => m.id === r.motoId)?.categoriaVeiculo || "moto") !== "carro").forEach(r => {
       const client = clients.find(c => c.id === r.clienteId);
       const digits = sanitizeWhatsAppNumber(client?.telefone);
       if (!digits || seen.has(digits)) return;

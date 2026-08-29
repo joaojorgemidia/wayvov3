@@ -33,9 +33,9 @@ export function getOilTimeStatus(moto: Motorcycle): { status: AlertStatus; label
 export function getOilKmStatus(moto: Motorcycle): { status: AlertStatus; label: string; kmRodados: number | null } {
   if (moto.kmTrocaOleo == null || moto.kmAtual == null) return { status: "none", label: "Sem dados", kmRodados: null };
   const kmRodados = moto.kmAtual - moto.kmTrocaOleo;
-  if (kmRodados >= 1000) return { status: "danger", label: `${kmRodados.toLocaleString("pt-BR")} km (VENCIDO)`, kmRodados };
-  if (kmRodados >= 800) return { status: "warning", label: `${kmRodados.toLocaleString("pt-BR")} km`, kmRodados };
-  return { status: "ok", label: `${kmRodados.toLocaleString("pt-BR")} km`, kmRodados };
+  if (kmRodados >= 1000) return { status: "danger", label: `${kmRodados.toLocaleString("pt-BR", { maximumFractionDigits: 0 })} km (VENCIDO)`, kmRodados };
+  if (kmRodados >= 800) return { status: "warning", label: `${kmRodados.toLocaleString("pt-BR", { maximumFractionDigits: 0 })} km`, kmRodados };
+  return { status: "ok", label: `${kmRodados.toLocaleString("pt-BR", { maximumFractionDigits: 0 })} km`, kmRodados };
 }
 
 export function getInspectionStatus(moto: Motorcycle): { status: AlertStatus; label: string; diasDesde: number | null; prazo: string | null } {

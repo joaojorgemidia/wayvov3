@@ -33,7 +33,8 @@ import { CobrancaConsolidadaBadge } from "@/components/financeiro/CobrancaConsol
 import { applyTokens, buildAllTokens } from "@/lib/message-tokens";
 import { buildCobrancaEvent, computeSemanaPeriodo, computeSemanaNumero } from "@/lib/cobranca-week-stats";
 import { useCompany } from "@/contexts/CompanyContext";
-import { DEFAULT_COBRANCA_CONFIG } from "@/lib/companies";
+import { DEFAULT_COBRANCA_CONFIG, isLoca2Rodas } from "@/lib/companies";
+import { VehicleFilterChips, VehicleFilter } from "@/components/VehicleFilterChips";
 import { buildWhatsAppUrl } from "@/lib/whatsapp";
 import { localToday } from "@/lib/utils";
 import { cancelAsaasEntries } from "@/lib/asaas";
@@ -195,6 +196,13 @@ function tokensFor(item: RowItem): Record<string, string> {
 export default function CobrancasSemanaPage() {
   const { activeCompany } = useCompany();
   const cache = useDataCacheSnapshot();
+  // Carros ficam numa aba separada — só relevante pra Loca2Rodas (única locadora com
+  // carros na frota). Por padrão só mostra motos: cobrança de carro não deve se misturar
+  // com a fila normal de motos.
+  const showVehicleTab = isLoca2Rodas(activeCompany);
+  const [vehicleTab, setVehicleTab] = useState<VehicleFilter>("moto");
+  const matchesVehicleTab = (categoriaVeiculo: "moto" | "carro" | null | undefined) =>
+    !showVehicleTab || vehicleTab === "todos" || (categoriaVeiculo || "moto") === vehicleTab;
   const { pendings: collectionPendings } = useCollections();
   const [confirmItem, setConfirmItem] = useState<RowItem | null>(null);
   const [confirmValor, setConfirmValor] = useState("");
@@ -431,6 +439,7 @@ export default function CobrancasSemanaPage() {
       }
       const cliente = clientsById.get(cli);
       const m = moto ? motosById.get(moto) : null;
+      if (!matchesVehicleTab(m?.categoriaVeiculo)) continue;
       const st = e.rentalId ? rentalStats.get(e.rentalId) : null;
       // Atraso real: sempre baseado na data original (e.data), independente de adiamento
       const origDate = parseISO(e.data);
@@ -460,7 +469,7 @@ export default function CobrancasSemanaPage() {
       if (!b.due) return -1;
       return a.due.getTime() - b.due.getTime();
     });
-  }, [cache.financial, clientsById, motosById, rentalsById, today, snoozeMap]);
+  }, [cache.financial, clientsById, motosById, rentalsById, today, snoozeMap, showVehicleTab, vehicleTab]);
 
   const debtDetailEntries = useMemo(() => {
     if (!debtDetailClientId) return [];
@@ -599,15 +608,23 @@ export default function CobrancasSemanaPage() {
       const due = parseISO(e.dataPrevista || e.data);
       if (!due) continue;
       if (due < monday || due > sunday) continue;
+      let moto = e.motoId || null;
+      if (!moto && e.rentalId) {
+        const r = rentalsById.get(e.rentalId);
+        if (r) moto = r.motoId;
+      }
+      const veic = moto ? motosById.get(moto)?.categoriaVeiculo : null;
+      if (!matchesVehicleTab(veic)) continue;
       bump((e.categoria || "outro").toLowerCase(), e.valor || 0, !!e.pago);
     }
     return m;
-  }, [cache.financial, monday, sunday]);
+  }, [cache.financial, monday, sunday, motosById, rentalsById, showVehicleTab, vehicleTab]);
 
   const aluguelStats = useMemo(() => {
-    const active = cache.rentals.filter((r) => r.status === "ativa");
+    const active = cache.rentals.filter((r) => r.status === "ativa" && matchesVehicleTab(motosById.get(r.motoId)?.categoriaVeiculo));
     const totalActive = active.length;
     const novasNaSemana = cache.rentals.filter((r) => {
+      if (!matchesVehicleTab(motosById.get(r.motoId)?.categoriaVeiculo)) return false;
       const di = parseISO(r.dataInicio);
       return di && di >= monday && di <= sunday;
     }).length;
@@ -623,7 +640,7 @@ export default function CobrancasSemanaPage() {
       valorPendente: aluguelMeta.valor,
       desbalanco: totalActive - totalCobr,
     };
-  }, [cache.rentals, totalsByCat, monday, sunday]);
+  }, [cache.rentals, totalsByCat, monday, sunday, motosById, showVehicleTab, vehicleTab]);
 
   const totalSemanaPendente = weekItems.reduce((s, i) => s + (i.entry.valor || 0), 0);
   const totalAtrasado = overdueVisible.reduce((s, i) => s + calcValorAtualizado(i.entry, i.daysLate), 0);
@@ -651,7 +668,7 @@ export default function CobrancasSemanaPage() {
 
   // Locações ativas sem nenhuma cobrança de aluguel pendente ou em atraso
   const missingRentals = useMemo(() => {
-    const active = cache.rentals.filter(r => r.status === "ativa");
+    const active = cache.rentals.filter(r => r.status === "ativa" && matchesVehicleTab(motosById.get(r.motoId)?.categoriaVeiculo));
     const coveredIds = new Set<string>();
     for (const e of cache.financial) {
       if (e.tipo !== "receita" || e.ignorada || e.categoria !== "aluguel") continue;
@@ -682,7 +699,7 @@ export default function CobrancasSemanaPage() {
         };
       })
       .sort((a, b) => (b.diasSemPagamento ?? 9999) - (a.diasSemPagamento ?? 9999));
-  }, [cache.rentals, cache.financial, clientsById, motosById, monday, sunday, today]);
+  }, [cache.rentals, cache.financial, clientsById, motosById, monday, sunday, today, showVehicleTab, vehicleTab]);
 
   // ── Ações ──────────────────────────────────────────────────────────
   const openConfirm = (item: RowItem) => {
@@ -1382,6 +1399,9 @@ export default function CobrancasSemanaPage() {
             </p>
           </div>
           <div className="flex items-center gap-2">
+            {showVehicleTab && (
+              <VehicleFilterChips value={vehicleTab} onChange={setVehicleTab} />
+            )}
             <Button variant="outline" size="sm" className="h-7 px-2.5 text-[11px] gap-1.5 rounded-md">
               <LayoutDashboard className="h-3 w-3" />
               Painel geral

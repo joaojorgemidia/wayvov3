@@ -61,7 +61,10 @@
       "WebFetch(domain:api-velotrack.s3-website-sa-east-1.amazonaws.com)",
       "Bash(echo \"EXIT:$?\")",
       "Bash(npx eslint *)",
-      "mcp__plugin_supabase_supabase__list_tables"
+      "mcp__plugin_supabase_supabase__list_tables",
+      "mcp__plugin_supabase_supabase__get_project_url",
+      "mcp__plugin_supabase_supabase__get_publishable_keys",
+      "mcp__plugin_supabase_supabase__list_migrations"
     ]
   },
   "hooks": {

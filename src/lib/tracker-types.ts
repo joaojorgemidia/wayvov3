@@ -1,6 +1,6 @@
 // Tipos compartilhados entre os provedores de rastreamento GPS (BrasilSat, Velotrack, ...)
 
-export type TrackerProvider = "brasilsat" | "velotrack" | "gt06";
+export type TrackerProvider = "brasilsat" | "velotrack";
 
 export interface DeviceTrack {
   imei: string;
@@ -8,7 +8,10 @@ export interface DeviceTrack {
   lng: number;
   speed: number;
   course: number;
-  acc: number;               // 1 = motor ligado, 0 = desligado
+  // 1 = motor ligado, 0 = desligado. Opcional: TAGs GT06 avulsas não têm o fio
+  // de ignição lido de forma confiável — nesse caso vem undefined, e a UI evita
+  // afirmar "motor desligado" quando na real não se sabe.
+  acc?: number;
   gpstime: number;           // unix timestamp (ms normalizado)
   statusCode?: string;       // "Moving" | "Stopped" | "Offline"
   statusDuration?: number;   // segundos no status atual
@@ -34,6 +37,12 @@ export interface DeviceInfo {
   deviceType: string;
   icon?: string;
   status?: string;
+  // Vínculo com a moto/carro cadastrado no app — só as TAGs GT06 preenchem
+  // isso (via gt06_devices.moto_id); BrasilSat/Velotrack não têm esse
+  // conceito, o vínculo delas é inferido pelo nome do dispositivo conter a
+  // placa. Usado pra agrupar rastreador principal + TAG backup do mesmo
+  // veículo — ver RastreamentoPage.tsx (vehicleGroups).
+  motoId?: string | null;
 }
 
 export interface AlarmRecord {

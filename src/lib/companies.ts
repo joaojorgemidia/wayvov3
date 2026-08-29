@@ -63,6 +63,25 @@ export const DEFAULT_COBRANCA_CONFIG: CobrancaConfig = {
   jurosMes: 0,
 };
 
+export interface WhatsappConfig {
+  enabled: boolean;
+  provider: "zapi";
+  instanceId?: string;   // ID da instância Z-API
+  token?: string;        // token da instância Z-API
+  clientToken?: string;  // Client-Token da conta Z-API
+  maxMessagesPerClientPerWeek: number;
+  businessHoursStart: number; // hora (0-23) de início do envio automático
+  businessHoursEnd: number;   // hora (0-23) de fim do envio automático
+}
+
+export const DEFAULT_WHATSAPP_CONFIG: WhatsappConfig = {
+  enabled: false,
+  provider: "zapi",
+  maxMessagesPerClientPerWeek: 2,
+  businessHoursStart: 8,
+  businessHoursEnd: 20,
+};
+
 export interface Company {
   id: string;
   nome: string;
@@ -72,6 +91,7 @@ export interface Company {
   cobrancaConfig?: CobrancaConfig | null;
   autentiqueConfig?: AutentiqueConfig | null;
   sicoobConfig?: SicoobConfig | null;
+  whatsappConfig?: WhatsappConfig | null;
 }
 
 const COMPANIES_KEY = "moto-fleet-companies-v1";

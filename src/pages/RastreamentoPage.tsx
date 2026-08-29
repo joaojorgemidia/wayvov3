@@ -5,6 +5,7 @@ import {
   type TrackerProvider, type TrackerDriver, type AnyTrackerToken, type AnyTrackerConfig,
   type DeviceInfo, type DeviceTrack, type PlaybackPoint, type AlarmRecord,
 } from "@/lib/tracker";
+import * as gt06 from "@/lib/gt06";
 import type { KmSyncConfig } from "@/lib/brasilsat";
 import { loadMotos, loadRentals, loadClients, saveMotos } from "@/lib/store";
 import { isPrivacyEnabled, getRealDataCache, useDataCacheSnapshot } from "@/lib/data-cache";
@@ -23,18 +24,26 @@ import {
   MapPin, Wifi, WifiOff, Settings, RefreshCw, Gauge, Clock,
   AlertTriangle, History, Bell, Navigation, Search, X,
   Zap, Battery, Thermometer, Fuel, Pencil, Lock, Unlock, Milestone, Sliders,
-  MessageCircle, ShoppingCart, ExternalLink, LogOut,
+  MessageCircle, ShoppingCart, ExternalLink, LogOut, Satellite, Tag, Plus, Link2, Unlink,
 } from "lucide-react";
 
 // ─── Ícones Leaflet ───────────────────────────────────────────────────────────
-function makeIcon(color: string, small = false) {
+// Rastreador (nuvem): pino redondo com ícone de moto — como já era.
+// TAG (GT06): pino quadrado com borda tracejada + ícone de etiqueta — pra dar
+// pra diferenciar um do outro só de bater o olho no mapa, sem depender da cor
+// (que já é usada pelo status/movimento e não pelo tipo de dispositivo).
+function makeIcon(color: string, small = false, isGt06 = false) {
   const s = small ? 30 : 38;
-  // Ícone de moto (lucide "bike") sobre um pino circular colorido
   const bikeSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="${Math.round(s * 0.6)}" height="${Math.round(s * 0.6)}" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18.5" cy="17.5" r="3.5"/><circle cx="5.5" cy="17.5" r="3.5"/><circle cx="15" cy="5" r="1"/><path d="M12 17.5V14l-3-3 4-3 2 3h2"/></svg>`;
+  const tagSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="${Math.round(s * 0.55)}" height="${Math.round(s * 0.55)}" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z"/><circle cx="7.5" cy="7.5" r="1" fill="white" stroke="none"/></svg>`;
+  const glyph = isGt06 ? tagSvg : bikeSvg;
+  const shapeStyle = isGt06
+    ? "border-radius:8px;border:2.5px dashed white;"
+    : "border-radius:50%;border:2.5px solid white;";
   return L.divIcon({
     className: "",
     html: `<div style="position:relative;width:${s}px;height:${s + 6}px;">
-      <div style="position:absolute;left:0;top:0;width:${s}px;height:${s}px;border-radius:50%;background:${color};border:2.5px solid white;box-shadow:0 3px 8px rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;">${bikeSvg}</div>
+      <div style="position:absolute;left:0;top:0;width:${s}px;height:${s}px;${shapeStyle}background:${color};box-shadow:0 3px 8px rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;">${glyph}</div>
       <div style="position:absolute;left:50%;bottom:0;transform:translateX(-50%);width:0;height:0;border-left:5px solid transparent;border-right:5px solid transparent;border-top:7px solid ${color};filter:drop-shadow(0 2px 2px rgba(0,0,0,.35));"></div>
     </div>`,
     iconSize: [s, s + 6],
@@ -43,12 +52,30 @@ function makeIcon(color: string, small = false) {
   });
 }
 
-function deviceIcon(t: DeviceTrack) {
+function escapeHtml(s: string) {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+// Legenda do pino no mapa: prefixa o nome com o tipo (cor + palavra), igual ao
+// selo já usado na lista/painel — o formato do próprio pino (redondo vs
+// quadrado tracejado) é sutil demais pra notar de relance num mapa cheio de
+// ruas, então aqui repete a informação de forma explícita e legível.
+function tooltipHtml(name: string, isGt06: boolean) {
+  const label = isGt06
+    ? `<span style="color:#1d4ed8;font-weight:700;">TAG</span>`
+    : `<span style="color:#047857;font-weight:700;">Rastreador</span>`;
+  return `${label} · ${escapeHtml(name)}`;
+}
+
+function deviceIcon(t: DeviceTrack, isGt06 = false) {
   const sc = (t.statusCode ?? "").toLowerCase();
-  if (sc.includes("offline")) return makeIcon("#6b7280");
-  if (t.speed > 0) return makeIcon("#22c55e");
-  if (t.acc === 1) return makeIcon("#f59e0b");
-  return makeIcon("#6b7280");
+  if (sc.includes("offline")) return makeIcon("#6b7280", false, isGt06);
+  if (t.speed > 0) return makeIcon("#22c55e", false, isGt06);
+  if (t.acc === 1) return makeIcon("#f59e0b", false, isGt06);
+  // acc undefined = fonte não sabe informar o motor (TAGs GT06) — cor própria
+  // pra não ficar visualmente idêntico ao cinza de "offline".
+  if (t.acc == null) return makeIcon("#3b82f6", false, isGt06);
+  return makeIcon("#6b7280", false, isGt06);
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -64,6 +91,10 @@ function fmtDuration(sec: number): string {
   const s = sec % 60;
   return h > 0 ? `${h}h${m}m${s}s` : m > 0 ? `${m}m${s}s` : `${s}s`;
 }
+// Acima disso, o "há Xh" no canto da lista fica destacado em âmbar — sinal de
+// que o rastreador pode estar sem sinal, mesmo que o status ainda diga
+// "Parado" (o provedor de nuvem às vezes demora a marcar como Offline).
+const STALE_UPDATE_MS = 30 * 60 * 1000;
 function timeSince(ts: number): string {
   if (!ts) return "—";
   const diff = Math.floor((Date.now() - ts) / 1000);
@@ -81,7 +112,25 @@ function statusLabel(t: DeviceTrack): { label: string; color: string } {
   if (sc.includes("offline")) return { label: "Offline", color: "#6b7280" };
   if (t.speed > 0) return { label: `Em movimento · ${fmtSpeed(t.speed)}`, color: "#22c55e" };
   if (t.acc === 1) return { label: "Parado · motor ligado", color: "#f59e0b" };
+  // acc undefined (TAGs GT06, sem leitura confiável de ignição) — não afirma
+  // "motor desligado" quando não se sabe, só "Parado".
+  if (t.acc == null) return { label: "Parado", color: "#3b82f6" };
   return { label: "Parado · motor desligado", color: "#6b7280" };
+}
+
+// ─── Selo "Rastreador" (nuvem, principal) vs "TAG" (GT06, backup) — deixa
+// explícito o tipo de dispositivo tanto na lista quanto no painel de detalhes,
+// em vez de precisar inferir pelo ícone/nome. ──────────────────────────────
+function DeviceTypeBadge({ isGt06 }: { isGt06: boolean }) {
+  return isGt06 ? (
+    <span className="inline-flex items-center gap-1 text-[10px] font-semibold rounded px-1.5 py-0.5 bg-blue-500/15 text-blue-700 dark:text-blue-400 border border-blue-500/30 shrink-0">
+      <Tag className="h-2.5 w-2.5" /> TAG
+    </span>
+  ) : (
+    <span className="inline-flex items-center gap-1 text-[10px] font-semibold rounded px-1.5 py-0.5 bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border border-emerald-500/30 shrink-0">
+      <Satellite className="h-2.5 w-2.5" /> Rastreador
+    </span>
+  );
 }
 
 // ─── Mapa Leaflet (puro) ──────────────────────────────────────────────────────
@@ -125,11 +174,17 @@ interface DeviceDetailProps {
   onBlock: () => void;
   onUnblock: () => void;
   onUpdateKm: () => void;
+  // Só TAGs GT06 têm esse controle — rastreador de nuvem não tem o conceito de
+  // "vínculo" no app, ele é inferido pelo nome/placa cadastrados na BrasilSat/Velotrack.
+  motoOptions: { id: string; placa: string; modelo: string }[];
+  onLinkMoto: (motoId: string | null) => void;
+  linkMotoLoading: boolean;
 }
 
 function DeviceDetail({
   track, device, displayName, displayImei, relayLoading, showKm, showRelay,
   onClose, onRename, onBlock, onUnblock, onUpdateKm,
+  motoOptions, onLinkMoto, linkMotoLoading,
 }: DeviceDetailProps) {
   const { color } = statusLabel(track);
   const isBlocked = track.relay === 0;
@@ -149,10 +204,25 @@ function DeviceDetail({
     ? `Ligado${track.accDuration ? ` (${fmtDuration(track.accDuration)})` : ""}`
     : `Desligado${track.accDuration ? ` (${fmtDuration(track.accDuration)})` : ""}`;
 
+  const updateIsStale = Date.now() - track.gpstime > STALE_UPDATE_MS;
+
   type Row = { label: string; value: React.ReactNode; icon?: React.ReactNode };
   const rows: Row[] = [
+    {
+      label: "Última atualização",
+      value: (
+        <span className={updateIsStale ? "text-amber-600 dark:text-amber-500 font-semibold" : undefined}>
+          há {timeSince(track.gpstime)} ({fmtTime(track.gpstime)})
+        </span>
+      ),
+      icon: <Clock className="h-3.5 w-3.5" />,
+    },
     ...(track.alarm ? [{ label: "Selecionar", value: track.alarm }] : []),
-    { label: "Motor", value: motorStr, icon: <Zap className="h-3.5 w-3.5" /> },
+    // acc undefined = fonte não informa motor de forma confiável (TAGs GT06) —
+    // some a linha inteira em vez de mostrar "Desligado" como se fosse um dado real.
+    ...(track.acc != null
+      ? [{ label: "Motor", value: motorStr, icon: <Zap className="h-3.5 w-3.5" /> }]
+      : []),
     ...(track.mileage != null
       ? [{ label: "Quilometragem", value: `${track.mileage.toFixed(2)}km`, icon: <Milestone className="h-3.5 w-3.5" /> }]
       : []),
@@ -198,8 +268,9 @@ function DeviceDetail({
       <div className="flex items-start justify-between px-3 py-2.5 border-b bg-muted/30">
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1.5 flex-wrap">
+            <DeviceTypeBadge isGt06={device.deviceType === "GT06"} />
             <span className="font-bold text-sm text-primary">{displayName}</span>
-            {device.deviceType && (
+            {device.deviceType && device.deviceType !== "GT06" && (
               <span className="text-[11px] text-muted-foreground">({device.deviceType})</span>
             )}
             <button
@@ -215,6 +286,30 @@ function DeviceDetail({
           <X className="h-4 w-4" />
         </button>
       </div>
+
+      {/* Veículo vinculado — só TAGs GT06 (rastreador de nuvem não tem esse conceito) */}
+      {device.deviceType === "GT06" && (
+        <div className="px-3 py-2 border-b flex items-center gap-2 bg-muted/10">
+          <Link2 className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+          <Select
+            value={device.motoId ?? "none"}
+            onValueChange={v => onLinkMoto(v === "none" ? null : v)}
+            disabled={linkMotoLoading}
+          >
+            <SelectTrigger className="h-7 text-xs flex-1">
+              <SelectValue placeholder="Sem veículo vinculado" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="none">
+                <span className="flex items-center gap-1.5"><Unlink className="h-3 w-3" /> Sem veículo vinculado</span>
+              </SelectItem>
+              {motoOptions.map(m => (
+                <SelectItem key={m.id} value={m.id}>{m.placa} · {m.modelo}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      )}
 
       {/* Status */}
       <div className="px-3 py-2 border-b flex items-center gap-2">
@@ -295,9 +390,39 @@ export default function RastreamentoPage() {
 
   const [tracks, setTracks]             = useState<DeviceTrack[]>([]);
   const [loadingTrack, setLoadingTrack] = useState(false);
+
+  // TAGs GT06 (avulsas) — fonte separada da nuvem, sempre buscada pra empresa
+  // ativa (sem "conectar"), combinada com auth/tracks só na camada de exibição
+  // (ver allDevices/allTracks mais abaixo).
+  const [gt06Devices, setGt06Devices] = useState<DeviceInfo[]>([]);
+  const [gt06Tracks, setGt06Tracks]   = useState<DeviceTrack[]>([]);
+
+  // ── Combinação nuvem + GT06 (só na camada de exibição) ────────────────────
+  // auth/tracks continuam descrevendo só a conexão de nuvem (BrasilSat/
+  // Velotrack) — usados sozinhos em tudo que é ação específica de nuvem (km,
+  // relé, playback, alarmes). allDevices/allTracks é só pra listar/mostrar.
+  // Precisa vir logo após os states acima (não mais abaixo, perto do render):
+  // useEffects mais adiante referenciam allTracks na própria lista de
+  // dependências, que é avaliada de forma síncrona durante o render — declarar
+  // depois causa "Cannot access before initialization".
+  const allDevices = React.useMemo(
+    () => [...(auth?.devices ?? []), ...gt06Devices],
+    [auth, gt06Devices],
+  );
+  const allTracks = React.useMemo(
+    () => [...tracks, ...gt06Tracks],
+    [tracks, gt06Tracks],
+  );
+  const gt06ImeiSet = React.useMemo(
+    () => new Set(gt06Devices.map(d => d.imei)),
+    [gt06Devices],
+  );
+
   const [selectedImei, setSelectedImei] = useState<string | null>(null);
   const [deviceSearch, setDeviceSearch] = useState("");
   const [deviceFilter, setDeviceFilter] = useState<"all" | "online" | "offline">("all");
+  // Filtro por tipo de dispositivo — afeta lista E mapa (ver pickForTypeFilter).
+  const [deviceTypeFilter, setDeviceTypeFilter] = useState<"all" | "rastreador" | "tag">("all");
 
   const [customNames, setCustomNames] = useState<Record<string, string>>({});
 
@@ -309,6 +434,15 @@ export default function RastreamentoPage() {
   const [kmOpen, setKmOpen]           = useState(false);
   const [kmValue, setKmValue]         = useState("");
   const [relayLoading, setRelayLoading] = useState<Set<string>>(new Set());
+
+  // ── Cadastro de nova TAG GT06 (vincula um IMEI já conectado no servidor à empresa) ─
+  const [registerTagOpen, setRegisterTagOpen]     = useState(false);
+  const [registerImei, setRegisterImei]           = useState("");
+  const [registerMotoId, setRegisterMotoId]       = useState<string>("");
+  const [registerApelido, setRegisterApelido]     = useState("");
+  const [registerLoading, setRegisterLoading]     = useState(false);
+  // ── Trocar o veículo vinculado a uma TAG que a empresa já tem (painel de detalhes) ─
+  const [linkMotoLoading, setLinkMotoLoading]     = useState(false);
 
   const [activeTab, setActiveTab] = useState("mapa");
   const [mapReady, setMapReady]   = useState(false);
@@ -322,7 +456,14 @@ export default function RastreamentoPage() {
   const histMapRef      = useRef<L.Map | null>(null);
   const histLayerRef    = useRef<L.LayerGroup | null>(null);
   const syncedKmRef     = useRef<Map<string, number>>(new Map());
+  // Quantas vezes o push de KM falhou por dispositivo nesta sessão (aba aberta)
+  // — depois de 3 falhas seguidas pro mesmo imei, para de tentar E de avisar
+  // por toast (senão, um rastreador com erro persistente no BrasilSat — ex.:
+  // "send command fail" — spamma a mesma mensagem a cada ciclo de polling).
+  const kmSyncFailuresRef = useRef<Map<string, number>>(new Map());
+  const KM_SYNC_MAX_RETRIES = 3;
   const fetchTracksRef  = useRef<(() => Promise<void>) | null>(null);
+  const fetchAllRef     = useRef<(() => Promise<void>) | null>(null);
 
   // Histórico
   const [histImei, setHistImei]   = useState("");
@@ -378,17 +519,104 @@ export default function RastreamentoPage() {
     return map;
   }, [tracks, auth, privacy]); // recompute when tracks/auth refresh (cheap)
 
-  // ── Locatário atual do dispositivo (via placa → moto → locação ativa) ────
-  const getRenterName = useCallback((imei: string, trackDeviceName?: string): string => {
-    // Sempre usa o nome REAL do dispositivo da BrasilSat para o lookup
-    const realName = (auth?.devices.find(d => d.imei === imei)?.deviceName || trackDeviceName || customNames[imei] || imei).toUpperCase();
-    const norm = normalizePlate(realName);
-    if (!norm) return "";
-    for (const [plate, info] of activeRentalsByPlate) {
-      if (norm.includes(plate)) return info.renter;
+  // ── Agrupamento por veículo: rastreador principal (nuvem) + TAG backup (GT06) ─
+  // Na operação real, uma moto pode ter os dois — o rastreador de nuvem é o
+  // principal, a TAG GT06 é um backup pro caso o principal falhar. Isso junta
+  // os dois numa única "linha" por veículo em vez de mostrar como dispositivos
+  // não relacionados (ver lista/mapa mais abaixo, que passam a iterar
+  // vehicleGroups em vez de allDevices/allTracks direto).
+  interface VehicleGroup {
+    key: string; // `moto:<id>` quando casa com uma moto cadastrada, senão `imei:<imei>`
+    plate: string | null;
+    renter: string | null;
+    primary: { info: DeviceInfo; track: DeviceTrack | null } | null; // nuvem
+    backup: { info: DeviceInfo; track: DeviceTrack | null } | null;  // GT06
+  }
+  const vehicleGroups = React.useMemo<VehicleGroup[]>(() => {
+    const motos = getRealDataCache().motos;
+    // Todas as motos com placa (não só as com locação ativa) — uma TAG backup
+    // pode estar numa moto parada no pátio, sem locação no momento.
+    const motosByPlate = new Map<string, { id: string; placa: string }>();
+    for (const m of motos) {
+      if (m.placa) motosByPlate.set(normalizePlate(m.placa), { id: m.id, placa: m.placa });
     }
-    return "";
-  }, [activeRentalsByPlate, auth, customNames]);
+    const findMoto = (realName: string) => {
+      const norm = normalizePlate(realName);
+      if (!norm) return null;
+      for (const [plateNorm, moto] of motosByPlate) {
+        if (norm.includes(plateNorm)) return moto;
+      }
+      return null;
+    };
+    const renterFor = (plate: string | null) => {
+      if (!plate) return null;
+      return activeRentalsByPlate.get(normalizePlate(plate))?.renter ?? null;
+    };
+
+    const groups = new Map<string, VehicleGroup>();
+
+    // 1) Cada dispositivo de nuvem sempre é o "primary" de um grupo.
+    for (const dev of auth?.devices ?? []) {
+      const track = tracks.find(t => t.imei === dev.imei) ?? null;
+      const realName = dev.deviceName || track?.deviceName || dev.imei;
+      const moto = findMoto(realName);
+      const key = moto ? `moto:${moto.id}` : `imei:${dev.imei}`;
+      groups.set(key, {
+        key, plate: moto?.placa ?? null, renter: renterFor(moto?.placa ?? null),
+        primary: { info: dev, track }, backup: null,
+      });
+    }
+
+    // 2) Cada TAG GT06: vira "backup" de um grupo já existente (mesma moto),
+    // ou "primary" do próprio grupo se não houver rastreador de nuvem casando
+    // com essa moto (ou a TAG ainda não estiver vinculada a nenhuma moto).
+    for (const dev of gt06Devices) {
+      const track = gt06Tracks.find(t => t.imei === dev.imei) ?? null;
+      const key = dev.motoId ? `moto:${dev.motoId}` : `imei:${dev.imei}`;
+      const existing = groups.get(key);
+      if (existing?.primary) {
+        existing.backup = { info: dev, track };
+      } else {
+        const moto = dev.motoId ? motos.find(m => m.id === dev.motoId) : null;
+        groups.set(key, {
+          key, plate: moto?.placa ?? null, renter: renterFor(moto?.placa ?? null),
+          primary: { info: dev, track }, backup: null,
+        });
+      }
+    }
+
+    return Array.from(groups.values());
+  }, [auth, tracks, gt06Devices, gt06Tracks, activeRentalsByPlate]);
+
+  // Dispositivo "efetivo" de um grupo pra exibição: principal se existir, senão o backup.
+  const effectiveOf = (g: VehicleGroup) => g.primary ?? g.backup;
+  // Track "efetivo" pro mapa: usa o principal só se ele tiver posição válida e
+  // não estiver offline — senão cai pro backup (é o "TAG assume se o principal
+  // cair" combinado com o usuário).
+  const effectiveMapTrack = (g: VehicleGroup): DeviceTrack | null => {
+    const p = g.primary?.track;
+    const pOk = p && p.lat && p.lng && !(p.statusCode ?? "").toLowerCase().includes("offline");
+    if (pOk) return p!;
+    const b = g.backup?.track;
+    if (b && b.lat && b.lng) return b;
+    return p ?? b ?? null;
+  };
+  // Dispositivo do grupo que corresponde ao filtro "só Rastreadores"/"só TAGs"
+  // (lista de dispositivos, ver deviceTypeFilter). "all" mantém o comportamento
+  // padrão (effectiveOf); "rastreador" só considera o principal se ele NÃO for
+  // GT06 (esconde o veículo inteiro se só tiver TAG); "tag" só considera um
+  // dispositivo GT06, seja ele o principal (grupo sem rastreador de nuvem) ou o
+  // backup do grupo.
+  const pickForTypeFilter = (g: VehicleGroup): { info: DeviceInfo; track: DeviceTrack | null } | null => {
+    if (deviceTypeFilter === "all") return effectiveOf(g);
+    const primaryIsGt06 = g.primary ? gt06ImeiSet.has(g.primary.info.imei) : false;
+    if (deviceTypeFilter === "rastreador") {
+      return g.primary && !primaryIsGt06 ? g.primary : null;
+    }
+    // deviceTypeFilter === "tag"
+    if (g.primary && primaryIsGt06) return g.primary;
+    return g.backup ?? null;
+  };
 
   // ── Token ─────────────────────────────────────────────────────────────────
   const getValidToken = useCallback(async (): Promise<AnyTrackerToken> => {
@@ -396,17 +624,13 @@ export default function RastreamentoPage() {
     if (auth && Date.now() < auth.token.expires_at) return auth.token;
     const saved = driver.loadConfig(companyId);
     if (!saved) throw new Error("Configure as credenciais primeiro");
-    const token = await driver.authenticate({ ...saved, companyId });
+    const token = await driver.authenticate(saved);
     setAuth(prev => prev ? { ...prev, token } : null);
     return token;
   }, [auth, companyId, driver]);
 
   // ── Sincronização km rastreador ↔ sistema ────────────────────────────────
   const syncKm = useCallback(async (freshTracks: DeviceTrack[]): Promise<boolean> => {
-    // GT06 não reporta km rodado (protocolo básico não tem esse dado) — sem isso,
-    // a chamada abaixo cairia no catch de driver.setMileage() (que lança erro de
-    // propósito) a cada ciclo de fetch, gerando toast de erro sem motivo real.
-    if (provider === "gt06") return false;
     // Usa dados REAIS para que o sync funcione mesmo com modo demo ativo
     const motos = getRealDataCache().motos;
     if (!driver || !motos.length || !freshTracks.length) return false;
@@ -420,7 +644,13 @@ export default function RastreamentoPage() {
 
     for (const track of freshTracks) {
       const realName = (auth?.devices.find(d => d.imei === track.imei)?.deviceName || track.deviceName || customNames[track.imei] || track.imei).toUpperCase();
-      const moto = motos.find(m => m.placa && realName.includes(m.placa.toUpperCase()));
+      // Compara só letras/números (sem traço/espaço) — o nome cadastrado no
+      // rastreador nem sempre usa a mesma formatação da placa no cadastro
+      // (ex.: "SCF-3D55" no sistema vs "SCF3D55" na BrasilSat), então uma
+      // comparação literal (sem normalizar) deixava de bater e o km nunca
+      // sincronizava pra placas com traço/espaço.
+      const normalizedRealName = normalizePlate(realName);
+      const moto = motos.find(m => m.placa && normalizedRealName.includes(normalizePlate(m.placa)));
       if (!moto) continue;
 
       const trackerKm = track.mileage ?? 0;
@@ -449,6 +679,10 @@ export default function RastreamentoPage() {
         }
       } catch { /* ignora falha de localStorage */ }
 
+      // Já falhou demais pra este dispositivo nesta sessão — para de tentar
+      // (e de avisar) até a página ser recarregada.
+      if ((kmSyncFailuresRef.current.get(track.imei) ?? 0) >= KM_SYNC_MAX_RETRIES) continue;
+
       if (kmAtual > trackerKm) {
         // Sistema tem km maior (ex: troca de óleo registrada): push para o rastreador
         try {
@@ -459,8 +693,12 @@ export default function RastreamentoPage() {
           try { localStorage.setItem(persistKey, String(targetKm)); } catch { /* ignora */ }
           anySynced = true;
         } catch (e: any) {
-          console.warn("syncKm:", e.message);
-          toast.error(`Falha ao sincronizar KM do rastreador ${getDisplayName(track.imei)}: ${e.message}`);
+          const failCount = (kmSyncFailuresRef.current.get(track.imei) ?? 0) + 1;
+          kmSyncFailuresRef.current.set(track.imei, failCount);
+          console.warn(`syncKm (falha ${failCount}/${KM_SYNC_MAX_RETRIES}):`, e.message);
+          if (failCount <= KM_SYNC_MAX_RETRIES) {
+            toast.error(`Falha ao sincronizar KM do rastreador ${getDisplayName(track.imei)}: ${e.message}`);
+          }
         }
       } else {
         // Rastreador igual ou maior: marca targetKm como visto para evitar re-checagem
@@ -479,7 +717,7 @@ export default function RastreamentoPage() {
     }
 
     return anySynced;
-  }, [getValidToken, customNames, getDisplayName, auth, companyId, driver, provider]);
+  }, [getValidToken, customNames, getDisplayName, auth, companyId, driver]);
 
   // ── Conexão ────────────────────────────────────────────────────────────────
   const connect = useCallback(async (providerArg: TrackerProvider, cfg: AnyTrackerConfig) => {
@@ -489,11 +727,7 @@ export default function RastreamentoPage() {
     }
     setConnecting(true);
     try {
-      // companyId sempre vai junto — a maioria dos provedores ignora esse campo
-      // extra, mas o GT06 precisa dele pra filtrar a tabela pela empresa ATIVA
-      // (um usuário pode administrar mais de uma empresa; sem isso, apareceriam
-      // dispositivos de outra empresa misturados — ver gt06.ts).
-      const token   = await drv.authenticate({ ...cfg, companyId });
+      const token   = await drv.authenticate(cfg);
       const devices = await drv.getDeviceList(token);
       setProvider(providerArg);
       setAuth({ token, devices });
@@ -529,31 +763,84 @@ export default function RastreamentoPage() {
     }
   }, [auth, getValidToken, syncKm, driver]);
 
-  // ── Mantém ref da função atualizada (evita stale closure no setInterval) ──
+  // ── Recarrega a lista de TAGs GT06 da empresa (após cadastrar/vincular uma nova) ─
+  const refetchGt06Devices = useCallback(async () => {
+    if (!companyId) return;
+    try {
+      const devices = await gt06.getDeviceList(companyId);
+      setGt06Devices(devices);
+    } catch (e: any) {
+      console.warn("[gt06] getDeviceList:", e.message);
+    }
+  }, [companyId]);
+
+  // ── Buscar posições das TAGs GT06 (sem login — sempre roda p/ a empresa ativa) ─
+  const fetchGt06Tracks = useCallback(async () => {
+    if (!companyId) return;
+    try {
+      const result = await gt06.trackDevices(companyId);
+      setGt06Tracks(result);
+    } catch (e: any) {
+      console.warn("[gt06] trackDevices:", e.message);
+    }
+  }, [companyId]);
+
+  // ── Busca combinada (nuvem + GT06) — usada pelo polling e pelo botão manual ──
+  const fetchAll = useCallback(async () => {
+    await Promise.all([
+      auth && driver ? fetchTracks() : Promise.resolve(),
+      fetchGt06Tracks(),
+    ]);
+  }, [auth, driver, fetchTracks, fetchGt06Tracks]);
+
+  // ── Mantém refs atualizadas (evita stale closure no setInterval) ──────────
   useEffect(() => { fetchTracksRef.current = fetchTracks; }, [fetchTracks]);
+  useEffect(() => { fetchAllRef.current = fetchAll; }, [fetchAll]);
 
   // ── Atualiza marcadores no mapa ──────────────────────────────────────────
+  // Um marcador por VEÍCULO (não por dispositivo cru): usa a posição do
+  // rastreador principal, ou da TAG backup se o principal estiver sem sinal
+  // (ver effectiveMapTrack) — assim o veículo não some do mapa só porque o
+  // principal caiu, e não aparecem 2 pinos pro mesmo veículo.
   useEffect(() => {
     const map = trackMapRef.current;
     if (!map) return;
-    const valid = tracks.filter(t => t.lat && t.lng);
+    const byImei = new Map<string, DeviceTrack>();
+    for (const g of vehicleGroups) {
+      // "all" mostra o efetivo (principal, com fallback pro backup se cair);
+      // com um filtro de tipo ativo, mostra só o dispositivo daquele tipo —
+      // sem fallback, senão um filtro "só TAGs" acabaria mostrando rastreador.
+      const t = deviceTypeFilter === "all" ? effectiveMapTrack(g) : (pickForTypeFilter(g)?.track ?? null);
+      if (t && t.lat && t.lng) byImei.set(t.imei, t);
+    }
+    // Se o usuário clicou especificamente na TAG backup (que normalmente fica
+    // escondida atrás do marcador do principal — só um pino por veículo),
+    // garante que o pino dela apareça mesmo assim enquanto ela estiver
+    // selecionada, senão o mapa centraliza num lugar sem nenhum marcador.
+    if (selectedImei && !byImei.has(selectedImei)) {
+      const selected = allTracks.find(t => t.imei === selectedImei);
+      if (selected && selected.lat && selected.lng) byImei.set(selectedImei, selected);
+    }
+    const valid = Array.from(byImei.values());
     const seen = new Set<string>();
     let isFirst = trackMarkersRef.current.size === 0 && valid.length > 0;
 
     valid.forEach(t => {
       seen.add(t.imei);
       const name = getDisplayName(t.imei, t.deviceName);
-      const icon = deviceIcon(t);
+      const isGt06 = gt06ImeiSet.has(t.imei);
+      const icon = deviceIcon(t, isGt06);
+      const tooltip = tooltipHtml(name, isGt06);
       const existing = trackMarkersRef.current.get(t.imei);
       if (existing) {
         existing.setLatLng([t.lat, t.lng]);
         existing.setIcon(icon);
-        (existing as any)._tooltip && existing.setTooltipContent(name);
+        (existing as any)._tooltip && existing.setTooltipContent(tooltip);
       } else {
         const m = L.marker([t.lat, t.lng], { icon })
           .addTo(map)
           .on("click", () => setSelectedImei(t.imei));
-        m.bindTooltip(name, { permanent: true, direction: "top", offset: [0, -24], className: "leaflet-tooltip-device" });
+        m.bindTooltip(tooltip, { permanent: true, direction: "top", offset: [0, -24], className: "leaflet-tooltip-device" });
         trackMarkersRef.current.set(t.imei, m);
       }
     });
@@ -566,12 +853,13 @@ export default function RastreamentoPage() {
       const bounds = L.latLngBounds(valid.map(t => [t.lat, t.lng] as [number, number]));
       map.fitBounds(bounds, { padding: [48, 48], maxZoom: 16 });
     }
-  }, [tracks, getDisplayName, mapReady]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [vehicleGroups, getDisplayName, mapReady, deviceTypeFilter, selectedImei, allTracks, gt06ImeiSet]);
 
   // ── Centraliza no dispositivo selecionado ────────────────────────────────
   useEffect(() => {
     if (!selectedImei) return;
-    const t = tracks.find(t => t.imei === selectedImei);
+    const t = allTracks.find(t => t.imei === selectedImei);
     if (!t?.lat || !t?.lng) return;
     // Delay garante que invalidateSize da troca de aba já ocorreu
     const id = setTimeout(() => {
@@ -579,13 +867,14 @@ export default function RastreamentoPage() {
       if (map) map.setView([t.lat, t.lng], Math.max(map.getZoom(), 15), { animate: true });
     }, 80);
     return () => clearTimeout(id);
-  }, [selectedImei, tracks]);
+  }, [selectedImei, allTracks]);
 
-  // ── GT06 não tem histórico/alarmes (fora do escopo v1) — as abas somem da
-  // barra, então garante que a aba ativa nunca fica "presa" numa delas ──────
+  // ── Histórico/Alarmes exigem um provedor de nuvem conectado (GT06 não tem
+  // essas APIs) — sem isso a aba some da barra, então garante que a aba ativa
+  // nunca fica "presa" numa delas quando não há mais provedor de nuvem ───────
   useEffect(() => {
-    if (provider === "gt06" && activeTab !== "mapa") setActiveTab("mapa");
-  }, [provider, activeTab]);
+    if (!driver && activeTab !== "mapa") setActiveTab("mapa");
+  }, [driver, activeTab]);
 
   // ── invalidateSize ao trocar de aba ─────────────────────────────────────
   useEffect(() => {
@@ -596,21 +885,23 @@ export default function RastreamentoPage() {
     return () => clearTimeout(id);
   }, [activeTab]);
 
-  // Intervalo dinâmico: mais rápido quando há dispositivos em movimento
-  const anyMoving = tracks.some(t => (t.speed ?? 0) > 0);
+  // Intervalo dinâmico: mais rápido quando há dispositivos em movimento (nuvem ou GT06)
+  const anyMoving = tracks.some(t => (t.speed ?? 0) > 0) || gt06Tracks.some(t => (t.speed ?? 0) > 0);
   const refreshSecs = anyMoving ? REFRESH_SECS_MOVING : REFRESH_SECS_IDLE;
   const refreshSecsRef = useRef(refreshSecs);
   useEffect(() => { refreshSecsRef.current = refreshSecs; }, [refreshSecs]);
 
   // ── Auto-refresh com countdown ────────────────────────────────────────────
+  // Roda sempre que há empresa ativa — GT06 não depende de conexão de nuvem
+  // (auth), então não faz mais sentido gatear o polling só por ela.
   useEffect(() => {
-    if (!auth) return;
-    fetchTracks();
+    if (!companyId) return;
+    fetchAll();
     setCountdown(refreshSecsRef.current);
     const tickId = setInterval(() => {
       setCountdown(c => {
         if (c <= 1) {
-          fetchTracksRef.current?.();
+          fetchAllRef.current?.();
           return refreshSecsRef.current;
         }
         // Se mudou para modo "movimento" e o countdown atual está acima do novo limite, reduz
@@ -619,7 +910,7 @@ export default function RastreamentoPage() {
     }, 1000);
     return () => clearInterval(tickId);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [auth]);
+  }, [companyId, auth]);
 
   // ── Histórico ─────────────────────────────────────────────────────────────
   const loadPlayback = async () => {
@@ -679,22 +970,33 @@ export default function RastreamentoPage() {
     // Desconecta e limpa tudo da empresa anterior
     setAuth(null);
     setTracks([]);
+    setGt06Devices([]);
+    setGt06Tracks([]);
     setSelectedImei(null);
     syncedKmRef.current.clear();
     trackMarkersRef.current.forEach(m => m.remove());
     trackMarkersRef.current.clear();
 
-    // Descobre o provedor escolhido pela empresa (ou nenhum, se ainda não configurado)
+    // GT06 (TAGs avulsas) sempre carrega pra empresa ativa, independente de
+    // haver rastreador de nuvem conectado — não é um "provedor" que se escolhe,
+    // é um registro direto no banco já isolado por empresa via RLS (gt06.ts).
+    let cancelled = false;
+    gt06.getDeviceList(companyId)
+      .then(devices => { if (!cancelled) setGt06Devices(devices); })
+      .catch(e => console.warn("[gt06] getDeviceList:", e.message));
+    const gt06Names = gt06.loadDeviceNames(companyId);
+
+    // Descobre o provedor de nuvem escolhido pela empresa (ou nenhum, se ainda não configurado)
     const savedProvider = loadTrackerProvider(companyId);
     setProvider(savedProvider);
     setDialogProvider(savedProvider ?? "brasilsat");
 
     if (!savedProvider) {
       setConfig({});
-      setCustomNames({});
+      setCustomNames(gt06Names);
       setKmConfig({ marginKm: 0 });
       setKmMarginInput("0");
-      return; // mostra a tela de boas-vindas com escolha de provedor
+      return () => { cancelled = true; }; // mostra TAGs GT06 (se houver) + opção de conectar um provedor de nuvem
     }
 
     const drv = DRIVERS[savedProvider];
@@ -702,7 +1004,7 @@ export default function RastreamentoPage() {
     setConfig(savedCfg ?? {});
 
     const savedNames = drv.loadDeviceNames(companyId);
-    setCustomNames(savedNames);
+    setCustomNames({ ...gt06Names, ...savedNames });
 
     const savedKmCfg = drv.loadKmSyncConfig(companyId);
     setKmConfig(savedKmCfg);
@@ -710,21 +1012,78 @@ export default function RastreamentoPage() {
 
     if (savedCfg) connect(savedProvider, savedCfg);
     // Sem else: empresa com provedor escolhido mas sem credenciais mostra o formulário de conexão
+    return () => { cancelled = true; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [companyId]);
 
   // ── Ações de dispositivo ──────────────────────────────────────────────────
   const handleRename = () => {
-    if (!selectedImei || !driver) return;
+    if (!selectedImei) return;
     const name = renameValue.trim();
     if (!name) { toast.error("Informe um nome"); return; }
-    driver.saveDeviceName(companyId, selectedImei, name);
-    const updated = driver.loadDeviceNames(companyId);
+    const isGt06Selected = gt06Devices.some(d => d.imei === selectedImei);
+    if (isGt06Selected) {
+      gt06.saveDeviceName(companyId, selectedImei, name);
+    } else if (driver) {
+      driver.saveDeviceName(companyId, selectedImei, name);
+    } else {
+      return;
+    }
+    // Reconstrói o mapa combinado (GT06 + nuvem, se houver) pra refletir o rename.
+    const updated = { ...gt06.loadDeviceNames(companyId), ...(driver?.loadDeviceNames(companyId) ?? {}) };
     setCustomNames(updated);
     const marker = trackMarkersRef.current.get(selectedImei);
-    marker?.setTooltipContent(name);
+    marker?.setTooltipContent(tooltipHtml(name, isGt06Selected));
     setRenameOpen(false);
     toast.success("Nome atualizado");
+  };
+
+  // Reivindica uma TAG GT06 já conectada no servidor (por IMEI) pra empresa
+  // atual, com um veículo/apelido opcionais já na hora do cadastro.
+  const handleRegisterTag = async () => {
+    const imei = registerImei.trim();
+    if (!imei) { toast.error("Informe o IMEI da TAG"); return; }
+    setRegisterLoading(true);
+    try {
+      const claimed = await gt06.claimDevice(companyId, imei, {
+        motoId: registerMotoId || null,
+        apelido: registerApelido,
+      });
+      if (!claimed) {
+        const already = await gt06.deviceBelongsToCompany(companyId, imei);
+        toast.error(
+          already
+            ? "Esse IMEI já está cadastrado nessa empresa."
+            : "IMEI não encontrado — confirme que a TAG está ligada e já mandou algum sinal (ou se já pertence a outra empresa).",
+        );
+        return;
+      }
+      await refetchGt06Devices();
+      toast.success("TAG vinculada com sucesso");
+      setRegisterTagOpen(false);
+      setRegisterImei("");
+      setRegisterMotoId("");
+      setRegisterApelido("");
+    } catch (e: any) {
+      toast.error(e.message ?? "Erro ao cadastrar TAG");
+    } finally {
+      setRegisterLoading(false);
+    }
+  };
+
+  // Troca (ou remove) o veículo vinculado a uma TAG que a empresa já possui —
+  // usado no painel de detalhes, pra reorganizar backup ↔ veículo sem SQL.
+  const handleLinkMoto = async (imei: string, motoId: string | null) => {
+    setLinkMotoLoading(true);
+    try {
+      await gt06.linkDeviceToMoto(companyId, imei, motoId);
+      await refetchGt06Devices();
+      toast.success(motoId ? "Veículo vinculado" : "Vínculo removido");
+    } catch (e: any) {
+      toast.error(e.message ?? "Erro ao vincular veículo");
+    } finally {
+      setLinkMotoLoading(false);
+    }
   };
 
   const handleUpdateKm = async () => {
@@ -810,25 +1169,46 @@ export default function RastreamentoPage() {
     setConfigOpen(false);
   };
 
-  // ── Listas filtradas ──────────────────────────────────────────────────────
-  const onlineCount  = tracks.filter(t => !(t.statusCode ?? "").toLowerCase().includes("offline")).length;
-  const offlineCount = (auth?.devices.length ?? 0) - onlineCount;
+  // ── Listas filtradas (por veículo, não por dispositivo cru) ───────────────
+  // Offline só quando NENHUM dos dois (principal/backup) tem sinal — se um
+  // caiu mas o outro responde, o veículo continua contando como online.
+  const isTrackOffline = (t: DeviceTrack | null | undefined): boolean => {
+    if (!t) return true;
+    const sc = (t.statusCode ?? "").toLowerCase();
+    if (sc.includes("offline")) return true;
+    // acc === 0 (motor confirmado desligado) reforça o heurístico; acc
+    // undefined (TAGs GT06, sem leitura de ignição) não deve contar sozinho.
+    if (t.acc === 0 && !t.speed) return true;
+    return false;
+  };
+  const isGroupOffline = (g: VehicleGroup): boolean => {
+    const primaryOffline = g.primary ? isTrackOffline(g.primary.track) : true;
+    const backupOffline = g.backup ? isTrackOffline(g.backup.track) : true;
+    if (g.primary && g.backup) return primaryOffline && backupOffline;
+    return g.primary ? primaryOffline : backupOffline;
+  };
 
-  const filteredDevices = (auth?.devices ?? []).filter(dev => {
-    const track = tracks.find(t => t.imei === dev.imei);
-    const sc = (track?.statusCode ?? "").toLowerCase();
-    const offline = sc.includes("offline") || (!track?.acc && !track?.speed);
+  const onlineCount  = vehicleGroups.filter(g => !isGroupOffline(g)).length;
+  const offlineCount = vehicleGroups.length - onlineCount;
+  const rastreadorCount = vehicleGroups.filter(g => g.primary && !gt06ImeiSet.has(g.primary.info.imei)).length;
+  const tagCount = vehicleGroups.filter(g => (g.primary && gt06ImeiSet.has(g.primary.info.imei)) || g.backup).length;
+
+  const filteredGroups = vehicleGroups.filter(g => {
+    const eff = pickForTypeFilter(g);
+    if (!eff) return false;
+    const offline = isGroupOffline(g);
     if (deviceFilter === "online" && offline) return false;
     if (deviceFilter === "offline" && !offline) return false;
     const q = deviceSearch.toLowerCase().trim();
     if (!q) return true;
-    const name = getDisplayName(dev.imei, track?.deviceName).toLowerCase();
-    const renter = getRenterName(dev.imei, track?.deviceName).toLowerCase();
+    const name = getDisplayName(eff.info.imei, eff.track?.deviceName).toLowerCase();
+    const renter = (g.renter ?? "").toLowerCase();
     return name.includes(q) || renter.includes(q);
   });
 
-  const selectedTrack  = tracks.find(t => t.imei === selectedImei) ?? null;
-  const selectedDevice = auth?.devices.find(d => d.imei === selectedImei) ?? null;
+  const selectedTrack  = allTracks.find(t => t.imei === selectedImei) ?? null;
+  const selectedDevice = allDevices.find(d => d.imei === selectedImei) ?? null;
+  const isSelectedGt06 = selectedImei ? gt06ImeiSet.has(selectedImei) : false;
 
   // ─── Render ───────────────────────────────────────────────────────────────
   return (
@@ -839,10 +1219,11 @@ export default function RastreamentoPage() {
         <div className="flex items-center gap-2">
           <MapPin className="h-5 w-5 text-primary" />
           <h2 className="text-lg font-bold">Rastreamento</h2>
-          {auth ? (
+          {allDevices.length > 0 ? (
             <Badge variant="outline" className="border-emerald-500/40 bg-emerald-500/10 text-emerald-600 text-[11px]">
               <Wifi className="h-2.5 w-2.5 mr-1" />
-              Conectado · {driver?.label} · {auth.devices.length} dispositivos · {onlineCount} online
+              {vehicleGroups.length} veículo{vehicleGroups.length !== 1 ? "s" : ""} · {onlineCount} online
+              {driver ? ` · ${driver.label}` : ""}
             </Badge>
           ) : (
             <Badge variant="outline" className="border-muted text-muted-foreground text-[11px]">
@@ -851,11 +1232,14 @@ export default function RastreamentoPage() {
           )}
         </div>
         <div className="flex items-center gap-2">
-          {auth && (
-            <Button size="sm" variant="ghost" onClick={fetchTracks} disabled={loadingTrack}>
+          {allDevices.length > 0 && (
+            <Button size="sm" variant="ghost" onClick={fetchAll} disabled={loadingTrack}>
               <RefreshCw className={`h-4 w-4 ${loadingTrack ? "animate-spin" : ""}`} />
             </Button>
           )}
+          <Button size="sm" variant="outline" onClick={() => setRegisterTagOpen(true)}>
+            <Plus className="h-4 w-4 mr-1.5" /> Cadastrar TAG
+          </Button>
           <Button size="sm" variant="outline" onClick={() => setConfigOpen(true)}>
             <Settings className="h-4 w-4 mr-1.5" /> Configurações
           </Button>
@@ -868,7 +1252,7 @@ export default function RastreamentoPage() {
       </div>
 
       {/* Corpo */}
-      {!auth ? (
+      {allDevices.length === 0 ? (
         <div className="flex-1 flex items-center justify-center p-6">
           <div className="text-center space-y-6 max-w-sm w-full">
             <div className="flex flex-col items-center gap-3">
@@ -936,11 +1320,13 @@ export default function RastreamentoPage() {
         <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col min-h-0">
           <TabsList className="mx-4 mt-2 w-fit shrink-0">
             <TabsTrigger value="mapa"><MapPin className="h-3.5 w-3.5 mr-1.5" />Mapa</TabsTrigger>
-            {/* GT06 (avulso) não tem histórico de trajeto nem alarmes — fora do escopo v1 */}
-            {provider !== "gt06" && (
+            {/* Histórico/Alarmes exigem um provedor de nuvem conectado (BrasilSat/
+                Velotrack) — TAGs GT06 não têm essas APIs, mas não impedem essas
+                abas de aparecer se houver TAMBÉM um provedor de nuvem conectado. */}
+            {!!driver && (
               <TabsTrigger value="historico"><History className="h-3.5 w-3.5 mr-1.5" />Histórico</TabsTrigger>
             )}
-            {provider !== "gt06" && (
+            {!!driver && (
               <TabsTrigger value="alarmes"><Bell className="h-3.5 w-3.5 mr-1.5" />Alarmes</TabsTrigger>
             )}
           </TabsList>
@@ -973,15 +1359,32 @@ export default function RastreamentoPage() {
                         }`}
                       >
                         {f === "all"
-                          ? `Todos (${auth.devices.length})`
+                          ? `Todos (${vehicleGroups.length})`
                           : f === "online"
                           ? `Online (${onlineCount})`
                           : `Offline (${offlineCount})`}
                       </button>
                     ))}
                   </div>
+                  <div className="flex gap-1">
+                    {(["all", "rastreador", "tag"] as const).map(f => (
+                      <button
+                        key={f}
+                        onClick={() => setDeviceTypeFilter(f)}
+                        className={`flex-1 flex items-center justify-center gap-1 text-[11px] py-1 rounded-md border transition-colors ${
+                          deviceTypeFilter === f
+                            ? "bg-primary text-primary-foreground border-primary"
+                            : "border-border hover:bg-muted"
+                        }`}
+                      >
+                        {f === "all" && "Todos"}
+                        {f === "rastreador" && <><Satellite className="h-3 w-3" />{`Rastreadores (${rastreadorCount})`}</>}
+                        {f === "tag" && <><Tag className="h-3 w-3" />{`TAGs (${tagCount})`}</>}
+                      </button>
+                    ))}
+                  </div>
                   <button
-                    onClick={() => { fetchTracks(); setCountdown(refreshSecs); }}
+                    onClick={() => { fetchAll(); setCountdown(refreshSecs); }}
                     disabled={loadingTrack}
                     className="flex items-center justify-between w-full text-[11px] px-2 py-1.5 rounded-md bg-muted/60 hover:bg-muted border border-border transition-colors disabled:opacity-50"
                   >
@@ -1014,21 +1417,25 @@ export default function RastreamentoPage() {
                 )}
 
                 <div className="flex-1 overflow-auto">
-                  {filteredDevices.length === 0 && (
-                    <p className="text-center text-xs text-muted-foreground py-8">Nenhum dispositivo</p>
+                  {filteredGroups.length === 0 && (
+                    <p className="text-center text-xs text-muted-foreground py-8">Nenhum veículo</p>
                   )}
-                  {filteredDevices.map(dev => {
-                    const track = tracks.find(t => t.imei === dev.imei);
+                  {filteredGroups.map(g => {
+                    const eff = pickForTypeFilter(g);
+                    if (!eff) return null;
+                    const track = eff.track;
                     const { color } = track ? statusLabel(track) : { color: "#6b7280" };
                     const since = track ? timeSince(track.gpstime) : "—";
-                    const isSelected = dev.imei === selectedImei;
-                    const name = getDisplayName(dev.imei, track?.deviceName);
-                    const renter = getRenterName(dev.imei, track?.deviceName);
+                    const isStale = !!track && Date.now() - track.gpstime > STALE_UPDATE_MS;
+                    const isSelected = eff.info.imei === selectedImei;
+                    const name = getDisplayName(eff.info.imei, track?.deviceName);
+                    const isBackupSelected = g.backup && g.backup.info.imei === selectedImei;
+                    const effIsGt06 = gt06ImeiSet.has(eff.info.imei);
                     return (
                       <button
-                        key={dev.imei}
+                        key={g.key}
                         onClick={() => {
-                          const next = isSelected ? null : dev.imei;
+                          const next = isSelected ? null : eff.info.imei;
                           setSelectedImei(next);
                           if (next) setActiveTab("mapa");
                         }}
@@ -1036,19 +1443,58 @@ export default function RastreamentoPage() {
                           isSelected ? "bg-primary/10 border-l-2 border-l-primary" : ""
                         }`}
                       >
-                        <div className="flex items-center justify-between">
-                          <span className="font-medium text-sm truncate pr-2">{name}</span>
-                          <span className="text-[11px] text-muted-foreground shrink-0">{since}</span>
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            <DeviceTypeBadge isGt06={effIsGt06} />
+                            <span className="font-medium text-sm truncate">{name}</span>
+                          </div>
+                          <span
+                            title={track ? `Última posição recebida: ${fmtTime(track.gpstime)}` : "Sem dado de posição"}
+                            className={`text-[11px] shrink-0 flex items-center gap-1 ${
+                              isStale ? "text-amber-600 dark:text-amber-500 font-semibold" : "text-muted-foreground"
+                            }`}
+                          >
+                            {isStale && <AlertTriangle className="h-3 w-3" />}
+                            {track ? `há ${since}` : since}
+                          </span>
                         </div>
-                        <div className="flex items-center gap-1.5 mt-0.5">
+                        <div className="flex items-center gap-1.5 mt-1">
                           <span className="inline-block h-2 w-2 rounded-full shrink-0" style={{ background: color }} />
                           <span className="text-[11px] text-muted-foreground truncate">
                             {track ? statusLabel(track).label : "Sem dados"}
                           </span>
                         </div>
-                        {renter && (
+                        {g.renter && (
                           <div className="text-[11px] text-muted-foreground truncate mt-0.5">
-                            👤 {renter}
+                            👤 {g.renter}
+                          </div>
+                        )}
+                        {/* Frota real: rastreador principal (nuvem) + TAG GT06 como backup no
+                            mesmo veículo — mostra os dois com o mesmo destaque de selo, não
+                            como uma nota de rodapé pequena, pra ficar óbvio que são dois
+                            dispositivos diferentes no mesmo veículo. */}
+                        {/* Só mostra o backup junto quando o filtro está em "Todos" — nos
+                            modos "só Rastreadores"/"só TAGs" cada tipo já aparece isolado
+                            (ver pickForTypeFilter), então repetir aqui seria redundante. */}
+                        {deviceTypeFilter === "all" && g.backup && (
+                          <div
+                            role="button"
+                            tabIndex={0}
+                            onClick={e => { e.stopPropagation(); setSelectedImei(g.backup!.info.imei); setActiveTab("mapa"); }}
+                            className={`mt-2 pt-2 border-t flex items-center justify-between gap-2 rounded-b-md -mx-3 -mb-2.5 px-3 pb-2 transition-colors ${
+                              isBackupSelected ? "bg-primary/10" : "hover:bg-muted"
+                            }`}
+                          >
+                            <div className="flex items-center gap-1.5 min-w-0">
+                              <DeviceTypeBadge isGt06 />
+                              <span className="text-[11px] text-muted-foreground truncate">backup deste veículo</span>
+                            </div>
+                            {g.backup.track && (
+                              <span className="flex items-center gap-1 text-[11px] text-muted-foreground shrink-0">
+                                <span className="inline-block h-1.5 w-1.5 rounded-full shrink-0" style={{ background: statusLabel(g.backup.track).color }} />
+                                {statusLabel(g.backup.track).label}
+                              </span>
+                            )}
                           </div>
                         )}
                       </button>
@@ -1071,13 +1517,19 @@ export default function RastreamentoPage() {
                     displayName={getDisplayName(selectedImei, selectedTrack.deviceName)}
                     displayImei={privacy ? maskImei(selectedImei) : selectedImei}
                     relayLoading={relayLoading.has(selectedImei)}
-                    showKm={provider !== "gt06"}
-                    showRelay={provider !== "gt06"}
+                    showKm={!!driver && !isSelectedGt06}
+                    showRelay={!!driver && !isSelectedGt06}
                     onClose={() => setSelectedImei(null)}
                     onRename={() => { setRenameValue(getDisplayName(selectedImei, selectedTrack.deviceName)); setRenameOpen(true); }}
                     onBlock={() => handleBlock(selectedImei)}
                     onUnblock={() => handleUnblock(selectedImei)}
                     onUpdateKm={() => { setKmValue(String(selectedTrack.mileage ?? "")); setKmOpen(true); }}
+                    motoOptions={getRealDataCache().motos
+                      .filter(m => m.placa && m.status !== "vendida")
+                      .sort((a, b) => a.placa.localeCompare(b.placa))
+                      .map(m => ({ id: m.id, placa: m.placa, modelo: m.modelo }))}
+                    onLinkMoto={motoId => handleLinkMoto(selectedImei, motoId)}
+                    linkMotoLoading={linkMotoLoading}
                   />
                 )}
               </div>
@@ -1092,7 +1544,7 @@ export default function RastreamentoPage() {
                 <Select value={histImei} onValueChange={setHistImei}>
                   <SelectTrigger className="w-52"><SelectValue placeholder="Selecione..." /></SelectTrigger>
                   <SelectContent>
-                    {auth.devices.map(d => {
+                    {(auth?.devices ?? []).map(d => {
                       const t = tracks.find(x => x.imei === d.imei);
                       return <SelectItem key={d.imei} value={d.imei}>{getDisplayName(d.imei, t?.deviceName)}</SelectItem>;
                     })}
@@ -1138,7 +1590,7 @@ export default function RastreamentoPage() {
                 <Select value={alarmImei} onValueChange={setAlarmImei}>
                   <SelectTrigger className="w-52"><SelectValue placeholder="Selecione..." /></SelectTrigger>
                   <SelectContent>
-                    {auth.devices.map(d => {
+                    {(auth?.devices ?? []).map(d => {
                       const t = tracks.find(x => x.imei === d.imei);
                       return <SelectItem key={d.imei} value={d.imei}>{getDisplayName(d.imei, t?.deviceName)}</SelectItem>;
                     })}
@@ -1203,7 +1655,7 @@ export default function RastreamentoPage() {
         setConfigOpen(open);
         if (open) setKmMarginInput(String(DRIVERS[dialogProvider].loadKmSyncConfig(companyId).marginKm));
       }}>
-        <DialogContent className="max-w-sm">
+        <DialogContent className="max-w-sm max-h-[85vh] overflow-y-auto">
           <DialogHeader><DialogTitle>Configurações · {DRIVERS[dialogProvider].label}</DialogTitle></DialogHeader>
           <div className="space-y-4 pt-2">
             <div className="grid gap-1.5">
@@ -1236,9 +1688,7 @@ export default function RastreamentoPage() {
               </div>
             ))}
             <p className="text-xs text-muted-foreground">
-              {dialogProvider === "gt06"
-                ? "Este rastreador usa um servidor próprio — não precisa de login. Sem credenciais aqui."
-                : "As credenciais são salvas localmente neste dispositivo."}
+              As credenciais são salvas localmente neste dispositivo.
             </p>
             <Button className="w-full" onClick={() => connect(dialogProvider, config)} disabled={connecting}>
               {connecting
@@ -1247,40 +1697,37 @@ export default function RastreamentoPage() {
               {connecting ? "Conectando..." : "Conectar"}
             </Button>
 
-            {/* Seção: Sincronização de KM — não se aplica ao GT06 (protocolo básico
-                não reporta km rodado) */}
-            {dialogProvider !== "gt06" && (
-              <div className="border-t pt-4 space-y-3">
-                <div className="flex items-center gap-2">
-                  <Sliders className="h-4 w-4 text-muted-foreground" />
-                  <span className="text-sm font-semibold">Sincronização de quilometragem</span>
-                </div>
-                <div className="grid gap-1.5">
-                  <Label>Margem de erro (km)</Label>
-                  <div className="flex items-center gap-2">
-                    <Input
-                      type="number"
-                      min={0}
-                      step={10}
-                      placeholder="0"
-                      value={kmMarginInput}
-                      onChange={e => setKmMarginInput(e.target.value)}
-                      onKeyDown={e => e.key === "Enter" && handleSaveKmConfig()}
-                    />
-                    <span className="text-sm text-muted-foreground shrink-0">km</span>
-                  </div>
-                  <p className="text-xs text-muted-foreground">
-                    Valor adicionado ao KM do sistema ao sincronizar com o rastreador.
-                    {kmConfig.marginKm > 0 && (
-                      <span className="font-medium text-primary"> Atual: +{kmConfig.marginKm} km</span>
-                    )}
-                  </p>
-                </div>
-                <Button size="sm" variant="outline" className="w-full" onClick={handleSaveKmConfig}>
-                  <Milestone className="h-3.5 w-3.5 mr-1.5" /> Salvar margem
-                </Button>
+            {/* Seção: Sincronização de KM */}
+            <div className="border-t pt-4 space-y-3">
+              <div className="flex items-center gap-2">
+                <Sliders className="h-4 w-4 text-muted-foreground" />
+                <span className="text-sm font-semibold">Sincronização de quilometragem</span>
               </div>
-            )}
+              <div className="grid gap-1.5">
+                <Label>Margem de erro (km)</Label>
+                <div className="flex items-center gap-2">
+                  <Input
+                    type="number"
+                    min={0}
+                    step={10}
+                    placeholder="0"
+                    value={kmMarginInput}
+                    onChange={e => setKmMarginInput(e.target.value)}
+                    onKeyDown={e => e.key === "Enter" && handleSaveKmConfig()}
+                  />
+                  <span className="text-sm text-muted-foreground shrink-0">km</span>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Valor adicionado ao KM do sistema ao sincronizar com o rastreador.
+                  {kmConfig.marginKm > 0 && (
+                    <span className="font-medium text-primary"> Atual: +{kmConfig.marginKm} km</span>
+                  )}
+                </p>
+              </div>
+              <Button size="sm" variant="outline" className="w-full" onClick={handleSaveKmConfig}>
+                <Milestone className="h-3.5 w-3.5 mr-1.5" /> Salvar margem
+              </Button>
+            </div>
           </div>
         </DialogContent>
       </Dialog>
@@ -1304,6 +1751,63 @@ export default function RastreamentoPage() {
           <DialogFooter>
             <Button variant="outline" onClick={() => setRenameOpen(false)}>Cancelar</Button>
             <Button onClick={handleRename}>Salvar</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Dialog: Cadastrar TAG GT06 */}
+      <Dialog open={registerTagOpen} onOpenChange={open => {
+        setRegisterTagOpen(open);
+        if (!open) { setRegisterImei(""); setRegisterMotoId(""); setRegisterApelido(""); }
+      }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader><DialogTitle>Cadastrar TAG GT06</DialogTitle></DialogHeader>
+          <div className="space-y-3 pt-2">
+            <p className="text-xs text-muted-foreground">
+              Digite o IMEI impresso no aparelho. Só funciona depois que a TAG já
+              ligou e mandou sinal pelo menos uma vez (pode levar alguns minutos
+              após ligar).
+            </p>
+            <div className="space-y-1.5">
+              <Label className="text-xs">IMEI da TAG</Label>
+              <Input
+                placeholder="Ex.: 000000000000000"
+                value={registerImei}
+                onChange={e => setRegisterImei(e.target.value)}
+                autoFocus
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">Veículo (opcional — dá pra vincular depois)</Label>
+              <Select value={registerMotoId || "none"} onValueChange={v => setRegisterMotoId(v === "none" ? "" : v)}>
+                <SelectTrigger><SelectValue placeholder="Sem vínculo por enquanto" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">Sem vínculo por enquanto</SelectItem>
+                  {getRealDataCache().motos
+                    .filter(m => m.placa && m.status !== "vendida")
+                    .sort((a, b) => a.placa.localeCompare(b.placa))
+                    .map(m => (
+                      <SelectItem key={m.id} value={m.id}>{m.placa} · {m.modelo}</SelectItem>
+                    ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">Apelido (opcional)</Label>
+              <Input
+                placeholder="Ex.: TAG backup CG 160"
+                value={registerApelido}
+                onChange={e => setRegisterApelido(e.target.value)}
+                onKeyDown={e => e.key === "Enter" && handleRegisterTag()}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRegisterTagOpen(false)}>Cancelar</Button>
+            <Button onClick={handleRegisterTag} disabled={registerLoading}>
+              {registerLoading ? <RefreshCw className="h-4 w-4 mr-1.5 animate-spin" /> : <Plus className="h-4 w-4 mr-1.5" />}
+              Vincular TAG
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

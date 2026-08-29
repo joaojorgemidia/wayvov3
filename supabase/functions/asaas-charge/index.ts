@@ -52,8 +52,11 @@ function computeSemanaPeriodo(dataInicio: string, cobrancaPrePaga: boolean, dueS
   if (cobrancaPrePaga) {
     inicioPeriodo = new Date(due);
   } else {
+    // Pós-pago: vencimento é 1 dia depois do fim do período (mesma convenção de
+    // buildAluguelCharges em LocacoesPage.tsx) → início é 7 dias antes do vencimento,
+    // não 6 (ver correção espelhada em src/lib/cobranca-week-stats.ts).
     inicioPeriodo = new Date(due);
-    inicioPeriodo.setDate(inicioPeriodo.getDate() - 6);
+    inicioPeriodo.setDate(inicioPeriodo.getDate() - 7);
     if (inicioPeriodo < ini) inicioPeriodo = new Date(due);
   }
   const fimPeriodo = new Date(inicioPeriodo);
@@ -255,6 +258,12 @@ serve(async (req) => {
     // autoexplicativo ("Acordo de parcelamento de dívida – Parcela 2/6"), então o boleto
     // usa ele em vez do resumo genérico Contrato/Placa/Semana.
     const isParcelamento = entry.subcategoria === "Parcelamento";
+    // Cobrança consolidada no encerramento de contrato (ver "Unificar cobranças" em
+    // LocacoesPage.tsx): a descrição já é autoexplicativa ("Cobrança consolidada –
+    // Encerramento #24 (4 cobranças)") — sem essa checagem, a explicação de multa/juros
+    // abaixo substituía esse texto pelo genérico "Valor original + Multa + Juros", que
+    // não diz do que se trata a cobrança (caso real: cliente Luiz Felipe, RCJ8F85).
+    const isConsolidacaoEncerramento = Array.isArray(entry.tags) && entry.tags.includes("consolidacao");
 
     const baseValor = Number(entry.valor) || 0;
 
@@ -375,10 +384,13 @@ serve(async (req) => {
       description: isParcelamento
         ? [parcelamentoDescricao, contratoNumero != null ? `Contrato #${contratoNumero}` : null]
             .filter(Boolean).join(" · ")
+        : isConsolidacaoEncerramento
+        ? [entry.descricao || null, placa ? `Placa ${placa}` : null, explicacaoAtraso]
+            .filter(Boolean).join(" · ")
         : [
-            // "Outros" é o rótulo genérico de categorias sem um nome específico (ex.:
-            // cobrança consolidada) — não carrega nenhuma informação real, então não
-            // faz sentido aparecer no boleto do cliente.
+            // "Outros" é o rótulo genérico de categorias sem um nome específico —
+            // não carrega nenhuma informação real, então não faz sentido aparecer
+            // no boleto do cliente.
             categoriaLabel === "Outros" ? null : categoriaLabel,
             contratoNumero != null ? `Contrato #${contratoNumero}` : null,
             placa ? `Placa ${placa}` : null,
@@ -448,7 +460,11 @@ serve(async (req) => {
     const payment = await asaas("/payments", "POST", apiKey, paymentPayload);
 
     // 5. Atualiza a entrada com os dados do boleto (e a explicação do acréscimo, se houver,
-    // pra ficar igual ao que o asaas-update-fines grava quando recalcula um boleto vencido)
+    // pra ficar igual ao que o asaas-update-fines grava quando recalcula um boleto vencido).
+    // Preserva a observação original de parcelamento/consolidação de encerramento — só ela
+    // representa de verdade o que a cobrança é (ver isConsolidacaoEncerramento acima);
+    // sobrescrever com "Valor original + Multa + Juros" já apagou esse texto real antes
+    // (caso do cliente Luiz Felipe, RCJ8F85) — não repete aqui na criação do boleto.
     await supabase
       .from("financial_entries")
       .update({
@@ -456,7 +472,7 @@ serve(async (req) => {
         asaas_status: payment.status,
         asaas_boleto_url: payment.bankSlipUrl || null,
         asaas_invoice_url: payment.invoiceUrl || null,
-        ...(explicacaoAtraso ? { observacao: explicacaoAtraso } : {}),
+        ...(explicacaoAtraso && !isParcelamento && !isConsolidacaoEncerramento ? { observacao: explicacaoAtraso } : {}),
       })
       .eq("id", entryId);
 

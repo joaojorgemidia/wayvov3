@@ -50,8 +50,11 @@ function computeSemanaPeriodo(dataInicio: string, cobrancaPrePaga: boolean, dueS
   if (cobrancaPrePaga) {
     inicioPeriodo = new Date(due);
   } else {
+    // Pós-pago: vencimento é 1 dia depois do fim do período (mesma convenção de
+    // buildAluguelCharges em LocacoesPage.tsx) → início é 7 dias antes do vencimento,
+    // não 6 (ver correção espelhada em src/lib/cobranca-week-stats.ts).
     inicioPeriodo = new Date(due);
-    inicioPeriodo.setDate(inicioPeriodo.getDate() - 6);
+    inicioPeriodo.setDate(inicioPeriodo.getDate() - 7);
     if (inicioPeriodo < ini) inicioPeriodo = new Date(due);
   }
   const fimPeriodo = new Date(inicioPeriodo);
@@ -91,7 +94,7 @@ serve(async (req) => {
   // e não pode acumular juros em cima de juros (filtrado abaixo, no loop).
   const { data: entries, error } = await supabase
     .from("financial_entries")
-    .select("id, company_id, rental_id, valor, data, data_prevista, descricao, observacao, placa, categoria, subcategoria, asaas_payment_id")
+    .select("id, company_id, rental_id, valor, data, data_prevista, descricao, observacao, placa, categoria, subcategoria, tags, asaas_payment_id")
     .eq("pago", false)
     .eq("tipo", "receita")
     .not("asaas_payment_id", "is", null)
@@ -211,8 +214,18 @@ serve(async (req) => {
       // em asaas-charge, pra não flapear entre um texto bom e um genérico a cada
       // rodada que esse boleto passa por aqui).
       const isParcelamento = entry.subcategoria === "Parcelamento";
+      // Cobrança consolidada no encerramento de contrato (ver "Unificar cobranças" em
+      // LocacoesPage.tsx): a descrição já é autoexplicativa ("Cobrança consolidada –
+      // Encerramento #24 (4 cobranças)") — sem essa checagem essa rodada diária
+      // substituía esse texto pelo genérico "Valor original + Multa + Juros" tanto no
+      // boleto quanto (mais grave) na observação salva no banco, apagando de vez a
+      // lista das cobranças unificadas (caso real: cliente Luiz Felipe, RCJ8F85).
+      const isConsolidacaoEncerramento = Array.isArray(entry.tags) && entry.tags.includes("consolidacao");
       let descricaoBoleto: string;
-      if (isParcelamento) {
+      if (isConsolidacaoEncerramento) {
+        descricaoBoleto = [entry.descricao || null, entry.placa ? `Placa ${entry.placa}` : null, explicacao]
+          .filter(Boolean).join(" · ");
+      } else if (isParcelamento) {
         const descOriginal = String(entry.descricao || "");
         const parcelaMatch = descOriginal.match(/Parcela (\d+)\/(\d+)/i);
         let rotulo: string;
@@ -279,10 +292,17 @@ serve(async (req) => {
         });
       }
 
-      await supabase
-        .from("financial_entries")
-        .update({ observacao: explicacao })
-        .eq("id", entry.id);
+      // Não sobrescreve a observação de entradas cujo texto original já é o que importa
+      // (parcelamento e consolidação de encerramento — ver isConsolidacaoEncerramento
+      // acima): pra essas, "explicacao" (Valor original + Multa + Juros) só serve pro
+      // boleto, gravar ela por cima apagaria pra sempre a lista real de cobranças que
+      // a entrada representa.
+      if (!isParcelamento && !isConsolidacaoEncerramento) {
+        await supabase
+          .from("financial_entries")
+          .update({ observacao: explicacao })
+          .eq("id", entry.id);
+      }
 
       console.log(`[asaas-update-fines] entry ${entry.id}: value → ${valorAtualizado} (${diasAtraso}d)`);
       updated++;

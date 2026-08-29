@@ -56,9 +56,14 @@ export function computeSemanaPeriodo(
     // Pré-pago: vencimento = início do período
     inicioPeriodo = new Date(due);
   } else {
-    // Pós-pago: vencimento = fim do período → início é 6 dias antes
+    // Pós-pago: vencimento = 1 dia depois do fim do período (mesma convenção de
+    // buildAluguelCharges em LocacoesPage.tsx: periodEnd = current - 1, e o vencimento
+    // é o próprio "current") → início é 7 dias antes do vencimento, não 6. Usar -6 aqui
+    // fazia o período calculado terminar 1 dia depois do real (no vencimento em vez do
+    // dia anterior), o que classificava semanas ainda dentro do prazo como "totalmente
+    // futuras" ao encerrar uma locação bem no primeiro dia da semana.
     inicioPeriodo = new Date(due);
-    inicioPeriodo.setDate(inicioPeriodo.getDate() - 6);
+    inicioPeriodo.setDate(inicioPeriodo.getDate() - 7);
     // Fallback: se o período calculado começa antes do início da locação,
     // o vencimento está sendo tratado como início (semântica pré-paga) — corrige.
     if (ini && inicioPeriodo < ini) {

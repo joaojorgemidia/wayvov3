@@ -107,7 +107,7 @@ export function SaleDialog({ open, onOpenChange, moto, onConfirm }: SaleDialogPr
               type="number" min="0"
               value={kmVenda ?? ""}
               onChange={(e) => setKmVenda(e.target.value ? Number(e.target.value) : null)}
-              placeholder={moto.kmAtual != null ? `Atual: ${moto.kmAtual.toLocaleString("pt-BR")} km` : "Ex: 45000"}
+              placeholder={moto.kmAtual != null ? `Atual: ${moto.kmAtual.toLocaleString("pt-BR", { maximumFractionDigits: 0 })} km` : "Ex: 45000"}
               className={errors.kmVenda ? "border-destructive" : ""}
             />
             {errors.kmVenda && <p className="text-[11px] text-destructive">{errors.kmVenda}</p>}

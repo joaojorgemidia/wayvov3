@@ -2,37 +2,19 @@
 // há login/API externa: um servidor TCP próprio (ver gt06-server/, roda numa VPS)
 // decodifica o protocolo binário do aparelho e grava a última posição direto na
 // tabela gt06_devices do Supabase. Aqui só lemos essa tabela — RLS já filtra por
-// empresa (mesma policy multi-tenant do resto do app), mas como um usuário pode
-// ter acesso a mais de uma empresa, ainda precisamos filtrar explicitamente pela
-// empresa ATIVA (senão apareceriam misturados dispositivos de outra empresa que o
-// usuário também administra) — por isso o companyId viaja dentro do "token" (ver
-// authenticate() abaixo e o ajuste em RastreamentoPage.tsx que injeta companyId em
-// todo config antes de chamar authenticate, não só pra este provedor).
+// empresa (mesma policy multi-tenant do resto do app).
+//
+// Diferente de BrasilSat/Velotrack, GT06 NÃO é um "TrackerProvider" — não tem
+// login/token, playback, alarmes, km-sync nem bloqueio remoto. É uma fonte de
+// dados sempre ativa por empresa (basta o companyId), mostrada sempre junto com
+// qualquer rastreador de nuvem conectado — nunca uma alternativa exclusiva a
+// eles. Ver RastreamentoPage.tsx, que busca isto em paralelo ao provedor de
+// nuvem (se houver) e combina os dois na mesma tela.
 import { supabase } from "@/integrations/supabase/client";
 import { companyKey } from "@/lib/tracker-types";
-import type { DeviceTrack, DeviceInfo, AlarmRecord, PlaybackPoint } from "@/lib/tracker-types";
+import type { DeviceTrack, DeviceInfo } from "@/lib/tracker-types";
 
-export type { DeviceTrack, DeviceInfo, AlarmRecord, PlaybackPoint };
-
-export interface Gt06Config {
-  companyId?: string;
-}
-
-export interface Gt06Token {
-  expires_at: number;
-  companyId: string;
-}
-
-// Sem credenciais reais — o "login" é só amarrar o token à empresa ativa.
-export async function authenticate(config: Gt06Config): Promise<Gt06Token> {
-  if (!config.companyId) throw new Error("Empresa não identificada");
-  return {
-    // token nunca expira de fato (não há sessão externa pra renovar) — usamos uma
-    // data bem distante só pra satisfazer getValidToken() em tracker.ts.
-    expires_at: Date.now() + 10 * 365 * 24 * 60 * 60 * 1000,
-    companyId: config.companyId,
-  };
-}
+export type { DeviceTrack, DeviceInfo };
 
 // Depois de quanto tempo sem atualização um dispositivo é considerado offline.
 // O intervalo de heartbeat é configurável no aparelho (varia por fabricante) —
@@ -70,6 +52,7 @@ function rowToDeviceInfo(row: Gt06Row): DeviceInfo {
     imei: row.imei,
     deviceName: motoPlaca(row) || row.apelido || row.imei,
     deviceType: "GT06",
+    motoId: row.moto_id,
   };
 }
 
@@ -82,7 +65,11 @@ function rowToDeviceTrack(row: Gt06Row): DeviceTrack {
     lng: row.lng ?? 0,
     speed: row.speed ?? 0,
     course: row.course ?? 0,
-    acc: row.acc ?? 0,
+    // Motor (ACC) propositalmente NÃO é preenchido aqui, mesmo a tabela tendo o
+    // dado: nas TAGs GT06 avulsas o fio de ignição não é lido de forma confiável
+    // (instalação sem esse sensor cabeado) — mostrar "ligado/desligado" seria
+    // afirmar algo que não sabemos. Deixando undefined, a UI (statusLabel,
+    // DeviceDetail) já trata como "informação indisponível" em vez de "desligado".
     gpstime: row.gps_time ? new Date(row.gps_time).getTime() : updatedMs,
     statusCode: offline ? "Offline" : undefined,
     deviceName: motoPlaca(row) || row.apelido || row.imei,
@@ -93,42 +80,76 @@ function rowToDeviceTrack(row: Gt06Row): DeviceTrack {
   };
 }
 
-export async function getDeviceList(token: Gt06Token): Promise<DeviceInfo[]> {
+export async function getDeviceList(companyId: string): Promise<DeviceInfo[]> {
   const { data, error } = await supabase
     .from("gt06_devices")
     .select(SELECT_COLUMNS)
-    .eq("company_id", token.companyId);
+    .eq("company_id", companyId);
   if (error) throw new Error(error.message);
   return ((data ?? []) as unknown as Gt06Row[]).map(rowToDeviceInfo);
 }
 
-export async function trackDevices(token: Gt06Token): Promise<DeviceTrack[]> {
+export async function trackDevices(companyId: string): Promise<DeviceTrack[]> {
   const { data, error } = await supabase
     .from("gt06_devices")
     .select(SELECT_COLUMNS)
-    .eq("company_id", token.companyId);
+    .eq("company_id", companyId);
   if (error) throw new Error(error.message);
   return ((data ?? []) as unknown as Gt06Row[]).map(rowToDeviceTrack);
 }
 
-// Fora do escopo v1 — sem histórico de trajeto nem alarmes pra este provedor
-// (ver RastreamentoPage.tsx, que já esconde as abas Histórico/Alarmes pra "gt06").
-export async function getPlayback(): Promise<PlaybackPoint[]> {
-  return [];
-}
-export async function getAlarms(): Promise<AlarmRecord[]> {
-  return [];
+// ─── Cadastro / vínculo com veículo ───────────────────────────────────────────
+// A linha da TAG só existe depois que o aparelho físico conecta pela 1ª vez no
+// servidor TCP (que grava com company_id nulo — ver gt06-server/src/supabase.js).
+// "Cadastrar" aqui significa reivindicar essa linha pra empresa atual, digitando
+// o IMEI impresso no aparelho. A policy de UPDATE (RLS) só deixa isso acontecer
+// se a linha ainda não tiver dono (company_id IS NULL); depois disso vira uma
+// TAG normal da empresa, editável só por quem já é dela.
+
+// true = achou uma TAG sem dono com esse IMEI e vinculou à empresa atual.
+// false = não achou nenhuma linha pra reivindicar — ou o aparelho ainda não
+// conectou no servidor nenhuma vez, ou o IMEI já pertence a outra empresa (por
+// segurança/RLS a gente não consegue distinguir os dois casos aqui).
+export async function claimDevice(
+  companyId: string,
+  imei: string,
+  opts: { motoId?: string | null; apelido?: string } = {},
+): Promise<boolean> {
+  const payload: Record<string, unknown> = { company_id: companyId };
+  if (opts.motoId !== undefined) payload.moto_id = opts.motoId;
+  if (opts.apelido !== undefined) payload.apelido = opts.apelido || null;
+  const { data, error } = await supabase
+    .from("gt06_devices")
+    .update(payload)
+    .eq("imei", imei.trim())
+    .is("company_id", null)
+    .select("imei");
+  if (error) throw new Error(error.message);
+  return (data?.length ?? 0) > 0;
 }
 
-// Fora do escopo v1 — protocolo GT06 básico não reporta km rodado nem suporta
-// bloqueio remoto (nem todo clone tem o hardware de relé). Os botões que
-// chamariam isso já ficam escondidos na UI pra este provedor; isto aqui é só um
-// backstop caso algo chame mesmo assim.
-export async function setMileage(): Promise<void> {
-  throw new Error("Sincronização de quilometragem não é suportada para rastreador GT06");
+// true = o IMEI já pertence à empresa atual (já cadastrado antes) — usado só
+// pra dar uma mensagem de erro melhor quando claimDevice() falha.
+export async function deviceBelongsToCompany(companyId: string, imei: string): Promise<boolean> {
+  const { data, error } = await supabase
+    .from("gt06_devices")
+    .select("imei")
+    .eq("imei", imei.trim())
+    .eq("company_id", companyId)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  return !!data;
 }
-export async function setRelay(): Promise<void> {
-  throw new Error("Bloqueio remoto não é suportado para rastreador GT06");
+
+// Troca/remove o veículo vinculado a uma TAG que já é da empresa (RLS normal,
+// sem precisar do "claim" acima).
+export async function linkDeviceToMoto(companyId: string, imei: string, motoId: string | null): Promise<void> {
+  const { error } = await supabase
+    .from("gt06_devices")
+    .update({ moto_id: motoId })
+    .eq("imei", imei.trim())
+    .eq("company_id", companyId);
+  if (error) throw new Error(error.message);
 }
 
 // ─── Apelido local (localStorage, por empresa) — mesmo padrão de brasilsat.ts ─
@@ -148,41 +169,4 @@ export function saveDeviceName(companyId: string, imei: string, name: string) {
   if (name.trim()) names[imei] = name.trim();
   else delete names[imei];
   localStorage.setItem(companyKey(NAMES_KEY, companyId), JSON.stringify(names));
-}
-
-// ─── Sincronização de KM — não se aplica ao GT06, mas o driver precisa expor a
-// interface (nunca é de fato usada: syncKm() sai cedo pra esse provedor). ──────
-
-export interface KmSyncConfig {
-  marginKm: number;
-}
-
-export function loadKmSyncConfig(_companyId: string): KmSyncConfig {
-  return { marginKm: 0 };
-}
-export function saveKmSyncConfig(_companyId: string, _cfg: KmSyncConfig) {
-  // no-op — sem km sync pra este provedor
-}
-
-// ─── "Config" de conexão — não guarda credencial nenhuma, só existe pra manter
-// a interface uniforme com os outros provedores (connect() sempre chama saveConfig
-// depois de autenticar). ────────────────────────────────────────────────────────
-
-const CONFIG_KEY = "gt06-config-v1";
-
-export function loadGt06Config(companyId: string): Gt06Config | null {
-  try {
-    const raw = localStorage.getItem(companyKey(CONFIG_KEY, companyId));
-    return raw ? JSON.parse(raw) : {};
-  } catch {
-    return {};
-  }
-}
-
-export function saveGt06Config(companyId: string, cfg: Gt06Config) {
-  localStorage.setItem(companyKey(CONFIG_KEY, companyId), JSON.stringify(cfg));
-}
-
-export function clearGt06Config(companyId: string) {
-  localStorage.removeItem(companyKey(CONFIG_KEY, companyId));
 }

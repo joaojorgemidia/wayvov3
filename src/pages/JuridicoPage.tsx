@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useCallback } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
 import { dbToLegalCase, dbToLegalCaseUpdate } from "@/lib/db-mappers";
+import { getActiveCompanyId, setActiveCompanyId } from "@/lib/companies";
 import { LegalCase, LegalCaseStatus, LegalCaseUpdate } from "@/lib/types";
 import { WayvoLogo } from "@/components/WayvoLogo";
 import { Button } from "@/components/ui/button";
@@ -49,6 +50,15 @@ export default function JuridicoPage() {
   const [statusFilter, setStatusFilter] = useState<"todos" | LegalCaseStatus>("todos");
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState<LegalCase | null>(null);
+  // Quem gerencia mais de uma locadora (staff com várias empresas, ou advogado com
+  // acesso a mais de uma via legal_company_access) precisa escolher qual delas está
+  // vendo — sem isso, casos de empresas diferentes apareciam misturados na mesma
+  // lista/KPIs, já que a RLS de legal_cases libera todas as empresas que o usuário
+  // tem acesso, não só a "ativa" (esta página roda fora do CompanyProvider, então
+  // não existe uma "empresa ativa" pronta como no resto do app).
+  const [selectedCompanyId, setSelectedCompanyId] = useState<string | null>(null);
+
+  const [companyOptions, setCompanyOptions] = useState<{ id: string; nome: string }[]>([]);
 
   const loadCases = useCallback(async () => {
     setLoading(true);
@@ -67,18 +77,73 @@ export default function JuridicoPage() {
 
   useEffect(() => { loadCases(); }, [loadCases]);
 
+  // Lista de locadoras que este usuário administra — via user_companies (staff) e
+  // legal_company_access (advogado externo). Importante buscar isso direto, e não
+  // derivar dos casos já carregados: uma locadora sem NENHUM caso ainda simplesmente
+  // não apareceria como opção, e a tela caía de volta pra mostrar a única locadora
+  // que tem caso — mesmo que não fosse a que o usuário estava navegando (bug real
+  // reportado: acessar /juridico pela Motovia mostrava um cliente da Loca2Rodas,
+  // porque só a Loca2Rodas tinha caso aberto).
+  useEffect(() => {
+    if (!user) return;
+    let cancelled = false;
+    (async () => {
+      const [{ data: viaStaff }, { data: viaAdvogado }] = await Promise.all([
+        supabase.from("user_companies").select("company_id").eq("user_id", user.id),
+        supabase.from("legal_company_access").select("company_id").eq("user_id", user.id),
+      ]);
+      if (cancelled) return;
+      const ids = Array.from(new Set([
+        ...(viaStaff || []).map((r: any) => r.company_id),
+        ...(viaAdvogado || []).map((r: any) => r.company_id),
+      ]));
+      if (ids.length === 0) { setCompanyOptions([]); return; }
+      const { data: companiesData } = await supabase.from("companies").select("id, nome").in("id", ids);
+      if (cancelled) return;
+      const options = (companiesData || [])
+        .map((c: any) => ({ id: c.id, nome: c.nome || c.id }))
+        .sort((a, b) => a.nome.localeCompare(b.nome));
+      setCompanyOptions(options);
+    })();
+    return () => { cancelled = true; };
+  }, [user]);
+
+  // Escolhe a locadora ativa quando a lista de opções muda: mantém a seleção atual se
+  // ainda for válida, senão tenta a "empresa ativa" salva pelo resto do app (mesma
+  // localStorage key usada pelo CompanyContext), e só cai pra primeira opção se nem
+  // isso bater com nenhum caso deste usuário.
+  useEffect(() => {
+    if (companyOptions.length === 0) { setSelectedCompanyId(null); return; }
+    setSelectedCompanyId(prev => {
+      if (prev && companyOptions.some(c => c.id === prev)) return prev;
+      const lastActive = getActiveCompanyId();
+      if (lastActive && companyOptions.some(c => c.id === lastActive)) return lastActive;
+      return companyOptions[0].id;
+    });
+  }, [companyOptions]);
+
+  const handleSwitchCompany = (id: string) => {
+    setSelectedCompanyId(id);
+    setActiveCompanyId(id);
+  };
+
+  const casesDaEmpresa = useMemo(
+    () => cases.filter(c => c.companyId === selectedCompanyId),
+    [cases, selectedCompanyId],
+  );
+
   const kpis = useMemo(() => {
-    const totalSaldo = cases.reduce((s, c) => s + c.saldoPendenteSnapshot, 0);
-    const totalRecuperado = cases.reduce((s, c) => s + c.valorRecuperado, 0);
-    const totalEmRecuperacao = cases.reduce((s, c) => s + c.valorEmRecuperacao, 0);
+    const totalSaldo = casesDaEmpresa.reduce((s, c) => s + c.saldoPendenteSnapshot, 0);
+    const totalRecuperado = casesDaEmpresa.reduce((s, c) => s + c.valorRecuperado, 0);
+    const totalEmRecuperacao = casesDaEmpresa.reduce((s, c) => s + c.valorEmRecuperacao, 0);
     const taxa = totalSaldo > 0 ? (totalRecuperado / totalSaldo) * 100 : 0;
     const counts: Record<LegalCaseStatus, number> = { nao_iniciado: 0, em_andamento: 0, sucesso: 0, falha: 0 };
-    cases.forEach(c => counts[c.status]++);
+    casesDaEmpresa.forEach(c => counts[c.status]++);
     return { totalSaldo, totalRecuperado, totalEmRecuperacao, taxa, counts };
-  }, [cases]);
+  }, [casesDaEmpresa]);
 
   const filtered = useMemo(() => {
-    let list = cases;
+    let list = casesDaEmpresa;
     if (statusFilter !== "todos") list = list.filter(c => c.status === statusFilter);
     const q = search.trim().toLowerCase();
     if (q) {
@@ -89,7 +154,7 @@ export default function JuridicoPage() {
       );
     }
     return list;
-  }, [cases, statusFilter, search]);
+  }, [casesDaEmpresa, statusFilter, search]);
 
   const handleUpdated = (updated: LegalCase) => {
     setCases(prev => prev.map(c => (c.id === updated.id ? updated : c)));
@@ -106,6 +171,19 @@ export default function JuridicoPage() {
           </span>
         </div>
         <div className="flex items-center gap-3">
+          {companyOptions.length > 1 && (
+            <Select value={selectedCompanyId ?? undefined} onValueChange={handleSwitchCompany}>
+              <SelectTrigger className="h-8 w-auto min-w-[160px] text-xs">
+                <SelectValue placeholder="Locadora" />
+              </SelectTrigger>
+              <SelectContent>
+                {companyOptions.map(c => <SelectItem key={c.id} value={c.id}>{c.nome}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          )}
+          {companyOptions.length === 1 && (
+            <span className="text-xs text-muted-foreground hidden sm:inline">{companyOptions[0].nome}</span>
+          )}
           <span className="text-sm text-muted-foreground hidden sm:inline">{user?.email}</span>
           <Button variant="outline" size="sm" onClick={signOut}>
             <LogOut className="h-3.5 w-3.5 mr-1.5" /> Sair
@@ -147,7 +225,7 @@ export default function JuridicoPage() {
             onClick={() => setStatusFilter("todos")}
             className={`text-xs font-semibold px-3 py-1.5 rounded-full border transition-colors ${statusFilter === "todos" ? "bg-foreground text-background border-foreground" : "bg-background text-muted-foreground border-border hover:bg-muted"}`}
           >
-            Todos · {cases.length}
+            Todos · {casesDaEmpresa.length}
           </button>
           {STATUS_ORDER.map(s => (
             <button

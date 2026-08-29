@@ -277,6 +277,7 @@ export function computeKpis(
   rentals: Rental[],
   brandCfg: Record<string, BrandConfig>,
   globalCfg: OilGlobalConfig,
+  period?: { from?: string; to?: string },
 ): OilKpis {
   let conformOk = 0;
   let conformTot = 0;
@@ -292,6 +293,10 @@ export function computeKpis(
     const cfg = brandConfigFor(m.modelo, brandCfg, m.categoriaVeiculo);
     const hist = sortedHistory(m);
     for (let i = 1; i < hist.length; i++) {
+      // Período filtra pela data da troca avaliada (hist[i]), não pela troca
+      // anterior usada só como referência do km esperado.
+      if (period?.from && hist[i].data < period.from) continue;
+      if (period?.to && hist[i].data > period.to) continue;
       const dev = changeDeviation(hist[i - 1], hist[i], cfg.oilKm);
       conformTot++;
       if (Math.abs(dev) <= globalCfg.windowKm) conformOk++;
