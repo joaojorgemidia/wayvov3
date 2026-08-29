@@ -538,7 +538,7 @@ export default function ManutencoesPage() {
     setFormOpen(true);
   };
 
-  const syncFinancial = async (os: Maintenance) => {
+  const syncFinancial = async (os: Maintenance, opts?: { skipReceita?: boolean }) => {
     const custo = os.itens.length > 0 ? computeCusto(os.itens) : os.custo;
 
     // Leitura única — evita condição de corrida entre múltiplas gravações
@@ -557,7 +557,7 @@ export default function ManutencoesPage() {
       });
 
       // Receitas do locatário
-      if (os.quemPaga === "locatario" && os.vincularLocatario !== false) {
+      if (os.quemPaga === "locatario" && os.vincularLocatario !== false && !opts?.skipReceita) {
         const novas = buildReceitaLocatarioEntries(os, motos, rentals);
 
         if (linkedReceitas.length === 0) {
@@ -597,6 +597,24 @@ export default function ManutencoesPage() {
     await storeFinancialAll(next);
   };
 
+  // Confirma antes de cobrar o locatário pela manutenção — é dinheiro sendo
+  // lançado no nome dele, não deve acontecer só como efeito colateral
+  // silencioso de salvar/concluir a OS. Só pergunta na PRIMEIRA vez que a
+  // receita for gerada pra essa OS — reaberturas/edições que só ajustam uma
+  // cobrança já existente não perguntam de novo.
+  const confirmReceitaLocatario = (os: Maintenance): boolean => {
+    if (os.status !== "concluida" || os.quemPaga !== "locatario" || os.vincularLocatario === false) return true;
+    const jaExiste = loadFinancial().some((e) => e.fixedOriginId === os.id && e.categoria === "manutencao_receita");
+    if (jaExiste) return true;
+    const entradas = buildReceitaLocatarioEntries(os, motos, rentals);
+    if (entradas.length === 0) return true;
+    const total = entradas.reduce((s, e) => s + e.valor, 0);
+    const moto = motos.find((m) => m.id === os.motoId);
+    return confirm(
+      `Gerar cobrança de R$ ${total.toLocaleString("pt-BR", { minimumFractionDigits: 2 })} pro locatário da ${moto?.placa || "moto"} referente a essa manutenção?`,
+    );
+  };
+
   const handleSave = async () => {
     if (!form.motoId) { toast.error("Selecione a moto"); return; }
     if (!form.oficina.trim()) { toast.error("Informe a oficina"); return; }
@@ -604,13 +622,14 @@ export default function ManutencoesPage() {
       toast.error("Selecione a conta de débito para registrar o pagamento");
       return;
     }
+    const gerarReceita = confirmReceitaLocatario(form);
     try {
       await save(form);
       // Feedback imediato — financeiro e km atualizam em background
       // (storeFinancialAll atualiza o cache sincronamente antes de qualquer await)
       toast.success(form.numeroOS ? `${form.numeroOS} salva` : "OS salva");
       setFormOpen(false);
-      syncFinancial(form).catch(err => console.error("[syncFinancial]", err));
+      syncFinancial(form, { skipReceita: !gerarReceita }).catch(err => console.error("[syncFinancial]", err));
       if (form.km !== null && form.km > 0) {
         const moto = motos.find((m) => m.id === form.motoId);
         if (moto && (moto.kmAtual === null || form.km > moto.kmAtual)) {
@@ -663,12 +682,13 @@ export default function ManutencoesPage() {
       toast.info("Selecione a conta de débito para registrar o pagamento");
       return;
     }
+    const updated = { ...os, status };
+    const gerarReceita = confirmReceitaLocatario(updated);
     try {
-      const updated = { ...os, status };
       await save(updated);
       if (detailOS?.id === os.id) setDetailOS(updated);
       toast.success(`Status atualizado para "${STATUS_CONFIG[status].label}"`);
-      syncFinancial(updated).catch(err => console.error("[syncFinancial]", err));
+      syncFinancial(updated, { skipReceita: !gerarReceita }).catch(err => console.error("[syncFinancial]", err));
     } catch {
       toast.error("Erro ao atualizar status");
     }
@@ -1143,7 +1163,7 @@ export default function ManutencoesPage() {
                 <Label className="text-xs">Oficina</Label>
                 <button
                   type="button"
-                  onClick={() => window.open("/manutencoes/config", "_blank")}
+                  onClick={() => window.open("/configuracoes?tab=manutencoes", "_blank")}
                   className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
                 >
                   <SlidersHorizontal className="h-3 w-3" /> Gerenciar

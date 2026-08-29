@@ -17,7 +17,6 @@ const MotosPage = React.lazy(() => import("./pages/MotosPage"));
 const ClientesPage = React.lazy(() => import("./pages/ClientesPage"));
 const LocacoesPage = React.lazy(() => import("./pages/LocacoesPage"));
 const ManutencoesPage = React.lazy(() => import("./pages/ManutencoesPage"));
-const ManutencoesConfigPage = React.lazy(() => import("./pages/ManutencoesConfigPage"));
 const MultasPage = React.lazy(() => import("./pages/MultasPage"));
 const FinanceiroPage = React.lazy(() => import("./pages/FinanceiroPage"));
 const RelatoriosPage = React.lazy(() => import("./pages/RelatoriosPage"));
@@ -95,7 +94,6 @@ const App = () => (
                   <Route path="/clientes" element={<ClientesPage />} />
                   <Route path="/locacoes" element={<LocacoesPage />} />
                   <Route path="/manutencoes" element={<ManutencoesPage />} />
-                  <Route path="/manutencoes/config" element={<ManutencoesConfigPage />} />
                   <Route path="/multas" element={<MultasPage />} />
                   <Route path="/financeiro" element={<FinanceiroPage />} />
                   <Route path="/relatorios" element={<RelatoriosPage />} />

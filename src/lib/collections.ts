@@ -1,3 +1,6 @@
+import type { ComponentType } from "react";
+import { Wallet, Receipt, Coins, Droplet, ClipboardCheck, Wrench } from "lucide-react";
+
 /**
  * Sistema de cobranças / follow-ups.
  *
@@ -63,6 +66,50 @@ export const MODULE_LABELS: Record<CollectionModule, string> = {
   oleo: "Troca de Óleo",
   vistoria: "Vistoria",
   manutencao: "Manutenção",
+};
+
+export const MODULE_ICONS: Record<CollectionModule, ComponentType<{ className?: string }>> = {
+  pagamento: Wallet,
+  multa: Receipt,
+  outras_receitas: Coins,
+  oleo: Droplet,
+  vistoria: ClipboardCheck,
+  manutencao: Wrench,
+};
+
+export const MODULE_TONES: Record<CollectionModule, {
+  stripe: string; bgSoft: string; text: string; tile: string; badge: string;
+}> = {
+  pagamento: {
+    stripe: "bg-primary", bgSoft: "bg-primary/5", text: "text-primary",
+    tile: "bg-primary/10 text-primary border-primary/30",
+    badge: "bg-primary text-primary-foreground",
+  },
+  multa: {
+    stripe: "bg-destructive", bgSoft: "bg-destructive/5", text: "text-destructive",
+    tile: "bg-destructive/10 text-destructive border-destructive/30",
+    badge: "bg-destructive text-destructive-foreground",
+  },
+  outras_receitas: {
+    stripe: "bg-success", bgSoft: "bg-success/5", text: "text-success",
+    tile: "bg-success/10 text-success border-success/30",
+    badge: "bg-success text-success-foreground",
+  },
+  oleo: {
+    stripe: "bg-warning", bgSoft: "bg-warning/5", text: "text-warning",
+    tile: "bg-warning/10 text-warning border-warning/30",
+    badge: "bg-warning text-warning-foreground",
+  },
+  vistoria: {
+    stripe: "bg-foreground/50", bgSoft: "bg-muted/40", text: "text-foreground",
+    tile: "bg-muted text-foreground border-border",
+    badge: "bg-foreground/80 text-background",
+  },
+  manutencao: {
+    stripe: "bg-muted-foreground", bgSoft: "bg-muted/50", text: "text-foreground",
+    tile: "bg-muted text-foreground border-border",
+    badge: "bg-muted-foreground text-background",
+  },
 };
 
 /** Régua padrão (3 etapas) sugerida para cada módulo. */

@@ -10,9 +10,7 @@ import { toast } from "sonner";
 import { Building2, MoreVertical, Pencil, Plus, Tag, Trash2 } from "lucide-react";
 import { usePermissions } from "@/hooks/usePermissions";
 
-const DEFAULT_TIPOS_SEED = ["Troca de Óleo", "Revisão", "Reparo", "Vistoria", "Outro"];
-
-export default function ManutencoesConfigPage() {
+export function ManutencoesConfigSection() {
   const [config, setConfig] = useState(loadMaintenanceConfig);
   const { canCreate, canEdit, canDelete } = usePermissions();
 
@@ -87,14 +85,7 @@ export default function ManutencoesConfigPage() {
   };
 
   return (
-    <div className="mx-auto max-w-[900px] space-y-10 p-4 md:p-6">
-      <div>
-        <h1 className="text-xl font-bold text-foreground">Configurações de Manutenção</h1>
-        <p className="mt-0.5 text-sm text-muted-foreground">
-          Gerencie os tipos de OS e as oficinas cadastradas
-        </p>
-      </div>
-
+    <div className="space-y-10">
       {/* ── Seção Tipos ─────────────────────────────────────────── */}
       <section className="space-y-4">
         <div className="flex items-center justify-between">

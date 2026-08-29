@@ -15,11 +15,9 @@ import { SearchableSelect } from "@/components/ui/searchable-select";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { BulkActionBar, SelectAllCheckbox, toggleSelected } from "@/components/ui/bulk-action-bar";
-import { Plus, Search, AlertTriangle, Pencil, Trash2, RefreshCw, Car, Loader2, CheckCircle2, XCircle, Info, Settings, ShieldCheck, Upload, ScanLine, CheckCheck, Circle } from "lucide-react";
+import { Plus, Search, AlertTriangle, Pencil, Trash2, RefreshCw, Car, Loader2, CheckCircle2, XCircle, Info, Settings, Upload, ScanLine, CheckCheck, Circle } from "lucide-react";
 import { usePermissions } from "@/hooks/usePermissions";
 import { toast } from "sonner";
-import DetranConfigDialog from "@/components/DetranConfigDialog";
-import { DetranConfig } from "@/lib/companies";
 
 function arrayBufferToBase64(buffer: ArrayBuffer): string {
   let binary = "";
@@ -109,8 +107,7 @@ function findRentalForClientAtDate(clienteId: string, dateIso: string | null, re
 // ─── Main component ────────────────────────────────────────────────────────────
 export default function MultasPage() {
   const cache = useDataCacheSnapshot();
-  const { activeCompany, updateDetranConfig } = useCompany();
-  const [detranConfigOpen, setDetranConfigOpen] = useState(false);
+  const { activeCompany } = useCompany();
   const [fines, setFines] = useState<Fine[]>([]);
   const motos = cache.motos;
   const clients = cache.clients;
@@ -240,12 +237,18 @@ export default function MultasPage() {
     // No cadastro, só a receita (cobrança ao locatário) é lançada — quem paga o órgão (a
     // locadora ou o próprio locatário direto), com qual valor/data/conta, só é decidido na
     // hora de confirmar o pagamento (handleConfirmPagaMulta), não aqui.
-    const deveGerarReceita = isNew && valor > 0 && gerarEntrada;
+    const moto = motos.find(m => m.id === finalForm.motoId);
+    const client = finalForm.clienteId ? clients.find(c => c.id === finalForm.clienteId) : null;
+    const placa = moto?.placa || finalForm.motoId;
+    const deveGerarReceita = isNew && valor > 0 && gerarEntrada
+      // Confirma antes de cobrar o locatário — é dinheiro sendo lançado no nome dele, então
+      // não deve acontecer só como efeito colateral silencioso de salvar a multa.
+      && confirm(
+        `Gerar cobrança de R$ ${valor.toLocaleString("pt-BR", { minimumFractionDigits: 2 })} pro locatário` +
+        `${client ? ` ${client.nome}` : ""} referente a essa multa (placa ${placa})?`,
+      );
 
     if (deveGerarReceita) {
-      const moto = motos.find(m => m.id === finalForm.motoId);
-      const client = finalForm.clienteId ? clients.find(c => c.id === finalForm.clienteId) : null;
-      const placa = moto?.placa || finalForm.motoId;
       const { descricao, observacao } = buildMultaDescObs(finalForm, placa);
       // Vence junto com a multa (Data de Vencimento), não no dia do cadastro — cobrar o
       // locatário antes da própria multa vencer não faz sentido, e é essa data que o
@@ -626,15 +629,6 @@ export default function MultasPage() {
             <div className="flex items-center gap-2">
               <Button variant="outline" onClick={openDetran} className="gap-2">
                 <RefreshCw className="h-4 w-4" /> Consultar DETRAN-GO
-              </Button>
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={() => setDetranConfigOpen(true)}
-                title={detranConfigurado ? "Editar credenciais DETRAN-GO" : "Configurar DETRAN-GO"}
-                className={detranConfigurado ? "text-blue-600 hover:text-blue-700" : "text-muted-foreground"}
-              >
-                {detranConfigurado ? <ShieldCheck className="h-4 w-4" /> : <Settings className="h-4 w-4" />}
               </Button>
             </div>
           )}
@@ -1032,19 +1026,6 @@ export default function MultasPage() {
         </DialogContent>
       </Dialog>
 
-      {/* ── Config DETRAN ────────────────────────────────────────────────────── */}
-      <DetranConfigDialog
-        open={detranConfigOpen}
-        onClose={() => setDetranConfigOpen(false)}
-        onSave={async (config: DetranConfig | null) => {
-          await updateDetranConfig(activeCompany.id, config);
-          if (config) toast.success("DETRAN-GO conectado com sucesso.");
-          else toast.success("Integração DETRAN removida.");
-        }}
-        current={activeCompany?.detranConfig}
-        companyName={activeCompany?.nome}
-      />
-
       {/* ── Sheet DETRAN ─────────────────────────────────────────────────────── */}
       <Sheet open={detranOpen} onOpenChange={setDetranOpen}>
         <SheetContent side="right" className="w-full sm:max-w-3xl overflow-y-auto flex flex-col gap-0 p-0">
@@ -1065,7 +1046,7 @@ export default function MultasPage() {
                 <Button
                   size="sm" variant="outline"
                   className="h-7 text-xs border-yellow-400 text-yellow-800 hover:bg-yellow-100"
-                  onClick={() => { setDetranOpen(false); setDetranConfigOpen(true); }}
+                  onClick={() => window.open("/configuracoes", "_blank")}
                 >
                   <Settings className="h-3.5 w-3.5 mr-1.5" /> Configurar DETRAN-GO
                 </Button>

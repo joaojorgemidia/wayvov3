@@ -1,7 +1,7 @@
 import {
   Bike, LayoutDashboard, Users, FileText, DollarSign, Wrench,
   AlertTriangle, BarChart3, Droplets, Search,
-  Package, MapPin, UserSearch, ChevronDown, MoreHorizontal, Landmark, ShieldCheck, History, BellRing, Settings, Building2, FileSignature, Scale
+  Package, MapPin, UserSearch, ChevronDown, MoreHorizontal, ShieldCheck, History, BellRing, Settings, Building2, FileSignature, Scale
 } from "lucide-react";
 import { WayvoLogo } from "@/components/WayvoLogo";
 import { useAuth } from "@/contexts/AuthContext";
@@ -28,9 +28,27 @@ const items: MenuItem[] = [
   // — Dia a dia —
   { title: "Visão Geral", url: "/dashboard", icon: LayoutDashboard },
   { title: "Pagamentos", url: "/cobrancas/semana", icon: BellRing },
-  { title: "Locações", url: "/locacoes", icon: FileText },
-  { title: "Contratos", url: "/contratos", icon: FileSignature },
-  { title: "Clientes", url: "/clientes", icon: Users },
+  { title: "Troca de Óleo", url: "/troca-oleo", icon: Droplets },
+  { title: "Multas de trânsito", url: "/multas", icon: AlertTriangle },
+  { title: "Vistoria", url: "/vistoria", icon: Search },
+  { title: "Rastreamento", url: "/rastreamento", icon: MapPin },
+  { title: "Manutenções", url: "/manutencoes", icon: Wrench },
+  // — Financeiro & Análise —
+  {
+    title: "Finanças", url: "/financeiro", icon: DollarSign,
+    children: [
+      { title: "Finanças", url: "/financeiro" },
+      { title: "Contas", url: "/contas" },
+    ],
+  },
+  {
+    title: "Clientes", url: "/clientes", icon: Users,
+    children: [
+      { title: "Clientes", url: "/clientes" },
+      { title: "Locações", url: "/locacoes" },
+      { title: "Contratos", url: "/contratos" },
+    ],
+  },
   // — Frota —
   {
     title: "Frota", url: "/motos", icon: Bike,
@@ -39,19 +57,6 @@ const items: MenuItem[] = [
       { title: "Controle Patrimonial", url: "/motos?tab=patrimonio" },
     ],
   },
-  {
-    title: "Manutenções", url: "/manutencoes", icon: Wrench,
-    children: [
-      { title: "Ordens de Serviço", url: "/manutencoes" },
-      { title: "Gerenciar", url: "/manutencoes/config" },
-    ],
-  },
-  { title: "Troca de Óleo", url: "/troca-oleo", icon: Droplets },
-  { title: "Vistoria", url: "/vistoria", icon: Search },
-  { title: "Rastreamento", url: "/rastreamento", icon: MapPin },
-  // — Financeiro & Análise —
-  { title: "Finanças", url: "/financeiro", icon: DollarSign },
-  { title: "Multas de trânsito", url: "/multas", icon: AlertTriangle },
   { title: "Relatórios", url: "/relatorios", icon: BarChart3 },
 ];
 
@@ -59,7 +64,6 @@ const items: MenuItem[] = [
 const comingSoonItems: MenuItem[] = [];
 
 const moreItems: MenuItem[] = [
-  { title: "Contas", url: "/contas", icon: Landmark },
   { title: "Histórico", url: "/historico", icon: History },
   { title: "Configurações", url: "/configuracoes", icon: Settings },
 ];

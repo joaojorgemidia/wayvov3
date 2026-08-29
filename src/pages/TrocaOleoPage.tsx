@@ -4,7 +4,6 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Switch } from "@/components/ui/switch";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from "@/components/ui/dialog";
@@ -18,7 +17,7 @@ import { saveMotos } from "@/lib/store";
 import { Motorcycle, OilChangeRecord } from "@/lib/types";
 import { formatDate } from "@/lib/alerts";
 import {
-  ChevronDown, ChevronRight, Pencil, Droplets, Search, Settings,
+  ChevronDown, ChevronRight, Pencil, Droplets, Search,
   Copy, Check, MessageCircle, AlertTriangle, TrendingUp, Activity,
   Repeat, Send, Phone, BellOff, Clock, Trash2,
 } from "lucide-react";
@@ -34,12 +33,11 @@ import { cn } from "@/lib/utils";
 import { InfoTooltip } from "@/components/InfoTooltip";
 import {
   HowItWorksDialog,
-  HowItWorksInlineButton,
   HowItWorksContent,
 } from "@/components/HowItWorksDialog";
 import {
   BrandConfig, OilGlobalConfig, OilSituation,
-  loadBrandConfig, saveBrandConfig, loadGlobalConfig, saveGlobalConfig,
+  loadBrandConfig, loadGlobalConfig,
   brandConfigFor, lastOilChange, getOilStatus,
   computeKpis, keywordOfTheDay,
   buildReincidenciaMessage, clientLateCount, clientAvgLateKm,
@@ -48,36 +46,16 @@ import { buildWhatsAppUrl, sanitizeWhatsAppNumber } from "@/lib/whatsapp";
 import { buildAllTokens, applyTokens } from "@/lib/message-tokens";
 import { maskPhone } from "@/lib/masks";
 import { TokenPalette } from "@/components/TokenPalette";
-import { useCollections } from "@/hooks/useCollections";
-import { CollectionRuleEditor } from "@/components/CollectionRuleEditor";
 import { MessagePopup } from "@/components/MessagePopup";
+import { startOfMonth, subDays } from "date-fns";
 
-function OleoRuleSection() {
-  const { rules, saveRule } = useCollections();
-  const [rule, setRule] = useState(rules.oleo);
-  useEffect(() => { setRule(rules.oleo); }, [rules.oleo]);
-  return (
-    <section className="space-y-3">
-      <div className="flex items-center gap-2">
-        <div className="h-7 w-7 rounded-md bg-warning/10 flex items-center justify-center">
-          <Repeat className="h-4 w-4 text-warning" />
-        </div>
-        <div>
-          <h3 className="text-sm font-semibold text-foreground">Régua de cobrança da Troca de Óleo</h3>
-          <p className="text-[11px] text-muted-foreground">
-            Etapas e mensagens enviadas para locatários em atraso. Compartilhada com Lista de tarefas › Configurações.
-          </p>
-        </div>
-      </div>
-      <CollectionRuleEditor
-        hideTitle
-        rule={rule}
-        onChange={setRule}
-        onSave={async (r) => { await saveRule(r); toast.success("Régua de Troca de Óleo salva"); }}
-      />
-    </section>
-  );
-}
+const OLEO_KPI_PERIODS = [
+  { label: "Este mês", getFrom: () => startOfMonth(new Date()) },
+  { label: "30d", getFrom: () => subDays(new Date(), 30) },
+  { label: "60d", getFrom: () => subDays(new Date(), 60) },
+  { label: "90d", getFrom: () => subDays(new Date(), 90) },
+  { label: "1 ano", getFrom: () => subDays(new Date(), 365) },
+];
 
 // ============== Conteúdo "Como funciona" ==============
 const TROCA_OLEO_HELP: HowItWorksContent = {
@@ -239,9 +217,10 @@ export default function TrocaOleoPage() {
     return motosAtivas.filter((m) => (m.categoriaVeiculo || "moto") === vehicleFilter);
   }, [motosAtivas, showVehicleFilter, vehicleFilter]);
 
-  const [brandConfig, setBrandConfig] = useState<Record<string, BrandConfig>>(() => loadBrandConfig());
-  const [globalConfig, setGlobalConfig] = useState<OilGlobalConfig>(() => loadGlobalConfig());
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  // Editados em Configurações › Troca de Óleo — aqui só leitura (localStorage, mesmas
+  // chaves), recarregada a cada vez que a página monta.
+  const [brandConfig] = useState<Record<string, BrandConfig>>(() => loadBrandConfig());
+  const [globalConfig] = useState<OilGlobalConfig>(() => loadGlobalConfig());
 
   // map motoId -> {clienteId, clienteNome}
   const motoClientMap = useMemo(() => {
@@ -264,6 +243,7 @@ export default function TrocaOleoPage() {
   const [search, setSearch] = useState("");
   const [kmRange, setKmRange] = useState<[number, number]>([kmBounds.min, kmBounds.max]);
   const [situacaoFilter, setSituacaoFilter] = useState<"todas" | OilSituation>("todas");
+  const [kpiPeriod, setKpiPeriod] = useState<string | null>(null); // null = Tudo (histórico completo)
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [editMoto, setEditMoto] = useState<Motorcycle | null>(null);
   const [registerMoto, setRegisterMoto] = useState<Motorcycle | null>(null);
@@ -440,9 +420,13 @@ export default function TrocaOleoPage() {
   );
 
   // KPIs
+  const kpiFromDate = useMemo(() => {
+    const preset = OLEO_KPI_PERIODS.find((p) => p.label === kpiPeriod);
+    return preset ? preset.getFrom() : null;
+  }, [kpiPeriod]);
   const kpis = useMemo(
-    () => computeKpis(motos, rentals, brandConfig, globalConfig),
-    [motos, rentals, brandConfig, globalConfig],
+    () => computeKpis(motos, rentals, brandConfig, globalConfig, kpiFromDate ? { from: kpiFromDate.toISOString().slice(0, 10) } : undefined),
+    [motos, rentals, brandConfig, globalConfig, kpiFromDate],
   );
 
   function toggleExpand(id: string) {
@@ -484,10 +468,12 @@ export default function TrocaOleoPage() {
 
   // Copia de uma vez o telefone (DDI 55 + DDD + número, só dígitos) de todos os locatários
   // com troca de óleo vencida — pra colar direto em ferramentas de disparo em massa.
+  // Carros nunca entram aqui, independente da aba Motos/Carros/Todos selecionada — locação
+  // de carro tem cobrança/vistoria/troca de óleo tratada à parte.
   function handleCopyOverduePhones() {
     const seen = new Set<string>();
     const numbers: string[] = [];
-    vencidasList.forEach((m) => {
+    vencidasList.filter((m) => (m.categoriaVeiculo || "moto") !== "carro").forEach((m) => {
       const digits = sanitizeWhatsAppNumber(motoClientMap.get(m.id)?.telefone);
       if (!digits || seen.has(digits)) return;
       seen.add(digits);
@@ -772,6 +758,36 @@ export default function TrocaOleoPage() {
   return (
     <div className="p-6 space-y-6">
       {/* Dashboard de KPIs */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <span className="text-xs text-muted-foreground">
+          Período considerado nos indicadores abaixo (pela data em que a troca ocorreu).
+        </span>
+        <div className="inline-flex items-center gap-0.5 bg-white border border-border rounded-xl p-1 shadow-sm">
+          <button
+            onClick={() => setKpiPeriod(null)}
+            className={`px-3.5 py-1.5 text-xs rounded-lg transition-all font-semibold ${
+              kpiPeriod === null
+                ? "bg-primary text-primary-foreground shadow-sm"
+                : "text-muted-foreground hover:text-foreground hover:bg-slate-100"
+            }`}
+          >
+            Tudo
+          </button>
+          {OLEO_KPI_PERIODS.map((p) => (
+            <button
+              key={p.label}
+              onClick={() => setKpiPeriod(p.label)}
+              className={`px-3.5 py-1.5 text-xs rounded-lg transition-all font-semibold ${
+                kpiPeriod === p.label
+                  ? "bg-primary text-primary-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground hover:bg-slate-100"
+              }`}
+            >
+              {p.label}
+            </button>
+          ))}
+        </div>
+      </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
         <KpiCard
           icon={<TrendingUp className="h-4 w-4" />}
@@ -880,10 +896,6 @@ export default function TrocaOleoPage() {
       {/* Ações de controle */}
       <div className="flex flex-wrap items-center justify-end gap-2">
         <HowItWorksDialog content={TROCA_OLEO_HELP} />
-        <Button size="sm" variant="outline" className="gap-1" onClick={() => setSettingsOpen(true)}>
-          <Settings className="h-4 w-4" />
-          Configurar
-        </Button>
         <Button
           size="sm"
           className="gap-1 bg-foreground text-background hover:bg-foreground/90"
@@ -1007,22 +1019,6 @@ export default function TrocaOleoPage() {
         moto={editMoto}
         onOpenChange={(o) => !o && setEditMoto(null)}
         onSave={handleSaveEdit}
-      />
-
-      <ConfigDialog
-        open={settingsOpen}
-        onOpenChange={setSettingsOpen}
-        brandConfig={brandConfig}
-        globalConfig={globalConfig}
-        showCarroSection={showVehicleFilter}
-        onSave={(brand, global) => {
-          setBrandConfig(brand);
-          saveBrandConfig(brand);
-          setGlobalConfig(global);
-          saveGlobalConfig(global);
-          toast.success("Configuração salva");
-          setSettingsOpen(false);
-        }}
       />
 
       <MessagePopup
@@ -1547,413 +1543,6 @@ function EditMotoDialog({
             }}
           >
             Salvar Km
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-// ============== Config Dialog (marca + global) ==============
-function ConfigDialog({
-  open, onOpenChange, brandConfig, globalConfig, showCarroSection, onSave,
-}: {
-  open: boolean;
-  onOpenChange: (o: boolean) => void;
-  brandConfig: Record<string, BrandConfig>;
-  globalConfig: OilGlobalConfig;
-  showCarroSection?: boolean;
-  onSave: (brand: Record<string, BrandConfig>, global: OilGlobalConfig) => void;
-}) {
-  const [hondaOil, setHondaOil] = useState("");
-  const [yamahaOil, setYamahaOil] = useState("");
-  const [yamahaFilter, setYamahaFilter] = useState("");
-  const [outrasOil, setOutrasOil] = useState("");
-  const [carroOil, setCarroOil] = useState("");
-  const [windowKm, setWindowKm] = useState("");
-  const [defaultKmWeek, setDefaultKmWeek] = useState("");
-  const [useBrandDefault, setUseBrandDefault] = useState(false);
-  const [hondaKmWeek, setHondaKmWeek] = useState("");
-  const [yamahaKmWeek, setYamahaKmWeek] = useState("");
-  const [outrasKmWeek, setOutrasKmWeek] = useState("");
-  const [overdueDays, setOverdueDays] = useState("");
-  const [keywordPeriodDays, setKeywordPeriodDays] = useState("");
-  const [adaptiveMinTrocas, setAdaptiveMinTrocas] = useState("");
-  const [keywordsText, setKeywordsText] = useState("");
-  // Templates de mensagem por etapa (atencao + 3 cobranças de vencida).
-  const TPL_KEYS = [
-    { key: "oleo:em-dia",          label: "Em dia (lembrete)",           tone: "warning" as const },
-    { key: "oleo:atencao",         label: "Atenção (próxima do limite)", tone: "warning" as const },
-    { key: "oleo:km-ultrapassado", label: "Km limite ultrapassado",      tone: "danger"  as const },
-    { key: "oleo:vencida-1",       label: "Vencida · 1ª cobrança",       tone: "danger"  as const },
-    { key: "oleo:vencida-2",       label: "Vencida · 2ª cobrança",       tone: "danger"  as const },
-    { key: "oleo:vencida-3",       label: "Vencida · 3ª cobrança",       tone: "danger"  as const },
-  ];
-  const [tplValues, setTplValues] = useState<Record<string, string>>({});
-  const [tplActive, setTplActive] = useState<string>("oleo:vencida-1");
-
-  useEffect(() => {
-    if (open) {
-      setHondaOil(String(brandConfig.honda?.oilKm ?? 1000));
-      setYamahaOil(String(brandConfig.yamaha?.oilKm ?? 2000));
-      setYamahaFilter(String(brandConfig.yamaha?.filterKm ?? 4000));
-      setOutrasOil(String(brandConfig.outras?.oilKm ?? 1000));
-      setCarroOil(String(brandConfig.carro?.oilKm ?? 10000));
-      setWindowKm(String(globalConfig.windowKm));
-      setDefaultKmWeek(String(Math.round(globalConfig.defaultKmPerDay * 7)));
-      setUseBrandDefault(!!globalConfig.useBrandDefault);
-      const fallbackWeek = Math.round(globalConfig.defaultKmPerDay * 7);
-      setHondaKmWeek(String(Math.round((brandConfig.honda?.defaultKmPerDay ?? globalConfig.defaultKmPerDay) * 7) || fallbackWeek));
-      setYamahaKmWeek(String(Math.round((brandConfig.yamaha?.defaultKmPerDay ?? globalConfig.defaultKmPerDay) * 7) || fallbackWeek));
-      setOutrasKmWeek(String(Math.round((brandConfig.outras?.defaultKmPerDay ?? globalConfig.defaultKmPerDay) * 7) || fallbackWeek));
-      setOverdueDays(String(globalConfig.overdueDays ?? 10));
-      setKeywordPeriodDays(String(globalConfig.keywordPeriodDays ?? 1));
-      setAdaptiveMinTrocas(String(globalConfig.adaptiveMinTrocas ?? 3));
-      setKeywordsText(globalConfig.keywords.join(", "));
-      const next: Record<string, string> = {};
-      for (const t of TPL_KEYS) {
-        try {
-          next[t.key] = localStorage.getItem("wayvo:msg-template:v3:" + t.key) ?? "";
-        } catch { next[t.key] = ""; }
-      }
-      setTplValues(next);
-    }
-  }, [open, brandConfig, globalConfig]);
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto p-0 gap-0">
-        <DialogHeader className="px-6 pt-6 pb-4 border-b">
-          <DialogTitle className="flex items-center gap-2 text-lg">
-            <Settings className="h-5 w-5 text-primary" />
-            Configurações de Troca de Óleo
-          </DialogTitle>
-          <div className="flex items-center justify-between gap-3 mt-1">
-            <p className="text-xs text-muted-foreground">
-              Defina regras de vencimento, padrões da frota e parâmetros por marca.
-            </p>
-            <HowItWorksInlineButton content={TROCA_OLEO_HELP} />
-          </div>
-        </DialogHeader>
-
-        <div className="px-6 py-5 space-y-6">
-          {/* === Regras de Vencimento === */}
-          <section className="space-y-3">
-            <div className="flex items-center gap-2">
-              <div className="h-7 w-7 rounded-md bg-destructive/10 flex items-center justify-center">
-                <AlertTriangle className="h-4 w-4 text-destructive" />
-              </div>
-              <div>
-                <h3 className="text-sm font-semibold text-foreground">Regras de Vencimento</h3>
-                <p className="text-[11px] text-muted-foreground">
-                  Como o sistema decide se uma moto está <strong>VENCIDA</strong>.
-                </p>
-              </div>
-            </div>
-            <div className="rounded-lg border bg-card p-4 grid grid-cols-2 gap-4">
-              <div className="space-y-1.5">
-                <Label className="text-xs font-medium">Tolerância ±km do limite</Label>
-                <Input type="number" value={windowKm} onChange={(e) => setWindowKm(e.target.value)} />
-                <p className="text-[11px] text-muted-foreground leading-snug">
-                  Trocas dentro dessa faixa contam como conformes.
-                </p>
-              </div>
-              <div className="space-y-1.5">
-                <Label className="text-xs font-medium">Dias para considerar VENCIDA</Label>
-                <Input type="number" value={overdueDays} onChange={(e) => setOverdueDays(e.target.value)} />
-                <p className="text-[11px] text-muted-foreground leading-snug">
-                  Fallback quando o locatário não tem histórico confiável.
-                </p>
-              </div>
-              <div className="space-y-1.5 col-span-2">
-                <Label className="text-xs font-medium">Trocas consecutivas conformes (modo adaptativo)</Label>
-                <Input type="number" value={adaptiveMinTrocas} onChange={(e) => setAdaptiveMinTrocas(e.target.value)} />
-                <p className="text-[11px] text-muted-foreground leading-snug">
-                  Mínimo de trocas seguidas dentro da tolerância para usar o ritmo do locatário em vez dos dias.
-                </p>
-              </div>
-            </div>
-          </section>
-
-          {/* === Intervalo de troca por marca/tipo === */}
-          <section className="space-y-3">
-            <div className="flex items-center gap-2">
-              <div className="h-7 w-7 rounded-md bg-warning/10 flex items-center justify-center">
-                <Droplets className="h-4 w-4 text-warning" />
-              </div>
-              <div>
-                <h3 className="text-sm font-semibold text-foreground">Intervalo de troca (km)</h3>
-                <p className="text-[11px] text-muted-foreground">
-                  A cada quantos km cada marca/tipo de veículo precisa trocar o óleo.
-                </p>
-              </div>
-            </div>
-            <div className="rounded-lg border bg-card p-4 grid grid-cols-2 gap-4">
-              <div className="space-y-1.5">
-                <Label className="text-xs font-medium flex items-center gap-1.5">
-                  <span className="h-2 w-2 rounded-full bg-destructive" />
-                  Honda
-                </Label>
-                <Input type="number" value={hondaOil} onChange={(e) => setHondaOil(e.target.value)} />
-              </div>
-              <div className="space-y-1.5">
-                <Label className="text-xs font-medium flex items-center gap-1.5">
-                  <span className="h-2 w-2 rounded-full bg-primary" />
-                  Yamaha
-                </Label>
-                <Input type="number" value={yamahaOil} onChange={(e) => setYamahaOil(e.target.value)} />
-                <Input
-                  type="number"
-                  value={yamahaFilter}
-                  onChange={(e) => setYamahaFilter(e.target.value)}
-                  placeholder="Km da troca de filtro"
-                />
-                <p className="text-[10px] text-muted-foreground">2º campo: intervalo do filtro de óleo</p>
-              </div>
-              <div className="space-y-1.5">
-                <Label className="text-xs font-medium flex items-center gap-1.5">
-                  <span className="h-2 w-2 rounded-full bg-muted-foreground" />
-                  Outras marcas (moto)
-                </Label>
-                <Input type="number" value={outrasOil} onChange={(e) => setOutrasOil(e.target.value)} />
-              </div>
-              {showCarroSection && (
-                <div className="space-y-1.5">
-                  <Label className="text-xs font-medium flex items-center gap-1.5">
-                    <span className="h-2 w-2 rounded-full bg-success" />
-                    Carro
-                  </Label>
-                  <Input type="number" value={carroOil} onChange={(e) => setCarroOil(e.target.value)} />
-                  <p className="text-[10px] text-muted-foreground">Independente da marca do carro.</p>
-                </div>
-              )}
-            </div>
-          </section>
-
-          {/* === Padrão da frota === */}
-          <section className="space-y-3">
-            <div className="flex items-center gap-2">
-              <div className="h-7 w-7 rounded-md bg-primary/10 flex items-center justify-center">
-                <TrendingUp className="h-4 w-4 text-primary" />
-              </div>
-              <div>
-                <h3 className="text-sm font-semibold text-foreground">Padrão da frota</h3>
-                <p className="text-[11px] text-muted-foreground">
-                  Ritmo de uso considerado quando não há histórico do locatário.
-                </p>
-              </div>
-            </div>
-            <div className="rounded-lg border bg-card p-4 space-y-4">
-              <div className="space-y-1.5">
-                <Label className="text-xs font-medium">Padrão geral (km/semana)</Label>
-                <Input
-                  type="number"
-                  value={defaultKmWeek}
-                  onChange={(e) => setDefaultKmWeek(e.target.value)}
-                  disabled={useBrandDefault}
-                  className={cn(useBrandDefault && "opacity-60 cursor-not-allowed")}
-                />
-                <div className="flex items-center justify-between gap-3 pt-1">
-                  <Label htmlFor="use-brand-default" className="text-[11px] text-muted-foreground cursor-pointer leading-snug">
-                    Definir padrão por marca <span className="text-muted-foreground/70">(sobrepõe o valor acima)</span>
-                  </Label>
-                  <Switch
-                    id="use-brand-default"
-                    checked={useBrandDefault}
-                    onCheckedChange={setUseBrandDefault}
-                  />
-                </div>
-              </div>
-
-              {useBrandDefault && (
-                <div className="grid grid-cols-3 gap-3 pt-3 border-t">
-                  <div className="space-y-1.5">
-                    <Label className="text-xs font-medium flex items-center gap-1.5">
-                      <span className="h-2 w-2 rounded-full bg-destructive" />
-                      Honda
-                    </Label>
-                    <Input type="number" value={hondaKmWeek} onChange={(e) => setHondaKmWeek(e.target.value)} />
-                    <p className="text-[10px] text-muted-foreground">km/semana</p>
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label className="text-xs font-medium flex items-center gap-1.5">
-                      <span className="h-2 w-2 rounded-full bg-primary" />
-                      Yamaha
-                    </Label>
-                    <Input type="number" value={yamahaKmWeek} onChange={(e) => setYamahaKmWeek(e.target.value)} />
-                    <p className="text-[10px] text-muted-foreground">km/semana</p>
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label className="text-xs font-medium flex items-center gap-1.5">
-                      <span className="h-2 w-2 rounded-full bg-muted-foreground" />
-                      Outras
-                    </Label>
-                    <Input type="number" value={outrasKmWeek} onChange={(e) => setOutrasKmWeek(e.target.value)} />
-                    <p className="text-[10px] text-muted-foreground">km/semana</p>
-                  </div>
-                </div>
-              )}
-            </div>
-          </section>
-
-          {/* === Vistoria em vídeo === */}
-          <section className="space-y-3">
-            <div className="flex items-center gap-2">
-              <div className="h-7 w-7 rounded-md bg-warning/10 flex items-center justify-center">
-                <MessageCircle className="h-4 w-4 text-warning" />
-              </div>
-              <div>
-                <h3 className="text-sm font-semibold text-foreground">Vistoria em vídeo (reincidência)</h3>
-                <p className="text-[11px] text-muted-foreground">
-                  Palavra-chave usada na mensagem enviada a locatários reincidentes.
-                </p>
-              </div>
-            </div>
-            <div className="rounded-lg border bg-card p-4 space-y-3">
-              <div className="space-y-1.5">
-                <Label className="text-xs font-medium">Período de validade da palavra-chave (dias)</Label>
-                <Input type="number" value={keywordPeriodDays} onChange={(e) => setKeywordPeriodDays(e.target.value)} />
-              </div>
-              <div className="space-y-1.5">
-                <Label className="text-xs font-medium">Lista de palavras-chave (separadas por vírgula)</Label>
-                <Input
-                  value={keywordsText}
-                  onChange={(e) => setKeywordsText(e.target.value)}
-                  placeholder="girassol, pantera, oceano..."
-                />
-                <p className="text-[11px] text-muted-foreground leading-snug">
-                  O sistema sorteia uma palavra a cada período configurado.
-                </p>
-              </div>
-            </div>
-          </section>
-
-          {/* === Mensagens por etapa === */}
-          <section className="space-y-3">
-            <div className="flex items-center gap-2">
-              <div className="h-7 w-7 rounded-md bg-primary/10 flex items-center justify-center">
-                <MessageCircle className="h-4 w-4 text-primary" />
-              </div>
-              <div>
-                <h3 className="text-sm font-semibold text-foreground">Mensagens por etapa</h3>
-                <p className="text-[11px] text-muted-foreground">
-                  Modelos enviados em cada situação. Use <strong>{"{TOKENS}"}</strong> (ex.: {"{NOME}"}, {"{PLACA}"}, {"{KM_ATUAL}"}). Em branco = usa o modelo padrão do sistema.
-                </p>
-              </div>
-            </div>
-            <div className="rounded-lg border bg-card p-4 space-y-3">
-              <div className="flex flex-wrap gap-1.5">
-                {TPL_KEYS.map((t) => (
-                  <button
-                    key={t.key}
-                    type="button"
-                    onClick={() => setTplActive(t.key)}
-                    className={cn(
-                      "px-3 py-1.5 rounded-md text-xs font-medium border transition-colors",
-                      tplActive === t.key
-                        ? t.tone === "danger"
-                          ? "bg-destructive/10 text-destructive border-destructive/30"
-                          : "bg-warning/10 text-warning border-warning/30"
-                        : "bg-background text-muted-foreground border-border hover:bg-muted/50",
-                    )}
-                  >
-                    {t.label}
-                    {tplValues[t.key]?.trim() && (
-                      <span className="ml-1.5 inline-block h-1.5 w-1.5 rounded-full bg-primary" />
-                    )}
-                  </button>
-                ))}
-              </div>
-              <textarea
-                value={tplValues[tplActive] ?? ""}
-                onChange={(e) => setTplValues((prev) => ({ ...prev, [tplActive]: e.target.value }))}
-                rows={10}
-                spellCheck={false}
-                placeholder="Deixe em branco para usar o modelo padrão automático do sistema."
-                className="w-full rounded-md border border-input bg-muted/30 px-3 py-2.5 text-xs font-mono text-foreground/90 leading-relaxed resize-y min-h-[180px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              />
-              <div className="flex items-center justify-between gap-2">
-                <p className="text-[11px] text-muted-foreground">
-                  A 1ª cobrança é enviada na primeira vez que a moto vencer; 2ª e 3ª vão sendo usadas conforme o locatário reincide.
-                </p>
-                {tplValues[tplActive]?.trim() && (
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="ghost"
-                    onClick={() => setTplValues((prev) => ({ ...prev, [tplActive]: "" }))}
-                    className="h-7 text-xs text-muted-foreground hover:text-destructive"
-                  >
-                    Limpar (usar padrão)
-                  </Button>
-                )}
-              </div>
-            </div>
-          </section>
-
-          {/* === Régua de cobrança (compartilhada) === */}
-          <OleoRuleSection />
-        </div>
-
-        <DialogFooter className="px-6 py-4 border-t bg-muted/30">
-          <Button variant="outline" onClick={() => onOpenChange(false)}>Cancelar</Button>
-          <Button
-            onClick={() => {
-              const ho = Number(hondaOil);
-              const yo = Number(yamahaOil);
-              const yf = Number(yamahaFilter);
-              const oo = Number(outrasOil);
-              const co = Number(carroOil);
-              const wk = Number(windowKm);
-              const dkw = Number(defaultKmWeek);
-              const od = Number(overdueDays);
-              const kpd = Number(keywordPeriodDays);
-              const amt = Number(adaptiveMinTrocas);
-              const hkw = Number(hondaKmWeek);
-              const ykw = Number(yamahaKmWeek);
-              const okw = Number(outrasKmWeek);
-              const baseOk = [ho, yo, yf, oo, co, wk, dkw, od, kpd, amt].every((n) => Number.isFinite(n) && n > 0);
-              const brandOk = !useBrandDefault || [hkw, ykw, okw].every((n) => Number.isFinite(n) && n > 0);
-              if (!baseOk || !brandOk) {
-                toast.error("Informe valores válidos (> 0)");
-                return;
-              }
-              const keywords = keywordsText
-                .split(",")
-                .map((s) => s.trim().toLowerCase())
-                .filter(Boolean);
-              if (keywords.length === 0) {
-                toast.error("Informe pelo menos uma palavra-chave");
-                return;
-              }
-              onSave(
-                {
-                  honda: { oilKm: ho, defaultKmPerDay: hkw / 7 },
-                  yamaha: { oilKm: yo, filterKm: yf, defaultKmPerDay: ykw / 7 },
-                  outras: { oilKm: oo, defaultKmPerDay: okw / 7 },
-                  carro: { oilKm: co },
-                },
-                {
-                  windowKm: wk,
-                  defaultKmPerDay: dkw / 7,
-                  useBrandDefault,
-                  keywords,
-                  overdueDays: Math.floor(od),
-                  keywordPeriodDays: Math.floor(kpd),
-                  adaptiveMinTrocas: Math.floor(amt),
-                },
-              );
-              // Persiste os templates de mensagem por etapa.
-              try {
-                for (const t of TPL_KEYS) {
-                  const v = (tplValues[t.key] ?? "").trim();
-                  if (v) localStorage.setItem("wayvo:msg-template:v3:" + t.key, v);
-                  else localStorage.removeItem("wayvo:msg-template:v3:" + t.key);
-                }
-              } catch { /* ignora */ }
-            }}
-          >
-            Salvar
           </Button>
         </DialogFooter>
       </DialogContent>

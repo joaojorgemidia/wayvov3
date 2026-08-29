@@ -1,21 +1,39 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useCompany } from "@/contexts/CompanyContext";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
-import { Settings, CreditCard, CheckCircle2, XCircle, ShieldCheck, Car, Receipt, FileSignature, Eye, EyeOff, Landmark } from "lucide-react";
+import { Switch } from "@/components/ui/switch";
+import { Settings, CreditCard, CheckCircle2, XCircle, ShieldCheck, Car, Receipt, FileSignature, Eye, EyeOff, Landmark, MessageCircle, Droplets, Search, Wrench } from "lucide-react";
 import AsaasConfigDialog from "@/components/AsaasConfigDialog";
 import DetranConfigDialog from "@/components/DetranConfigDialog";
 import SicoobConfigDialog from "@/components/SicoobConfigDialog";
-import { AsaasConfig, DetranConfig, CobrancaConfig, SicoobConfig, DEFAULT_COBRANCA_CONFIG } from "@/lib/companies";
+import { AsaasConfig, DetranConfig, CobrancaConfig, SicoobConfig, WhatsappConfig, DEFAULT_COBRANCA_CONFIG, DEFAULT_WHATSAPP_CONFIG } from "@/lib/companies";
 import { useBankAccounts } from "@/hooks/useSupabaseData";
 import { seedDefaultCategorizationRules } from "@/lib/categorization-rules-seed";
 import { toast } from "sonner";
+import { CollectionRulesSection } from "@/components/settings/CollectionRulesSection";
+import { OilConfigSection } from "@/components/settings/OilConfigSection";
+import { VistoriaConfigSection } from "@/components/settings/VistoriaConfigSection";
+import { ManutencoesConfigSection } from "@/components/settings/ManutencoesConfigSection";
+
+const TAB_VALUES = ["geral", "regua", "oleo", "vistoria", "manutencoes"] as const;
+type TabValue = typeof TAB_VALUES[number];
 
 export default function ConfiguracoesPage() {
-  const { activeCompany, updateAsaasConfig, updateDetranConfig, updateCobrancaConfig, updateAutentiqueConfig, updateSicoobConfig } = useCompany();
+  const { activeCompany, updateAsaasConfig, updateDetranConfig, updateCobrancaConfig, updateAutentiqueConfig, updateSicoobConfig, updateWhatsappConfig } = useCompany();
+  const [searchParams] = useSearchParams();
+  const requestedTab = searchParams.get("tab");
+  const defaultTab: TabValue = (TAB_VALUES as readonly string[]).includes(requestedTab || "") ? (requestedTab as TabValue) : "geral";
+  // Controlado (não só defaultValue): navegar pelo menu lateral pra cá de novo só muda a
+  // query string, não remonta a página — sem isso o clique em "Manutenções › Gerenciar"
+  // não trocaria de aba se Configurações já estivesse aberta (mesmo padrão de MotosPage).
+  const [activeTab, setActiveTab] = useState<TabValue>(defaultTab);
+  useEffect(() => { setActiveTab(defaultTab); }, [requestedTab]);
   const { data: bankAccounts, save: saveBankAccount } = useBankAccounts();
   const [asaasOpen, setAsaasOpen] = useState(false);
   const [detranOpen, setDetranOpen] = useState(false);
@@ -30,6 +48,16 @@ export default function ConfiguracoesPage() {
   const [multaValue, setMultaValue] = useState(String(cobrancaCfg.multaAtraso));
   const [jurosValue, setJurosValue] = useState(String(cobrancaCfg.jurosDiario));
   const [jurosMesValue, setJurosMesValue] = useState(String(cobrancaCfg.jurosMes ?? 0));
+
+  const whatsappCfg = activeCompany?.whatsappConfig ?? DEFAULT_WHATSAPP_CONFIG;
+  const [waEnabled, setWaEnabled] = useState(whatsappCfg.enabled);
+  const [waInstanceId, setWaInstanceId] = useState(whatsappCfg.instanceId || "");
+  const [waToken, setWaToken] = useState(whatsappCfg.token || "");
+  const [waClientToken, setWaClientToken] = useState(whatsappCfg.clientToken || "");
+  const [showWaToken, setShowWaToken] = useState(false);
+  const [waMaxPerWeek, setWaMaxPerWeek] = useState(String(whatsappCfg.maxMessagesPerClientPerWeek));
+  const [waHourStart, setWaHourStart] = useState(String(whatsappCfg.businessHoursStart));
+  const [waHourEnd, setWaHourEnd] = useState(String(whatsappCfg.businessHoursEnd));
 
   const handleSaveAsaas = async (config: AsaasConfig) => {
     await updateAsaasConfig(activeCompany.id, config);
@@ -97,6 +125,35 @@ export default function ConfiguracoesPage() {
     await updateCobrancaConfig(activeCompany.id, { multaAtraso: multa, jurosDiario: juros, jurosMes });
   };
 
+  const handleSaveWhatsapp = async () => {
+    const maxPerWeek = parseInt(waMaxPerWeek, 10);
+    const hourStart = parseInt(waHourStart, 10);
+    const hourEnd = parseInt(waHourEnd, 10);
+    if (Number.isNaN(maxPerWeek) || maxPerWeek < 1) {
+      toast.error("Limite semanal inválido");
+      return;
+    }
+    if (Number.isNaN(hourStart) || Number.isNaN(hourEnd) || hourStart < 0 || hourStart > 23 || hourEnd < 1 || hourEnd > 24 || hourStart >= hourEnd) {
+      toast.error("Horário comercial inválido");
+      return;
+    }
+    if (waEnabled && (!waInstanceId.trim() || !waToken.trim())) {
+      toast.error("Informe pelo menos o Instance ID e o Token da Z-API para ativar");
+      return;
+    }
+    const config: WhatsappConfig = {
+      enabled: waEnabled,
+      provider: "zapi",
+      instanceId: waInstanceId.trim() || undefined,
+      token: waToken.trim() || undefined,
+      clientToken: waClientToken.trim() || undefined,
+      maxMessagesPerClientPerWeek: maxPerWeek,
+      businessHoursStart: hourStart,
+      businessHoursEnd: hourEnd,
+    };
+    await updateWhatsappConfig(activeCompany.id, config);
+  };
+
   // Mascara o login para exibição: joao@email.com → j***@email.com
   const maskLogin = (login: string) => {
     const [user, domain] = login.split("@");
@@ -106,12 +163,22 @@ export default function ConfiguracoesPage() {
   };
 
   return (
-    <div className="p-6 max-w-2xl mx-auto space-y-6">
+    <div className="p-6 max-w-4xl mx-auto space-y-6">
       <div className="flex items-center gap-2">
         <Settings className="h-5 w-5 text-muted-foreground" />
         <h1 className="text-xl font-semibold">Configurações</h1>
       </div>
 
+      <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as TabValue)}>
+        <TabsList className="flex flex-wrap h-auto gap-1">
+          <TabsTrigger value="geral">Geral</TabsTrigger>
+          <TabsTrigger value="regua">Régua de Cobrança</TabsTrigger>
+          <TabsTrigger value="oleo" className="gap-1.5"><Droplets className="h-3.5 w-3.5" />Troca de Óleo</TabsTrigger>
+          <TabsTrigger value="vistoria" className="gap-1.5"><Search className="h-3.5 w-3.5" />Vistoria</TabsTrigger>
+          <TabsTrigger value="manutencoes" className="gap-1.5"><Wrench className="h-3.5 w-3.5" />Manutenções</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="geral" className="max-w-2xl space-y-6">
       {/* ── Asaas / Cobranças ──────────────────────────────────────────── */}
       <Card>
         <CardHeader className="pb-3">
@@ -217,6 +284,81 @@ export default function ConfiguracoesPage() {
           </div>
           <Button variant="outline" size="sm" onClick={handleSaveCobranca}>
             Salvar regras
+          </Button>
+        </CardContent>
+      </Card>
+
+      {/* ── Cobrança automática via WhatsApp (IA) ─────────────────────── */}
+      <Card>
+        <CardHeader className="pb-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <MessageCircle className="h-4 w-4 text-muted-foreground" />
+              <CardTitle className="text-base">Cobrança Automática via WhatsApp (IA)</CardTitle>
+            </div>
+            {waEnabled
+              ? <Badge variant="default" className="gap-1 text-xs"><CheckCircle2 className="h-3 w-3" />Ativo</Badge>
+              : <Badge variant="secondary" className="gap-1 text-xs"><XCircle className="h-3 w-3" />Inativo</Badge>
+            }
+          </div>
+          <CardDescription>
+            Conecta o WhatsApp de atendimento via Z-API. Diariamente, a IA analisa pendências de troca
+            de óleo e pagamento junto com a conversa recente do cliente e sugere cobranças — que ficam
+            aguardando sua aprovação na aba "Cobrança IA" de Cobranças antes de serem enviadas.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex items-center justify-between rounded-lg border p-3">
+            <div>
+              <Label htmlFor="wa-enabled" className="text-sm font-medium">Ativar automação</Label>
+              <p className="text-xs text-muted-foreground">Liga a rotina diária de sugestão de cobranças</p>
+            </div>
+            <Switch id="wa-enabled" checked={waEnabled} onCheckedChange={setWaEnabled} />
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-1.5 col-span-2">
+              <Label htmlFor="wa-instance" className="text-xs">Z-API Instance ID</Label>
+              <Input id="wa-instance" value={waInstanceId} onChange={(e) => setWaInstanceId(e.target.value)} placeholder="3C..." />
+            </div>
+            <div className="space-y-1.5 col-span-2">
+              <Label htmlFor="wa-token" className="text-xs">Z-API Token</Label>
+              <div className="relative">
+                <Input
+                  id="wa-token"
+                  type={showWaToken ? "text" : "password"}
+                  value={waToken}
+                  onChange={(e) => setWaToken(e.target.value)}
+                  className="pr-9"
+                />
+                <button
+                  type="button"
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground"
+                  onClick={() => setShowWaToken((v) => !v)}
+                >
+                  {showWaToken ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </button>
+              </div>
+            </div>
+            <div className="space-y-1.5 col-span-2">
+              <Label htmlFor="wa-client-token" className="text-xs">Z-API Client-Token (conta)</Label>
+              <Input id="wa-client-token" type={showWaToken ? "text" : "password"} value={waClientToken} onChange={(e) => setWaClientToken(e.target.value)} />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="wa-max-week" className="text-xs">Limite de msgs/cliente por semana</Label>
+              <Input id="wa-max-week" type="text" inputMode="numeric" value={waMaxPerWeek} onChange={(e) => setWaMaxPerWeek(e.target.value)} />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">Horário comercial</Label>
+              <div className="flex items-center gap-2">
+                <Input type="text" inputMode="numeric" value={waHourStart} onChange={(e) => setWaHourStart(e.target.value)} className="w-16" />
+                <span className="text-muted-foreground text-sm">às</span>
+                <Input type="text" inputMode="numeric" value={waHourEnd} onChange={(e) => setWaHourEnd(e.target.value)} className="w-16" />
+              </div>
+            </div>
+          </div>
+          <Button variant="outline" size="sm" onClick={handleSaveWhatsapp}>
+            Salvar configuração
           </Button>
         </CardContent>
       </Card>
@@ -366,6 +508,24 @@ export default function ConfiguracoesPage() {
           </div>
         </CardContent>
       </Card>
+        </TabsContent>
+
+        <TabsContent value="regua">
+          <CollectionRulesSection />
+        </TabsContent>
+
+        <TabsContent value="oleo" className="max-w-3xl">
+          <OilConfigSection />
+        </TabsContent>
+
+        <TabsContent value="vistoria">
+          <VistoriaConfigSection />
+        </TabsContent>
+
+        <TabsContent value="manutencoes">
+          <ManutencoesConfigSection />
+        </TabsContent>
+      </Tabs>
 
       <AsaasConfigDialog
         open={asaasOpen}

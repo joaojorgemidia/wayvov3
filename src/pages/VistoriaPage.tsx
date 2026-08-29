@@ -10,7 +10,7 @@ import {
   Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
 import {
-  Settings, Plus, ChevronDown, ChevronRight, Search, Upload,
+  Plus, ChevronDown, ChevronRight, Search, Upload,
   Download, Trash2, FileVideo, ImageIcon, Loader2, Eye, Send, Copy, Phone,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -24,31 +24,7 @@ import { Motorcycle } from "@/lib/types";
 import { formatDate, deadlineDate } from "@/lib/alerts";
 import { buildWhatsAppUrl, sanitizeWhatsAppNumber } from "@/lib/whatsapp";
 import { applyTokens, buildAllTokens } from "@/lib/message-tokens";
-import { DEFAULT_STAGES } from "@/lib/collections";
-import { useCollections } from "@/hooks/useCollections";
-import { CollectionRuleEditor } from "@/components/CollectionRuleEditor";
-
-function VistoriaRuleSection() {
-  const { rules, saveRule } = useCollections();
-  const [rule, setRule] = useState(rules.vistoria);
-  useEffect(() => { setRule(rules.vistoria); }, [rules.vistoria]);
-  return (
-    <div className="pt-4 border-t space-y-2">
-      <div>
-        <Label className="text-base font-semibold">Régua de cobrança da Vistoria</Label>
-        <p className="text-xs text-muted-foreground mt-1">
-          Etapas e mensagens enviadas quando a vistoria está vencida. Estas configurações também aparecem em Lista de tarefas › Configurações.
-        </p>
-      </div>
-      <CollectionRuleEditor
-        hideTitle
-        rule={rule}
-        onChange={setRule}
-        onSave={async (r) => { await saveRule(r); toast.success("Régua de Vistoria salva"); }}
-      />
-    </div>
-  );
-}
+import { getOilStatus, loadBrandConfig, loadGlobalConfig } from "@/lib/oil-kpis";
 
 interface InspectionMedia {
   storagePath?: string;
@@ -255,10 +231,12 @@ export default function VistoriaPage() {
 
   // Copia de uma vez o telefone (DDI 55 + DDD + número, só dígitos) de todos os locatários
   // com vistoria vencida — pra colar direto em ferramentas de disparo em massa.
+  // Carros nunca entram aqui, independente da aba Motos/Carros/Todos selecionada — locação
+  // de carro tem cobrança/vistoria/troca de óleo tratada à parte.
   function handleCopyOverduePhones() {
     const seen = new Set<string>();
     const numbers: string[] = [];
-    rows.filter((r) => r.status.situation === "vencida").forEach((r) => {
+    rows.filter((r) => r.status.situation === "vencida" && (r.moto.categoriaVeiculo || "moto") !== "carro").forEach((r) => {
       const digits = sanitizeWhatsAppNumber(activeClientByMoto.get(r.moto.id)?.telefone);
       if (!digits || seen.has(digits)) return;
       seen.add(digits);
@@ -287,7 +265,6 @@ export default function VistoriaPage() {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [registerMoto, setRegisterMoto] = useState<Motorcycle | null>(null);
-  const [settingsOpen, setSettingsOpen] = useState(false);
   const [preview, setPreview] = useState<{
     items: InspectionMedia[];
     inspectionId: string;
@@ -494,9 +471,6 @@ export default function VistoriaPage() {
             title="Copia o telefone de todos os locatários com vistoria vencida"
           >
             <Copy className="h-4 w-4 mr-2" /> Copiar Telefones (Vencidas)
-          </Button>
-          <Button variant="outline" size="sm" onClick={() => setSettingsOpen(true)}>
-            <Settings className="h-4 w-4 mr-2" /> Configurações
           </Button>
         </div>
       </div>
@@ -760,14 +734,6 @@ export default function VistoriaPage() {
           }}
         />
       )}
-
-      <SettingsDialog
-        open={settingsOpen}
-        onOpenChange={setSettingsOpen}
-        companyId={companyId}
-        settings={settings}
-        onSaved={(s) => setSettings(s)}
-      />
 
       {requestDialog && (
         <Dialog open onOpenChange={(o) => { if (!o) setRequestDialog(null); }}>
@@ -1066,6 +1032,7 @@ function RegisterDialog({
         return;
       }
       // Atualiza km_atual da moto se o km da vistoria for maior que o da última troca de óleo
+      let oilOverdueAlert: string | null = null;
       if (kmNum != null) {
         const lastOilKm = moto.kmTrocaOleo ?? 0;
         if (kmNum > lastOilKm) {
@@ -1074,6 +1041,10 @@ function RegisterDialog({
             .update({ km_atual: kmNum })
             .eq("id", moto.id);
           if (upErr) console.warn("Falha ao atualizar km_atual:", upErr.message);
+          // Com o km atualizado, checa na hora se isso empurrou a troca de óleo pra
+          // vencida — sem esperar o usuário abrir a página de Troca de Óleo depois.
+          const status = getOilStatus({ ...moto, kmAtual: kmNum }, loadBrandConfig(), loadGlobalConfig(), []);
+          if (status.situation === "vencida") oilOverdueAlert = status.label;
         }
       }
       const primeiroNome = (locatarioNome || "").trim().split(/\s+/)[0] || null;
@@ -1087,6 +1058,12 @@ function RegisterDialog({
       toast.success(`Vistoria registrada — ${resumo}`, {
         description: proximaData ? `Próxima vistoria: ${formatDate(proximaData)}` : undefined,
       });
+      if (oilOverdueAlert) {
+        toast.warning(`⚠️ Troca de óleo vencida — ${moto.placa}`, {
+          description: oilOverdueAlert,
+          duration: 8000,
+        });
+      }
       await onSaved();
     } finally {
       setSaving(false);
@@ -1184,94 +1161,6 @@ function RegisterDialog({
           <Button onClick={handleSave} disabled={saving}>
             {saving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
             Salvar vistoria
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-function SettingsDialog({
-  open,
-  onOpenChange,
-  companyId,
-  settings,
-  onSaved,
-}: {
-  open: boolean;
-  onOpenChange: (o: boolean) => void;
-  companyId: string;
-  settings: InspectionSettings;
-  onSaved: (s: InspectionSettings) => void;
-}) {
-  const [intervalDays, setIntervalDays] = useState(String(settings.interval_days));
-  const [warning, setWarning] = useState(String(settings.warning_days));
-  const [saving, setSaving] = useState(false);
-
-  useEffect(() => {
-    setIntervalDays(String(settings.interval_days));
-    setWarning(String(settings.warning_days));
-  }, [settings, open]);
-
-  async function save() {
-    const i = parseInt(intervalDays, 10);
-    const w = parseInt(warning, 10);
-    if (!i || i < 1) return toast.error("Intervalo inválido");
-    if (isNaN(w) || w < 0 || w >= i) return toast.error("Aviso prévio deve ser menor que o intervalo");
-    setSaving(true);
-    const { error } = await supabase
-      .from("inspection_settings")
-      .upsert(
-        { company_id: companyId, interval_days: i, warning_days: w },
-        { onConflict: "company_id" },
-      );
-    setSaving(false);
-    if (error) {
-      toast.error("Falha: " + error.message);
-      return;
-    }
-    toast.success("Configuração salva");
-    onSaved({ interval_days: i, warning_days: w });
-    onOpenChange(false);
-  }
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle>Configurações de Vistoria</DialogTitle>
-        </DialogHeader>
-        <div className="space-y-4">
-          <div>
-            <Label>Intervalo entre vistorias (dias)</Label>
-            <Input
-              inputMode="numeric"
-              value={intervalDays}
-              onChange={(e) => setIntervalDays(e.target.value.replace(/\D/g, ""))}
-            />
-            <p className="text-xs text-muted-foreground mt-1">
-              A cada quantos dias cada moto ativa precisa ser vistoriada. Padrão: 30.
-            </p>
-          </div>
-          <div>
-            <Label>Aviso prévio (dias)</Label>
-            <Input
-              inputMode="numeric"
-              value={warning}
-              onChange={(e) => setWarning(e.target.value.replace(/\D/g, ""))}
-            />
-            <p className="text-xs text-muted-foreground mt-1">
-              Quantos dias antes do vencimento a moto entra em "Atenção". Padrão: 7.
-            </p>
-          </div>
-          <VistoriaRuleSection />
-        </div>
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>
-            Cancelar
-          </Button>
-          <Button onClick={save} disabled={saving}>
-            {saving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}Salvar
           </Button>
         </DialogFooter>
       </DialogContent>
