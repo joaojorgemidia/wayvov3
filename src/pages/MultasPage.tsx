@@ -85,6 +85,10 @@ function findRentalAtDate(motoId: string, dateIso: string | null, rentals: Renta
   const ts = new Date(dateIso + "T00:00:00").getTime();
   return rentals.find((r) => {
     if (r.motoId !== motoId) return false;
+    // Locação histórica/placeholder sem locatário não identifica "quem estava com a moto" —
+    // amarrar a multa nela deixava a despesa presa a uma locação fantasma (e depois a régua
+    // de associação do Financeiro jogava a despesa no locatário atual da moto).
+    if (!r.clienteId) return false;
     const inicio = new Date(r.dataInicio + "T00:00:00").getTime();
     const fim = r.dataFim ? new Date(r.dataFim + "T00:00:00").getTime() : Date.now();
     return ts >= inicio && ts <= fim;
@@ -328,12 +332,15 @@ export default function MultasPage() {
         const { descricao, observacao } = buildMultaDescObs(fine, placa);
         const valor = pagamento?.valor ?? fine.valor;
         const data = pagamento?.data ?? localToday();
+        // Multa da locadora (sem locatário) não pertence a nenhuma locação — não pendura
+        // rentalId/clienteId, senão a despesa "gruda" na locação ativa da moto.
+        const ehDoCliente = fine.responsavel === "cliente" && !!fine.clienteId;
         newEntries.push({
           id: crypto.randomUUID(), tipo: "despesa",
           categoria: "multa_transito",
-          subcategoria: fine.responsavel === "cliente" ? "Repasse cliente" : "Locadora",
-          motoId: fine.motoId, rentalId: fine.rentalId,
-          clienteId: fine.clienteId, clienteNome: client?.nome || "",
+          subcategoria: ehDoCliente ? "Repasse cliente" : "Locadora",
+          motoId: fine.motoId, rentalId: ehDoCliente ? fine.rentalId : null,
+          clienteId: ehDoCliente ? fine.clienteId : null, clienteNome: ehDoCliente ? (client?.nome || "") : "",
           placa, natureza: "operacional", conta: pagamento?.conta || "", tags: ["multa"],
           recorrente: false, fineId: fine.id,
           descricao, observacao,
@@ -586,12 +593,15 @@ export default function MultasPage() {
           // CONDUTOR = cliente que estava usando; PROPRIETARIO = locadora
           const responsavel: "locadora" | "cliente" =
             d.responsavel_infracao === "CONDUTOR" && client ? "cliente" : "locadora";
+          // Só amarra locatário/locação quando a multa é de fato do cliente — se a
+          // responsabilidade é da locadora, não pendura o locatário da época.
+          const ehDoCliente = responsavel === "cliente";
 
           return {
             id: crypto.randomUUID(),
             motoId: d.motoId,
-            clienteId: client?.id ?? null,
-            rentalId: rental?.id ?? null,
+            clienteId: ehDoCliente ? (client?.id ?? null) : null,
+            rentalId: ehDoCliente ? (rental?.id ?? null) : null,
             dataMulta,
             dataNotificacao: d.data_notificacao && ISO_DATE.test(d.data_notificacao) ? d.data_notificacao : null,
             valor: d.valor,
