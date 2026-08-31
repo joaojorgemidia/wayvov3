@@ -34,6 +34,8 @@ const ALWAYS_OPERACIONAL = new Set([
   "seguro", "rastreador", "pecas_receita",
 ]);
 
+const MULTA_CATEGORIES = new Set(["multa_transito", "multa_transito_receita"]);
+
 export interface AssociationContext {
   motos: Motorcycle[];
   clients: Client[];
@@ -100,11 +102,16 @@ export function resolveAssociations(
   // 5. Resolve rentalId and backfill missing links
   if (updated.motoId || updated.clienteId) {
     const bestRental = findBestRental(updated, ctx.rentals);
+    const isMulta = MULTA_CATEGORIES.has(updated.categoria);
     if (bestRental) {
       updated.rentalId = bestRental.id;
       if (!updated.motoId && !userClearedMoto) updated.motoId = bestRental.motoId;
-      if (!updated.clienteId && !userClearedClient) updated.clienteId = bestRental.clienteId;
+      // Multa: findBestRental só devolve um contrato que cobre a data do cometimento, então
+      // o locatário É esse — vincula mesmo que o lançamento tenha vindo sem cliente.
+      if (!updated.clienteId && (!userClearedClient || isMulta)) updated.clienteId = bestRental.clienteId;
     }
+    // Obs.: não limpamos rentalId de lançamentos legados aqui — só evitamos criar vínculo
+    // errado. Correção de multas antigas mal-vinculadas é feita caso a caso.
   }
 
   if (!updated.placa && updated.motoId && !userClearedMoto) {
@@ -112,7 +119,7 @@ export function resolveAssociations(
     if (moto) updated.placa = normalizePlaca(moto.placa);
   }
 
-  if (!updated.clienteNome && updated.clienteId && !userClearedClient) {
+  if (!updated.clienteNome && updated.clienteId && (!userClearedClient || MULTA_CATEGORIES.has(updated.categoria))) {
     const client = ctx.clientById ? ctx.clientById.get(updated.clienteId) : ctx.clients.find(c => c.id === updated.clienteId);
     if (client) updated.clienteNome = client.nome;
   }
@@ -139,6 +146,16 @@ export function resolveAssociations(
 }
 
 /**
+ * Data do COMETIMENTO da multa, extraída da descrição ("... | Cometimento: DD/MM/AAAA | ...").
+ * Para multa é essa data que define o locatário — nunca a data do lançamento (que é a do
+ * pagamento): uma multa de outubro paga em agosto não pode cair no locatário de agosto.
+ */
+function extractCometimento(desc: string): string | null {
+  const m = (desc || "").match(/Cometimento:\s*(\d{2})\/(\d{2})\/(\d{4})/);
+  return m ? `${m[3]}-${m[2]}-${m[1]}` : null;
+}
+
+/**
  * Find best matching rental for a transaction.
  * Score-based: motoId match + clienteId match + date within range.
  */
@@ -148,26 +165,43 @@ function findBestRental(entry: FinancialEntry, rentals: Rental[]): Rental | null
   // and incorrectly backfill a motoId/placa from the client's active rental.
   if (!rentals.length || !entry.motoId) return null;
 
+  const isMulta = MULTA_CATEGORIES.has(entry.categoria);
+
+  // Multa: a referência é a data do cometimento. O locatário é vinculado quando a infração
+  // caiu dentro do período do contrato dele. Sem essa data não há como saber o locatário
+  // certo → fica sem vínculo (multa da locadora).
+  let refDate = entry.data;
+  if (isMulta) {
+    const cometimento = extractCometimento(entry.descricao);
+    if (!cometimento) return null;
+    refDate = cometimento;
+  }
+
   let best: Rental | null = null;
   let bestScore = 0;
 
   for (const r of rentals) {
+    const dentroDoPeriodo = refDate >= r.dataInicio && (!r.dataFim || refDate <= r.dataFim);
+
+    // Multa só vincula a um contrato que REALMENTE cobre a data do cometimento e que tem
+    // locatário (locação histórica sem cliente não vincula ninguém).
+    if (isMulta && (!dentroDoPeriodo || !r.clienteId)) continue;
+
     let score = 0;
     if (entry.motoId && r.motoId === entry.motoId) score += 3;
     if (entry.clienteId && r.clienteId === entry.clienteId) score += 2;
-    // Date within rental period
-    const entryDate = entry.data;
-    if (entryDate >= r.dataInicio) {
-      if (!r.dataFim || entryDate <= r.dataFim) score += 1;
-      if (r.dataFimContrato && entryDate <= r.dataFimContrato) score += 1;
-    }
+    if (dentroDoPeriodo) score += 1;
+    if (refDate >= r.dataInicio && r.dataFimContrato && refDate <= r.dataFimContrato) score += 1;
+
     if (score > bestScore) {
       bestScore = score;
       best = r;
     }
   }
 
-  return bestScore >= 3 ? best : null; // Require at least moto match
+  // Multa: exige moto + período do contrato cobrindo o cometimento (3 + 1). Demais
+  // lançamentos: pelo menos a moto (3).
+  return bestScore >= (isMulta ? 4 : 3) ? best : null;
 }
 
 /**
