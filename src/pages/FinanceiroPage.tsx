@@ -109,6 +109,12 @@ function buildImportReconciliationKey(entry: FinancialEntry) {
   ].join("|");
 }
 
+// Categorias de despesa que nunca têm moto/placa vinculada — "Operacional" nelas é
+// sempre inválido na validação ("Veículo/Placa é obrigatório para despesas
+// operacionais"), forçando o usuário a trocar toda vez. "Administrativa" é o
+// padrão real usado na prática pra essas categorias.
+const DESPESA_SEM_VEICULO = new Set(["marketing", "taxas", "sistema", "equipe", "assinaturas", "imposto", "outro_despesa"]);
+
 const emptyEntry = (): FinancialEntry => ({
   id: crypto.randomUUID(), tipo: "receita", categoria: "", subcategoria: "", descricao: "",
   valor: 0, data: localToday(), dataPrevista: "",
@@ -3447,12 +3453,15 @@ export default function FinanceiroPage() {
     marketing: "📢", lava_jato: "🚿", taxas: "🏦", assinaturas: "📱", outro_despesa: "💰",
   };
 
-  // Receitas breakdown
-  const receitasRealizadas = monthEntries.filter(e => !e.ignorada && e.tipo === "receita" && e.pago).length;
-  const receitasPendentesCount = monthEntries.filter(e => !e.ignorada && e.tipo === "receita" && !e.pago).length;
-  const despesasRealizadas = monthEntries.filter(e => !e.ignorada && e.tipo === "despesa" && e.pago).length;
-  const despesasPendentesCount = monthEntries.filter(e => !e.ignorada && e.tipo === "despesa" && !e.pago).length;
-  const totalTransacoes = monthEntries.filter(e => !e.ignorada).length;
+  // Receitas breakdown — usa `filtered` (não `monthEntries`) pra bater com os valores em
+  // R$ dos cards acima, que já respeitam banco/categoria/placa/locatário/busca. Usar a
+  // base sem filtro aqui fazia a contagem (ex.: "81 recebidas") não bater com o valor
+  // filtrado (ex.: Banco = Asaas mostrando R$ de 66 lançamentos, mas contando 81).
+  const receitasRealizadas = filtered.filter(e => !e.ignorada && e.tipo === "receita" && e.pago).length;
+  const receitasPendentesCount = filtered.filter(e => !e.ignorada && e.tipo === "receita" && !e.pago).length;
+  const despesasRealizadas = filtered.filter(e => !e.ignorada && e.tipo === "despesa" && e.pago).length;
+  const despesasPendentesCount = filtered.filter(e => !e.ignorada && e.tipo === "despesa" && !e.pago).length;
+  const totalTransacoes = filtered.filter(e => !e.ignorada).length;
 
   // Bank balances — cálculo único compartilhado com /contas
   const { bankBalances, registeredAccountNames } = useMemo(() => {
@@ -5360,7 +5369,14 @@ export default function FinanceiroPage() {
                       ...Object.keys(TAGS).filter(k => k.startsWith(`${cat}:`)).flatMap(k => TAGS[k] || []),
                     ];
                     const filteredTags = (form.tags || []).filter(t => newCatTags.includes(t));
-                    setForm({ ...form, categoria: cat, subcategoria: sub, tags: filteredTags });
+                    // Só troca a natureza automaticamente se ainda estiver no padrão
+                    // ("operacional", nunca tocado) — não sobrescreve uma escolha manual.
+                    const natureza =
+                      form.natureza === "operacional" && form.tipo === "despesa" &&
+                      !form.motoId && !form.placa && DESPESA_SEM_VEICULO.has(cat)
+                        ? "administrativa"
+                        : form.natureza;
+                    setForm({ ...form, categoria: cat, subcategoria: sub, tags: filteredTags, natureza });
                   }}
                 />
               </div>
@@ -5469,6 +5485,26 @@ export default function FinanceiroPage() {
               {/* Veículo e Locatário */}
               <div className="grid gap-1.5">
                 <div className="flex items-center gap-1.5">
+                  <Car className="h-4 w-4 text-muted-foreground" />
+                  <Label className="text-sm">Veículo (Placa)</Label>
+                </div>
+                <SearchableSelect
+                  options={motoSelectOptions}
+                  value={motoSelectValue}
+                  onValueChange={v => {
+                    if (v === "none") {
+                      handleMotoChange(null);
+                      return;
+                    }
+                    if (v.startsWith("legacy-placa:")) return;
+                    handleMotoChange(v);
+                  }}
+                  placeholder="Selecione..."
+                />
+              </div>
+
+              <div className="grid gap-1.5">
+                <div className="flex items-center gap-1.5">
                   <Label className="text-sm">Locatário</Label>
                   <HelpTip text="Ao selecionar um locatário com locação ativa, a placa será preenchida automaticamente." />
                 </div>
@@ -5491,26 +5527,6 @@ export default function FinanceiroPage() {
                       rentalId: null,
                       ...(autoMoto ? { motoId: autoMoto.id, placa: autoMoto.placa } : {}),
                     });
-                  }}
-                  placeholder="Selecione..."
-                />
-              </div>
-
-              <div className="grid gap-1.5">
-                <div className="flex items-center gap-1.5">
-                  <Car className="h-4 w-4 text-muted-foreground" />
-                  <Label className="text-sm">Veículo (Placa)</Label>
-                </div>
-                <SearchableSelect
-                  options={motoSelectOptions}
-                  value={motoSelectValue}
-                  onValueChange={v => {
-                    if (v === "none") {
-                      handleMotoChange(null);
-                      return;
-                    }
-                    if (v.startsWith("legacy-placa:")) return;
-                    handleMotoChange(v);
                   }}
                   placeholder="Selecione..."
                 />
