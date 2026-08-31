@@ -282,13 +282,33 @@ export default function MultasPage() {
     setDialogOpen(false);
   };
 
-  const handleDelete = (id: string) => {
-    if (confirm("Remover esta multa?")) persist(fines.filter(f => f.id !== id));
+  // Ao remover a multa, os lançamentos que ela gerou no Financeiro (cobrança ao locatário
+  // e/ou despesa da multa, vinculados por fineId) vão junto — senão ficariam órfãos.
+  const removeLinkedFinancial = async (fineIds: Set<string>, contexto: string) => {
+    const all = loadFinancial();
+    const restantes = all.filter(e => !(e.fineId && fineIds.has(e.fineId)));
+    if (restantes.length === all.length) return;
+    try { await saveFinancial(restantes); }
+    catch { toast.error(`${contexto} removida(s), mas houve erro ao remover os lançamentos vinculados no Financeiro.`); }
   };
 
-  const handleBulkDelete = () => {
-    if (!confirm(`Remover ${selectedIds.size} multa(s) selecionada(s)?`)) return;
-    persist(fines.filter(f => !selectedIds.has(f.id)));
+  const handleDelete = async (id: string) => {
+    const vinculados = loadFinancial().filter(e => e.fineId === id);
+    const aviso = vinculados.length
+      ? ` Isso também remove ${vinculados.length} lançamento(s) no Financeiro${vinculados.some(e => e.pago) ? ", incluindo lançamento já marcado como pago" : ""}.`
+      : "";
+    if (!confirm(`Remover esta multa?${aviso}`)) return;
+    persist(fines.filter(f => f.id !== id));
+    await removeLinkedFinancial(new Set([id]), "Multa");
+  };
+
+  const handleBulkDelete = async () => {
+    const vinculados = loadFinancial().filter(e => e.fineId && selectedIds.has(e.fineId));
+    const aviso = vinculados.length ? ` ${vinculados.length} lançamento(s) vinculado(s) no Financeiro também serão removidos.` : "";
+    if (!confirm(`Remover ${selectedIds.size} multa(s) selecionada(s)?${aviso}`)) return;
+    const ids = new Set(selectedIds);
+    persist(fines.filter(f => !ids.has(f.id)));
+    await removeLinkedFinancial(ids, "Multas");
     setSelectedIds(new Set());
   };
 
