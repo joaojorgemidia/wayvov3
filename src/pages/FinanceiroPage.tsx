@@ -3006,10 +3006,14 @@ export default function FinanceiroPage() {
     // de juros/multa pelo valor total dos acréscimos, mas já marcado como pago.
     const feeAmount = pendente > 0.009 ? pendente : (multa + totalJuros);
     const feePago   = pendente <= 0.009;
-    // Confirma antes de gerar a cobrança de juros/multa (ou saldo parcial) — não deve
-    // acontecer só como efeito colateral silencioso de confirmar o pagamento.
-    const gerarFeeEntry = isRentalPayment && temAcrescimo && !jaTemFeePago && confirm(
-      `Gerar cobrança de juros/multa (ou saldo parcial) no valor de R$ ${feeAmount.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}?`,
+    // feePago = o recebido já cobre tudo. O lançamento de juros/multa nasce quitado —
+    // não é cobrança nova pro cliente, só separa no financeiro a parte que foi encargo
+    // de atraso (o diálogo de pagamento já avisou "será gerado já quitado"). Nesse caso
+    // gera direto, sem confirm. Só pergunta quando sobra saldo EM ABERTO — aí sim é
+    // dinheiro sendo cobrado do cliente e não deve acontecer como efeito colateral silencioso.
+    const gerarFeeEntry = isRentalPayment && temAcrescimo && !jaTemFeePago && (
+      feePago ||
+      confirm(`Gerar cobrança de juros/multa em aberto (ou saldo parcial) no valor de R$ ${feeAmount.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}?`)
     );
     if (gerarFeeEntry) {
       const dueFmt = dueDateStr ? new Date(dueDateStr + "T12:00:00").toLocaleDateString("pt-BR") : "?";

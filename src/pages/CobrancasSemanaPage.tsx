@@ -35,7 +35,7 @@ import { buildCobrancaEvent, computeSemanaPeriodo, computeSemanaNumero } from "@
 import { useCompany } from "@/contexts/CompanyContext";
 import { DEFAULT_COBRANCA_CONFIG, isLoca2Rodas } from "@/lib/companies";
 import { VehicleFilterChips, VehicleFilter } from "@/components/VehicleFilterChips";
-import { buildWhatsAppUrl } from "@/lib/whatsapp";
+import { buildWhatsAppUrl, sanitizeWhatsAppNumber } from "@/lib/whatsapp";
 import { localToday } from "@/lib/utils";
 import { cancelAsaasEntries } from "@/lib/asaas";
 import { useCollections } from "@/hooks/useCollections";
@@ -1772,19 +1772,44 @@ export default function CobrancasSemanaPage() {
                   ? { textCls: "text-orange-700 dark:text-orange-400", badgeCls: "bg-orange-500/15", dot: "bg-orange-500" }
                   : { textCls: "text-amber-700 dark:text-amber-400", badgeCls: "bg-amber-500/15", dot: "bg-amber-500" };
 
+              // Copia os telefones (um por linha, formato WhatsApp 55DDD…) de todos os
+              // clientes em atraso — sem repetir e ignorando quem não tem número.
+              const copyOverdueNumbers = () => {
+                const nums: string[] = [];
+                let semNumero = 0;
+                for (const g of clientGroups) {
+                  const tel = sanitizeWhatsAppNumber(g.items[0].telefoneCliente);
+                  if (tel) nums.push(tel); else semNumero++;
+                }
+                const unicos = [...new Set(nums)];
+                if (unicos.length === 0) { toast.error("Nenhum cliente em atraso tem número cadastrado."); return; }
+                navigator.clipboard.writeText(unicos.join("\n"))
+                  .then(() => toast.success(`${unicos.length} número(s) copiado(s)${semNumero > 0 ? ` · ${semNumero} sem número` : ""}`))
+                  .catch(() => toast.error("Não foi possível copiar."));
+              };
+
               return (
                 <>
-                  <div className="bg-destructive/[.08] border-b border-destructive/20 px-3.5 py-2.5 flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <AlertTriangle className="h-3.5 w-3.5 text-destructive" />
+                  <div className="bg-destructive/[.08] border-b border-destructive/20 px-3.5 py-2.5 flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <AlertTriangle className="h-3.5 w-3.5 text-destructive flex-shrink-0" />
                       <span className="text-[10px] font-bold uppercase tracking-[.6px] text-destructive">Em atraso</span>
                       <span className="text-[10px] font-bold bg-destructive text-destructive-foreground rounded-full px-1.5 py-px leading-none">
                         {clientGroups.length} cliente{clientGroups.length !== 1 ? "s" : ""}
                       </span>
                     </div>
-                    <span className="text-[13px] font-bold text-destructive tabular-nums">
-                      {fmtBRL(filteredOverdueVisible.reduce((s, i) => s + calcValorAtualizado(i.entry, i.daysLate), 0))}
-                    </span>
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      <button
+                        onClick={copyOverdueNumbers}
+                        title="Copiar os números de WhatsApp dos clientes em atraso"
+                        className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-[.4px] text-destructive/90 hover:text-destructive border border-destructive/30 hover:bg-destructive/10 rounded px-1.5 py-1 leading-none transition-colors"
+                      >
+                        <Copy className="h-3 w-3" /> Copiar nºs
+                      </button>
+                      <span className="text-[13px] font-bold text-destructive tabular-nums">
+                        {fmtBRL(filteredOverdueVisible.reduce((s, i) => s + calcValorAtualizado(i.entry, i.daysLate), 0))}
+                      </span>
+                    </div>
                   </div>
                   <div className="bg-background divide-y divide-border/30">
                     {clientGroups.map(({ key, items, maxDays, total, posPago }) => {
