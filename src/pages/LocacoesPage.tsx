@@ -1584,6 +1584,19 @@ export default function LocacoesPage() {
                     <Button variant="ghost" size="sm" className="h-7 w-7 p-0" title="Ver detalhes" onClick={() => setViewRental(r)}>
                       <Eye className="h-3.5 w-3.5" />
                     </Button>
+                    {(() => {
+                      const tel = clients.find(c => c.id === r.clienteId)?.telefone;
+                      if (!tel) return null;
+                      return (
+                        <Button
+                          variant="ghost" size="sm" className="h-7 w-7 p-0"
+                          title="Copiar contato do cliente"
+                          onClick={() => { navigator.clipboard.writeText(tel); toast.success("Contato do cliente copiado"); }}
+                        >
+                          <Copy className="h-3.5 w-3.5" />
+                        </Button>
+                      );
+                    })()}
                     {showActions === "ativa" && canEdit && (
                       <Button variant="ghost" size="sm" className="h-7 w-7 p-0" title="Editar locação" onClick={() => openEdit(r)}>
                         <Pencil className="h-3.5 w-3.5" />
