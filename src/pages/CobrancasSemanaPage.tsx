@@ -34,7 +34,7 @@ import { applyTokens, buildAllTokens } from "@/lib/message-tokens";
 import { buildCobrancaEvent, computeSemanaPeriodo, computeSemanaNumero } from "@/lib/cobranca-week-stats";
 import { useCompany } from "@/contexts/CompanyContext";
 import { DEFAULT_COBRANCA_CONFIG, isLoca2Rodas } from "@/lib/companies";
-import { VehicleFilterChips, VehicleFilter } from "@/components/VehicleFilterChips";
+import { VehicleFilterChips, VehicleFilter, DEFAULT_VEHICLE_FILTER } from "@/components/VehicleFilterChips";
 import { buildWhatsAppUrl, sanitizeWhatsAppNumber } from "@/lib/whatsapp";
 import { localToday } from "@/lib/utils";
 import { cancelAsaasEntries } from "@/lib/asaas";
@@ -197,10 +197,9 @@ export default function CobrancasSemanaPage() {
   const { activeCompany } = useCompany();
   const cache = useDataCacheSnapshot();
   // Carros ficam numa aba separada — só relevante pra Loca2Rodas (única locadora com
-  // carros na frota). Por padrão só mostra motos: cobrança de carro não deve se misturar
-  // com a fila normal de motos.
+  // carros na frota).
   const showVehicleTab = isLoca2Rodas(activeCompany);
-  const [vehicleTab, setVehicleTab] = useState<VehicleFilter>("moto");
+  const [vehicleTab, setVehicleTab] = useState<VehicleFilter>(DEFAULT_VEHICLE_FILTER);
   const matchesVehicleTab = (categoriaVeiculo: "moto" | "carro" | null | undefined) =>
     !showVehicleTab || vehicleTab === "todos" || (categoriaVeiculo || "moto") === vehicleTab;
   const { pendings: collectionPendings } = useCollections();

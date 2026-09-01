@@ -1,5 +1,9 @@
 export type VehicleFilter = "todos" | "moto" | "carro";
 
+// Filtro inicial em todas as telas que têm o chip Motos/Carros (só aparece pra Loca2Rodas).
+// Começa em "Motos": é a maior parte da operação; carro fica a um clique de distância.
+export const DEFAULT_VEHICLE_FILTER: VehicleFilter = "moto";
+
 export function VehicleFilterChips({ value, onChange }: { value: VehicleFilter; onChange: (v: VehicleFilter) => void }) {
   const options: { value: VehicleFilter; label: string }[] = [
     { value: "todos", label: "Todos" },

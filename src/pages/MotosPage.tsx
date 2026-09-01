@@ -18,7 +18,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { ensureVistoriaFolders } from "@/lib/vistoria-folders";
 import { useCompany } from "@/contexts/CompanyContext";
 import { isLoca2Rodas as checkIsLoca2Rodas } from "@/lib/companies";
-import { VehicleFilterChips } from "@/components/VehicleFilterChips";
+import { VehicleFilterChips, DEFAULT_VEHICLE_FILTER } from "@/components/VehicleFilterChips";
 
 export default function MotosPage() {
   const [searchParams] = useSearchParams();
@@ -68,8 +68,8 @@ export default function MotosPage() {
   const [addCategoria, setAddCategoria] = useState<"moto" | "carro">("moto");
   const [saleDialogOpen, setSaleDialogOpen] = useState(false);
   const [saleMoto, setSaleMoto] = useState<Motorcycle | null>(null);
-  const [patrimonioFilter, setPatrimonioFilter] = useState<"todos" | "moto" | "carro">("todos");
-  const [vendidosFilter, setVendidosFilter] = useState<"todos" | "moto" | "carro">("todos");
+  const [patrimonioFilter, setPatrimonioFilter] = useState<"todos" | "moto" | "carro">(DEFAULT_VEHICLE_FILTER);
+  const [vendidosFilter, setVendidosFilter] = useState<"todos" | "moto" | "carro">(DEFAULT_VEHICLE_FILTER);
 
   const persist = (updated: Motorcycle[]) => { setMotos(updated); saveMotos(updated); };
 
@@ -165,7 +165,7 @@ export default function MotosPage() {
   // Controle Patrimonial e Vendidos mostram motos + carros juntos (para quem tem carros),
   // com filtro por tipo — para as demais empresas `motos` só tem categoria "moto" mesmo.
   const byVehicleFilter = (list: Motorcycle[], filter: "todos" | "moto" | "carro") =>
-    filter === "todos" ? list : list.filter(m => m.categoriaVeiculo === filter);
+    filter === "todos" ? list : list.filter(m => (m.categoriaVeiculo || "moto") === filter);
   const patrimonioMotos = byVehicleFilter(motos, patrimonioFilter);
   const vendidosMotos = byVehicleFilter(motos, vendidosFilter);
 
