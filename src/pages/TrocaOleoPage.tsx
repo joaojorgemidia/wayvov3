@@ -12,7 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import { useDataCacheSnapshot } from "@/lib/data-cache";
 import { useCompany } from "@/contexts/CompanyContext";
 import { isLoca2Rodas } from "@/lib/companies";
-import { VehicleFilterChips, VehicleFilter } from "@/components/VehicleFilterChips";
+import { VehicleFilterChips, VehicleFilter, DEFAULT_VEHICLE_FILTER } from "@/components/VehicleFilterChips";
 import { saveMotos } from "@/lib/store";
 import { Motorcycle, OilChangeRecord } from "@/lib/types";
 import { formatDate } from "@/lib/alerts";
@@ -211,7 +211,7 @@ export default function TrocaOleoPage() {
 
   // Filtro Motos/Carros — só relevante pra Loca2Rodas, única locadora com carros na frota.
   const showVehicleFilter = isLoca2Rodas(activeCompany);
-  const [vehicleFilter, setVehicleFilter] = useState<VehicleFilter>("todos");
+  const [vehicleFilter, setVehicleFilter] = useState<VehicleFilter>(DEFAULT_VEHICLE_FILTER);
   const motos = useMemo(() => {
     if (!showVehicleFilter || vehicleFilter === "todos") return motosAtivas;
     return motosAtivas.filter((m) => (m.categoriaVeiculo || "moto") === vehicleFilter);

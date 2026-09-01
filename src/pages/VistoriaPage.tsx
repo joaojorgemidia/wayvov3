@@ -19,7 +19,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useDataCacheSnapshot } from "@/lib/data-cache";
 import { useCompany } from "@/contexts/CompanyContext";
 import { isLoca2Rodas } from "@/lib/companies";
-import { VehicleFilterChips, VehicleFilter } from "@/components/VehicleFilterChips";
+import { VehicleFilterChips, VehicleFilter, DEFAULT_VEHICLE_FILTER } from "@/components/VehicleFilterChips";
 import { Motorcycle } from "@/lib/types";
 import { formatDate, deadlineDate } from "@/lib/alerts";
 import { buildWhatsAppUrl, sanitizeWhatsAppNumber } from "@/lib/whatsapp";
@@ -134,7 +134,7 @@ export default function VistoriaPage() {
 
   // Filtro Motos/Carros — só relevante pra Loca2Rodas, única locadora com carros na frota.
   const showVehicleFilter = isLoca2Rodas(activeCompany);
-  const [vehicleFilter, setVehicleFilter] = useState<VehicleFilter>("todos");
+  const [vehicleFilter, setVehicleFilter] = useState<VehicleFilter>(DEFAULT_VEHICLE_FILTER);
   const motos = useMemo(() => {
     if (!showVehicleFilter || vehicleFilter === "todos") return motosAtivas;
     return motosAtivas.filter((m) => (m.categoriaVeiculo || "moto") === vehicleFilter);

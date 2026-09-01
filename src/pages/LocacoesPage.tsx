@@ -15,7 +15,7 @@ import { BarChart, Bar, XAxis, YAxis, ResponsiveContainer, CartesianGrid, Toolti
 import { useCompany } from "@/contexts/CompanyContext";
 import { sanitizeWhatsAppNumber } from "@/lib/whatsapp";
 import { DEFAULT_COBRANCA_CONFIG, isLoca2Rodas, CobrancaConfig } from "@/lib/companies";
-import { VehicleFilterChips, VehicleFilter } from "@/components/VehicleFilterChips";
+import { VehicleFilterChips, VehicleFilter, DEFAULT_VEHICLE_FILTER } from "@/components/VehicleFilterChips";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -355,7 +355,7 @@ export default function LocacoesPage() {
   // Filtro Motos/Carros — só relevante pra Loca2Rodas, única locadora com carros na frota.
   // Para as demais empresas `rentalsScoped` é sempre igual a `rentals` (tudo é moto).
   const showVehicleFilter = isLoca2Rodas(activeCompany);
-  const [vehicleFilter, setVehicleFilter] = useState<VehicleFilter>("todos");
+  const [vehicleFilter, setVehicleFilter] = useState<VehicleFilter>(DEFAULT_VEHICLE_FILTER);
   const motosById = useMemo(() => new Map(motos.map(m => [m.id, m])), [motos]);
   const rentalsScoped = useMemo(() => {
     if (!showVehicleFilter || vehicleFilter === "todos") return rentals;
