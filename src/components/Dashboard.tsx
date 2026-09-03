@@ -85,18 +85,21 @@ export const Dashboard = memo(function Dashboard() {
     const novosContratos = rentals.filter(r => inRange(r.dataInicio)).length;
     const cac = novosContratos > 0 ? marketingSpend / novosContratos : (contratosAtivos.length > 0 ? marketingSpend / contratosAtivos.length : 0);
 
-    // Duração média CONTRATADA (fim do contrato − início) das locações que iniciaram no
-    // período — não é quanto tempo já passou (isso sempre daria um número baixo pra
-    // locação recém-criada, mesmo em contratos de anos como "Moto no Final"), é a
-    // duração combinada em contrato. Só entra quem tem data de fim de contrato definida.
+    // Duração média REAL do contrato: da data de início até a data em que a locação
+    // foi de fato encerrada (dataFim), não a data prevista de encerramento
+    // (dataFimContrato). Considera as locações encerradas dentro do período
+    // selecionado — mede quanto tempo os contratos que fecharam nesse período
+    // duraram na prática.
     const locacoesPeriodo = rentals.filter(r => inRange(r.dataInicio));
-    const locacoesPeriodoComContrato = locacoesPeriodo.filter(r => !!r.dataFimContrato);
-    const duracaoMedia = locacoesPeriodoComContrato.length > 0
-      ? locacoesPeriodoComContrato.reduce((sum, r) => {
-          const fim = new Date(r.dataFimContrato + "T00:00:00");
+    const locacoesEncerradasNoPeriodo = rentals.filter(
+      r => (r.status === "finalizada" || r.status === "cancelada") && !!r.dataFim && inRange(r.dataFim),
+    );
+    const duracaoMedia = locacoesEncerradasNoPeriodo.length > 0
+      ? locacoesEncerradasNoPeriodo.reduce((sum, r) => {
+          const fim = new Date(r.dataFim + "T00:00:00");
           const inicio = new Date(r.dataInicio + "T00:00:00");
           return sum + Math.max(0, Math.round((fim.getTime() - inicio.getTime()) / 86400000));
-        }, 0) / locacoesPeriodoComContrato.length
+        }, 0) / locacoesEncerradasNoPeriodo.length
       : 0;
 
     return {
@@ -485,7 +488,7 @@ export const Dashboard = memo(function Dashboard() {
                 <p className="text-3xl font-bold tracking-tight tabular-nums font-mono text-violet-600">
                   {formatDuracaoDias(stats.duracaoMedia)}
                 </p>
-                <p className="text-xs text-muted-foreground mt-1">duração contratada média</p>
+                <p className="text-xs text-muted-foreground mt-1">duração média do contrato</p>
               </div>
             </div>
             <div className="border-t border-slate-100 pt-3 space-y-2">
