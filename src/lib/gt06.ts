@@ -142,11 +142,23 @@ export async function deviceBelongsToCompany(companyId: string, imei: string): P
 }
 
 // Troca/remove o veículo vinculado a uma TAG que já é da empresa (RLS normal,
-// sem precisar do "claim" acima).
-export async function linkDeviceToMoto(companyId: string, imei: string, motoId: string | null): Promise<void> {
+// sem precisar do "claim" acima). Ao vincular um veículo, o apelido vira
+// "GT06 | <placa>" — todo GT06 tem que ser identificável pela placa da moto. A UI
+// já mostra a placa antes do apelido, mas gravar no apelido mantém a identificação
+// mesmo que o vínculo seja removido depois. Ao desvincular, o apelido é preservado.
+export const gt06Apelido = (placa: string) => `GT06 | ${placa.trim()}`;
+
+export async function linkDeviceToMoto(
+  companyId: string,
+  imei: string,
+  motoId: string | null,
+  placa?: string | null,
+): Promise<void> {
+  const payload: Record<string, unknown> = { moto_id: motoId };
+  if (motoId && placa && placa.trim()) payload.apelido = gt06Apelido(placa);
   const { error } = await supabase
     .from("gt06_devices")
-    .update({ moto_id: motoId })
+    .update(payload)
     .eq("imei", imei.trim())
     .eq("company_id", companyId);
   if (error) throw new Error(error.message);

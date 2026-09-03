@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from "react";
 import L from "leaflet";
 import {
   DRIVERS, loadTrackerProvider, saveTrackerProvider, clearTrackerProvider,
+  loadSharedTrackerConfig, saveSharedTrackerConfig, clearSharedTrackerConfig,
   type TrackerProvider, type TrackerDriver, type AnyTrackerToken, type AnyTrackerConfig,
   type DeviceInfo, type DeviceTrack, type PlaybackPoint, type AlarmRecord,
 } from "@/lib/tracker";
@@ -385,6 +386,10 @@ export default function RastreamentoPage() {
   const [config, setConfig]         = useState<AnyTrackerConfig>({});
   const [configOpen, setConfigOpen] = useState(false);
   const [connecting, setConnecting] = useState(false);
+  // Reconexão automática em andamento (config compartilhada da empresa já existe).
+  // Enquanto true, o corpo mostra "Conectando..." em vez da tela de configuração,
+  // pra não "piscar" a tela de login toda vez que a página abre.
+  const [autoConnecting, setAutoConnecting] = useState(false);
 
   const driver: TrackerDriver | null = provider ? DRIVERS[provider] : null;
 
@@ -731,14 +736,22 @@ export default function RastreamentoPage() {
       const devices = await drv.getDeviceList(token);
       setProvider(providerArg);
       setAuth({ token, devices });
+      // Cache local do navegador (rápido) + config compartilhada da empresa (banco):
+      // com a compartilhada salva, qualquer usuário/dispositivo da empresa entra
+      // direto no mapa sem passar pela tela de login de novo.
       drv.saveConfig(companyId, cfg);
       saveTrackerProvider(companyId, providerArg);
+      const shared = await saveSharedTrackerConfig(companyId, providerArg, cfg);
       setConfigOpen(false);
-      toast.success(`Conectado · ${devices.length} dispositivo(s)`);
+      toast.success(
+        `Conectado · ${devices.length} dispositivo(s)` +
+        (shared ? "" : " · credenciais salvas só neste dispositivo"),
+      );
     } catch (e: any) {
       toast.error(e.message ?? "Falha na conexão");
     } finally {
       setConnecting(false);
+      setAutoConnecting(false);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [companyId]);
@@ -986,32 +999,59 @@ export default function RastreamentoPage() {
       .catch(e => console.warn("[gt06] getDeviceList:", e.message));
     const gt06Names = gt06.loadDeviceNames(companyId);
 
-    // Descobre o provedor de nuvem escolhido pela empresa (ou nenhum, se ainda não configurado)
-    const savedProvider = loadTrackerProvider(companyId);
-    setProvider(savedProvider);
-    setDialogProvider(savedProvider ?? "brasilsat");
+    // Otimista: assume que vai reconectar sozinho, pra não piscar a tela de
+    // login. A rotina async abaixo desliga isso se não houver o que conectar.
+    setAutoConnecting(true);
 
-    if (!savedProvider) {
-      setConfig({});
-      setCustomNames(gt06Names);
-      setKmConfig({ marginKm: 0 });
-      setKmMarginInput("0");
-      return () => { cancelled = true; }; // mostra TAGs GT06 (se houver) + opção de conectar um provedor de nuvem
-    }
+    (async () => {
+      // 1) Config compartilhada da empresa (banco) — fonte de verdade. Se existe,
+      //    qualquer usuário/dispositivo entra direto, sem a tela de login.
+      const shared = await loadSharedTrackerConfig(companyId);
+      if (cancelled) return;
 
-    const drv = DRIVERS[savedProvider];
-    const savedCfg = drv.loadConfig(companyId);
-    setConfig(savedCfg ?? {});
+      if (shared) {
+        const drv = DRIVERS[shared.provider];
+        setProvider(shared.provider);
+        setDialogProvider(shared.provider);
+        setConfig(shared.credentials);
+        setCustomNames({ ...gt06Names, ...drv.loadDeviceNames(companyId) });
+        const kmCfg = drv.loadKmSyncConfig(companyId);
+        setKmConfig(kmCfg);
+        setKmMarginInput(String(kmCfg.marginKm));
+        // Espelha no cache local pra próxima abertura ser instantânea
+        saveTrackerProvider(companyId, shared.provider);
+        drv.saveConfig(companyId, shared.credentials);
+        connect(shared.provider, shared.credentials); // desliga autoConnecting no finally
+        return;
+      }
 
-    const savedNames = drv.loadDeviceNames(companyId);
-    setCustomNames({ ...gt06Names, ...savedNames });
+      // 2) Fallback: cache local só deste navegador (retrocompat com quem já
+      //    tinha configurado antes desta mudança).
+      const savedProvider = loadTrackerProvider(companyId);
+      setProvider(savedProvider);
+      setDialogProvider(savedProvider ?? "brasilsat");
 
-    const savedKmCfg = drv.loadKmSyncConfig(companyId);
-    setKmConfig(savedKmCfg);
-    setKmMarginInput(String(savedKmCfg.marginKm));
+      if (!savedProvider) {
+        setConfig({});
+        setCustomNames(gt06Names);
+        setKmConfig({ marginKm: 0 });
+        setKmMarginInput("0");
+        setAutoConnecting(false); // mostra TAGs GT06 (se houver) + opção de conectar
+        return;
+      }
 
-    if (savedCfg) connect(savedProvider, savedCfg);
-    // Sem else: empresa com provedor escolhido mas sem credenciais mostra o formulário de conexão
+      const drv = DRIVERS[savedProvider];
+      const savedCfg = drv.loadConfig(companyId);
+      setConfig(savedCfg ?? {});
+      setCustomNames({ ...gt06Names, ...drv.loadDeviceNames(companyId) });
+      const savedKmCfg = drv.loadKmSyncConfig(companyId);
+      setKmConfig(savedKmCfg);
+      setKmMarginInput(String(savedKmCfg.marginKm));
+
+      if (savedCfg) connect(savedProvider, savedCfg);
+      else setAutoConnecting(false); // provedor escolhido mas sem credenciais → formulário
+    })();
+
     return () => { cancelled = true; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [companyId]);
@@ -1045,9 +1085,15 @@ export default function RastreamentoPage() {
     if (!imei) { toast.error("Informe o IMEI da TAG"); return; }
     setRegisterLoading(true);
     try {
+      // Sem apelido digitado mas com veículo escolhido: usa "GT06 | <placa>" —
+      // todo GT06 tem que ficar identificável pela placa da moto.
+      const placaEscolhida = registerMotoId
+        ? getRealDataCache().motos.find(m => m.id === registerMotoId)?.placa ?? ""
+        : "";
+      const apelidoFinal = registerApelido.trim() || (placaEscolhida ? gt06.gt06Apelido(placaEscolhida) : "");
       const claimed = await gt06.claimDevice(companyId, imei, {
         motoId: registerMotoId || null,
-        apelido: registerApelido,
+        apelido: apelidoFinal,
       });
       if (!claimed) {
         const already = await gt06.deviceBelongsToCompany(companyId, imei);
@@ -1076,7 +1122,9 @@ export default function RastreamentoPage() {
   const handleLinkMoto = async (imei: string, motoId: string | null) => {
     setLinkMotoLoading(true);
     try {
-      await gt06.linkDeviceToMoto(companyId, imei, motoId);
+      // Vincula e já grava a placa como apelido — todo GT06 identificado pela moto.
+      const placa = motoId ? getRealDataCache().motos.find(m => m.id === motoId)?.placa ?? null : null;
+      await gt06.linkDeviceToMoto(companyId, imei, motoId, placa);
       await refetchGt06Devices();
       toast.success(motoId ? "Veículo vinculado" : "Vínculo removido");
     } catch (e: any) {
@@ -1147,10 +1195,12 @@ export default function RastreamentoPage() {
   // ── Logout ────────────────────────────────────────────────────────────────
   const handleLogout = () => {
     driver?.clearConfig(companyId);
+    void clearSharedTrackerConfig(companyId);
     setAuth(null);
     setTracks([]);
     setSelectedImei(null);
     setConfig({});
+    setAutoConnecting(false);
     syncedKmRef.current.clear();
     trackMarkersRef.current.forEach(m => m.remove());
     trackMarkersRef.current.clear();
@@ -1161,11 +1211,13 @@ export default function RastreamentoPage() {
   const handleChangeProvider = () => {
     driver?.clearConfig(companyId);
     clearTrackerProvider(companyId);
+    void clearSharedTrackerConfig(companyId);
     setProvider(null);
     setAuth(null);
     setTracks([]);
     setSelectedImei(null);
     setConfig({});
+    setAutoConnecting(false);
     setConfigOpen(false);
   };
 
@@ -1252,7 +1304,14 @@ export default function RastreamentoPage() {
       </div>
 
       {/* Corpo */}
-      {allDevices.length === 0 ? (
+      {allDevices.length === 0 && (autoConnecting || connecting) ? (
+        <div className="flex-1 flex items-center justify-center p-6">
+          <div className="flex flex-col items-center gap-3 text-muted-foreground">
+            <RefreshCw className="h-6 w-6 animate-spin" />
+            <p className="text-sm">Conectando ao rastreador…</p>
+          </div>
+        </div>
+      ) : allDevices.length === 0 ? (
         <div className="flex-1 flex items-center justify-center p-6">
           <div className="text-center space-y-6 max-w-sm w-full">
             <div className="flex flex-col items-center gap-3">
@@ -1688,7 +1747,8 @@ export default function RastreamentoPage() {
               </div>
             ))}
             <p className="text-xs text-muted-foreground">
-              As credenciais são salvas localmente neste dispositivo.
+              As credenciais ficam salvas para a empresa toda — configure uma vez e
+              todos os usuários entram direto no mapa, sem passar por aqui de novo.
             </p>
             <Button className="w-full" onClick={() => connect(dialogProvider, config)} disabled={connecting}>
               {connecting
@@ -1793,9 +1853,9 @@ export default function RastreamentoPage() {
               </Select>
             </div>
             <div className="space-y-1.5">
-              <Label className="text-xs">Apelido (opcional)</Label>
+              <Label className="text-xs">Apelido (opcional — usa "GT06 | placa" do veículo se ficar em branco)</Label>
               <Input
-                placeholder="Ex.: TAG backup CG 160"
+                placeholder='Ex.: GT06 | ABC1D23'
                 value={registerApelido}
                 onChange={e => setRegisterApelido(e.target.value)}
                 onKeyDown={e => e.key === "Enter" && handleRegisterTag()}

@@ -2,6 +2,7 @@
 // suportados (BrasilSat, Velotrack). Cada empresa escolhe um provedor na
 // primeira configuração; o restante da página opera sobre essa interface comum.
 
+import { supabase } from "@/integrations/supabase/client";
 import * as brasilsat from "@/lib/brasilsat";
 import * as velotrack from "@/lib/velotrack";
 import { companyKey, type TrackerProvider, type DeviceInfo, type DeviceTrack, type PlaybackPoint, type AlarmRecord } from "@/lib/tracker-types";
@@ -110,4 +111,64 @@ export function saveTrackerProvider(companyId: string, provider: TrackerProvider
 
 export function clearTrackerProvider(companyId: string) {
   localStorage.removeItem(companyKey(PROVIDER_KEY, companyId));
+}
+
+// ─── Config compartilhada por empresa (banco) ────────────────────────────────
+// O localStorage acima continua sendo o cache local de cada navegador. A fonte
+// de verdade, quando existe, é a tabela company_tracker_configs: configurou uma
+// vez (qualquer usuário/dispositivo) e todo mundo da empresa entra direto, sem
+// passar de novo pela tela de login. RLS isola por empresa — ver a migração
+// 20260903160000_add_company_tracker_configs.sql.
+
+export interface SharedTrackerConfig {
+  provider: TrackerProvider;
+  credentials: AnyTrackerConfig;
+}
+
+export async function loadSharedTrackerConfig(companyId: string): Promise<SharedTrackerConfig | null> {
+  if (!companyId || companyId === "default") return null;
+  try {
+    const { data, error } = await supabase
+      .from("company_tracker_configs")
+      .select("provider, credentials")
+      .eq("company_id", companyId)
+      .maybeSingle();
+    if (error || !data) return null;
+    if (data.provider !== "brasilsat" && data.provider !== "velotrack") return null;
+    return { provider: data.provider, credentials: (data.credentials ?? {}) as AnyTrackerConfig };
+  } catch {
+    return null;
+  }
+}
+
+// Best-effort: se o usuário não tiver permissão de escrita (RLS), a conexão
+// continua valendo pelo cache local — só não fica compartilhada com a empresa.
+export async function saveSharedTrackerConfig(
+  companyId: string,
+  provider: TrackerProvider,
+  credentials: AnyTrackerConfig,
+): Promise<boolean> {
+  if (!companyId || companyId === "default") return false;
+  try {
+    const { data: userData } = await supabase.auth.getUser();
+    const { error } = await supabase
+      .from("company_tracker_configs")
+      .upsert({
+        company_id: companyId,
+        provider,
+        credentials,
+        updated_at: new Date().toISOString(),
+        updated_by: userData.user?.id ?? null,
+      });
+    return !error;
+  } catch {
+    return false;
+  }
+}
+
+export async function clearSharedTrackerConfig(companyId: string): Promise<void> {
+  if (!companyId || companyId === "default") return;
+  try {
+    await supabase.from("company_tracker_configs").delete().eq("company_id", companyId);
+  } catch { /* ignora */ }
 }
