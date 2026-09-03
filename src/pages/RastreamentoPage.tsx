@@ -3,6 +3,7 @@ import L from "leaflet";
 import {
   DRIVERS, loadTrackerProvider, saveTrackerProvider, clearTrackerProvider,
   loadSharedTrackerConfig, saveSharedTrackerConfig, clearSharedTrackerConfig,
+  loadSharedDeviceNames, saveSharedDeviceName,
   type TrackerProvider, type TrackerDriver, type AnyTrackerToken, type AnyTrackerConfig,
   type DeviceInfo, type DeviceTrack, type PlaybackPoint, type AlarmRecord,
 } from "@/lib/tracker";
@@ -491,11 +492,15 @@ export default function RastreamentoPage() {
   // ── Nome de exibição: BrasilSat > apelido local > imei ───────────────────
   const getDisplayName = useCallback((imei: string, trackDeviceName?: string) => {
     if (privacy) return maskPlaca(imei);
-    // Nome cadastrado na BrasilSat (da lista ou do track)
-    const brasilsatName = auth?.devices.find(d => d.imei === imei)?.deviceName || trackDeviceName || "";
-    if (brasilsatName && brasilsatName !== imei) return brasilsatName;
-    // Fallback: apelido local (se BrasilSat não tiver nome cadastrado)
-    return customNames[imei] || imei;
+    // Apelido definido no Wayvo (compartilhado pela empresa) ganha do nome que
+    // vem do provedor — deixa arrumar a nomenclatura aqui sem depender de
+    // renomear na BrasilSat/Velotrack.
+    const localName = customNames[imei];
+    if (localName && localName.trim()) return localName;
+    // Senão, usa o nome cadastrado no provedor (da lista ou do track)
+    const providerName = auth?.devices.find(d => d.imei === imei)?.deviceName || trackDeviceName || "";
+    if (providerName && providerName !== imei) return providerName;
+    return imei;
   }, [customNames, auth, privacy]);
 
   // ── Locações ativas (placa → nome do locatário) ─────────────────────────
@@ -1004,6 +1009,11 @@ export default function RastreamentoPage() {
     setAutoConnecting(true);
 
     (async () => {
+      // Apelidos compartilhados pela empresa (banco) — ganham do nome do provedor
+      // e do cache local. Buscados em paralelo com a config.
+      const sharedNames = await loadSharedDeviceNames(companyId);
+      if (cancelled) return;
+
       // 1) Config compartilhada da empresa (banco) — fonte de verdade. Se existe,
       //    qualquer usuário/dispositivo entra direto, sem a tela de login.
       const shared = await loadSharedTrackerConfig(companyId);
@@ -1014,7 +1024,7 @@ export default function RastreamentoPage() {
         setProvider(shared.provider);
         setDialogProvider(shared.provider);
         setConfig(shared.credentials);
-        setCustomNames({ ...gt06Names, ...drv.loadDeviceNames(companyId) });
+        setCustomNames({ ...gt06Names, ...drv.loadDeviceNames(companyId), ...sharedNames });
         const kmCfg = drv.loadKmSyncConfig(companyId);
         setKmConfig(kmCfg);
         setKmMarginInput(String(kmCfg.marginKm));
@@ -1033,7 +1043,7 @@ export default function RastreamentoPage() {
 
       if (!savedProvider) {
         setConfig({});
-        setCustomNames(gt06Names);
+        setCustomNames({ ...gt06Names, ...sharedNames });
         setKmConfig({ marginKm: 0 });
         setKmMarginInput("0");
         setAutoConnecting(false); // mostra TAGs GT06 (se houver) + opção de conectar
@@ -1043,7 +1053,7 @@ export default function RastreamentoPage() {
       const drv = DRIVERS[savedProvider];
       const savedCfg = drv.loadConfig(companyId);
       setConfig(savedCfg ?? {});
-      setCustomNames({ ...gt06Names, ...drv.loadDeviceNames(companyId) });
+      setCustomNames({ ...gt06Names, ...drv.loadDeviceNames(companyId), ...sharedNames });
       const savedKmCfg = drv.loadKmSyncConfig(companyId);
       setKmConfig(savedKmCfg);
       setKmMarginInput(String(savedKmCfg.marginKm));
@@ -1059,20 +1069,29 @@ export default function RastreamentoPage() {
   // ── Ações de dispositivo ──────────────────────────────────────────────────
   const handleRename = () => {
     if (!selectedImei) return;
+    const imei = selectedImei;
     const name = renameValue.trim();
     if (!name) { toast.error("Informe um nome"); return; }
-    const isGt06Selected = gt06Devices.some(d => d.imei === selectedImei);
+    const isGt06Selected = gt06Devices.some(d => d.imei === imei);
+    // Cache local (rápido)
     if (isGt06Selected) {
-      gt06.saveDeviceName(companyId, selectedImei, name);
+      gt06.saveDeviceName(companyId, imei, name);
     } else if (driver) {
-      driver.saveDeviceName(companyId, selectedImei, name);
-    } else {
-      return;
+      driver.saveDeviceName(companyId, imei, name);
     }
+    // Apelido compartilhado pela empresa (banco) — é o que vale pra todo mundo.
+    void saveSharedDeviceName(companyId, imei, name).then(ok => {
+      if (!ok) toast.warning("Nome salvo só neste dispositivo (sem permissão para a empresa toda).");
+    });
     // Reconstrói o mapa combinado (GT06 + nuvem, se houver) pra refletir o rename.
-    const updated = { ...gt06.loadDeviceNames(companyId), ...(driver?.loadDeviceNames(companyId) ?? {}) };
+    const updated = {
+      ...gt06.loadDeviceNames(companyId),
+      ...(driver?.loadDeviceNames(companyId) ?? {}),
+      ...customNames,
+      [imei]: name,
+    };
     setCustomNames(updated);
-    const marker = trackMarkersRef.current.get(selectedImei);
+    const marker = trackMarkersRef.current.get(imei);
     marker?.setTooltipContent(tooltipHtml(name, isGt06Selected));
     setRenameOpen(false);
     toast.success("Nome atualizado");
@@ -1805,7 +1824,8 @@ export default function RastreamentoPage() {
               autoFocus
             />
             <p className="text-xs text-muted-foreground">
-              O nome é salvo localmente neste dispositivo.
+              O nome vale para a empresa toda e aparece no lugar do nome vindo do
+              rastreador (BrasilSat/Velotrack).
             </p>
           </div>
           <DialogFooter>

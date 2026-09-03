@@ -172,3 +172,55 @@ export async function clearSharedTrackerConfig(companyId: string): Promise<void>
     await supabase.from("company_tracker_configs").delete().eq("company_id", companyId);
   } catch { /* ignora */ }
 }
+
+// ─── Apelido dos aparelhos, compartilhado por empresa (banco) ────────────────
+// O apelido definido aqui vale pra empresa toda (não só o navegador atual) e
+// GANHA do nome que vem do provedor — deixa arrumar a nomenclatura pelo Wayvo
+// sem depender de renomear na BrasilSat/Velotrack.
+
+export async function loadSharedDeviceNames(companyId: string): Promise<Record<string, string>> {
+  if (!companyId || companyId === "default") return {};
+  try {
+    const { data, error } = await supabase
+      .from("company_tracker_device_names")
+      .select("imei, name")
+      .eq("company_id", companyId);
+    if (error || !data) return {};
+    const out: Record<string, string> = {};
+    for (const row of data) if (row.imei && row.name) out[row.imei] = row.name;
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+export async function saveSharedDeviceName(
+  companyId: string,
+  imei: string,
+  name: string,
+): Promise<boolean> {
+  if (!companyId || companyId === "default" || !imei) return false;
+  try {
+    const { data: userData } = await supabase.auth.getUser();
+    if (name.trim()) {
+      const { error } = await supabase
+        .from("company_tracker_device_names")
+        .upsert({
+          company_id: companyId,
+          imei,
+          name: name.trim(),
+          updated_at: new Date().toISOString(),
+          updated_by: userData.user?.id ?? null,
+        });
+      return !error;
+    }
+    const { error } = await supabase
+      .from("company_tracker_device_names")
+      .delete()
+      .eq("company_id", companyId)
+      .eq("imei", imei);
+    return !error;
+  } catch {
+    return false;
+  }
+}
