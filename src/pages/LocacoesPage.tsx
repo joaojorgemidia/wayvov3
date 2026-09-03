@@ -525,6 +525,14 @@ export default function LocacoesPage() {
     return "—";
   };
 
+  const getRentalClientPhone = (r: Rental) => {
+    if (!r.clienteId) return "";
+    const all = loadClients();
+    return all.find(c => c.id === r.clienteId)?.telefone
+      || clients.find(c => c.id === r.clienteId)?.telefone
+      || "";
+  };
+
   const getNumero = (r: Rental) => {
     if (!r.numero) return `#${r.id.slice(0, 6).toUpperCase()}`;
     if (r.createdAt >= "2026-06-01") return `L${String(r.numero).padStart(5, "0")}MV`;
@@ -542,11 +550,21 @@ export default function LocacoesPage() {
     catch { return false; }
   };
 
-  const matchSearch = (r: Rental) =>
-    !search ||
-    getMotoPlaca(r.motoId).toLowerCase().includes(search.toLowerCase()) ||
-    getRentalClientLabel(r).toLowerCase().includes(search.toLowerCase()) ||
-    getNumero(r).toLowerCase().includes(search.toLowerCase());
+  const matchSearch = (r: Rental) => {
+    if (!search) return true;
+    const q = search.toLowerCase();
+    if (getMotoPlaca(r.motoId).toLowerCase().includes(q)) return true;
+    if (getRentalClientLabel(r).toLowerCase().includes(q)) return true;
+    if (getNumero(r).toLowerCase().includes(q)) return true;
+    // Busca por telefone: compara só os dígitos, então "(11) 98765-4321",
+    // "11987654321" e "98765 4321" batem com o mesmo cadastro.
+    const qDigits = search.replace(/\D/g, "");
+    if (qDigits) {
+      const phoneDigits = getRentalClientPhone(r).replace(/\D/g, "");
+      if (phoneDigits && phoneDigits.includes(qDigits)) return true;
+    }
+    return false;
+  };
 
   // Ativas: filtra pela data de início (locação que começou dentro do período).
   // Finalizadas/canceladas: pela data de fim (cai para a data de início se não tiver
@@ -1722,7 +1740,7 @@ export default function LocacoesPage() {
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
         <div className="relative max-w-md flex-1">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <Input placeholder="Buscar nº, placa ou cliente..." value={search} onChange={e => setSearch(e.target.value)} className="pl-9" />
+          <Input placeholder="Buscar nº, placa, cliente ou telefone..." value={search} onChange={e => setSearch(e.target.value)} className="pl-9" />
         </div>
         {showVehicleFilter && (
           <VehicleFilterChips value={vehicleFilter} onChange={setVehicleFilter} />
