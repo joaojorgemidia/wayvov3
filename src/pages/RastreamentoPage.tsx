@@ -29,17 +29,22 @@ import {
   MessageCircle, ShoppingCart, ExternalLink, LogOut, Satellite, Tag, Plus, Link2, Unlink,
 } from "lucide-react";
 
+// Um aparelho é tratado como "TAG" (etiqueta) quando é um GT06 avulso OU quando
+// o nome dele no provedor de nuvem contém "TAG" (ex.: "SDA5052 - TAG" na
+// Velotrack) — nesses casos é hardware de etiqueta, não um rastreador completo.
+export const deviceNameIsTag = (name?: string | null) => /\btag\b/i.test(name ?? "");
+
 // ─── Ícones Leaflet ───────────────────────────────────────────────────────────
 // Rastreador (nuvem): pino redondo com ícone de moto — como já era.
-// TAG (GT06): pino quadrado com borda tracejada + ícone de etiqueta — pra dar
+// TAG: pino quadrado com borda tracejada + ícone de etiqueta — pra dar
 // pra diferenciar um do outro só de bater o olho no mapa, sem depender da cor
 // (que já é usada pelo status/movimento e não pelo tipo de dispositivo).
-function makeIcon(color: string, small = false, isGt06 = false) {
+function makeIcon(color: string, small = false, isTag = false) {
   const s = small ? 30 : 38;
   const bikeSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="${Math.round(s * 0.6)}" height="${Math.round(s * 0.6)}" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18.5" cy="17.5" r="3.5"/><circle cx="5.5" cy="17.5" r="3.5"/><circle cx="15" cy="5" r="1"/><path d="M12 17.5V14l-3-3 4-3 2 3h2"/></svg>`;
   const tagSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="${Math.round(s * 0.55)}" height="${Math.round(s * 0.55)}" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z"/><circle cx="7.5" cy="7.5" r="1" fill="white" stroke="none"/></svg>`;
-  const glyph = isGt06 ? tagSvg : bikeSvg;
-  const shapeStyle = isGt06
+  const glyph = isTag ? tagSvg : bikeSvg;
+  const shapeStyle = isTag
     ? "border-radius:8px;border:2.5px dashed white;"
     : "border-radius:50%;border:2.5px solid white;";
   return L.divIcon({
@@ -62,22 +67,22 @@ function escapeHtml(s: string) {
 // selo já usado na lista/painel — o formato do próprio pino (redondo vs
 // quadrado tracejado) é sutil demais pra notar de relance num mapa cheio de
 // ruas, então aqui repete a informação de forma explícita e legível.
-function tooltipHtml(name: string, isGt06: boolean) {
-  const label = isGt06
+function tooltipHtml(name: string, isTag: boolean) {
+  const label = isTag
     ? `<span style="color:#1d4ed8;font-weight:700;">TAG</span>`
     : `<span style="color:#047857;font-weight:700;">Rastreador</span>`;
   return `${label} · ${escapeHtml(name)}`;
 }
 
-function deviceIcon(t: DeviceTrack, isGt06 = false) {
+function deviceIcon(t: DeviceTrack, isTag = false) {
   const sc = (t.statusCode ?? "").toLowerCase();
-  if (sc.includes("offline")) return makeIcon("#6b7280", false, isGt06);
-  if (t.speed > 0) return makeIcon("#22c55e", false, isGt06);
-  if (t.acc === 1) return makeIcon("#f59e0b", false, isGt06);
-  // acc undefined = fonte não sabe informar o motor (TAGs GT06) — cor própria
+  if (sc.includes("offline")) return makeIcon("#6b7280", false, isTag);
+  if (t.speed > 0) return makeIcon("#22c55e", false, isTag);
+  if (t.acc === 1) return makeIcon("#f59e0b", false, isTag);
+  // acc undefined = fonte não sabe informar o motor (TAGs) — cor própria
   // pra não ficar visualmente idêntico ao cinza de "offline".
-  if (t.acc == null) return makeIcon("#3b82f6", false, isGt06);
-  return makeIcon("#6b7280", false, isGt06);
+  if (t.acc == null) return makeIcon("#3b82f6", false, isTag);
+  return makeIcon("#6b7280", false, isTag);
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -123,8 +128,8 @@ function statusLabel(t: DeviceTrack): { label: string; color: string } {
 // ─── Selo "Rastreador" (nuvem, principal) vs "TAG" (GT06, backup) — deixa
 // explícito o tipo de dispositivo tanto na lista quanto no painel de detalhes,
 // em vez de precisar inferir pelo ícone/nome. ──────────────────────────────
-function DeviceTypeBadge({ isGt06 }: { isGt06: boolean }) {
-  return isGt06 ? (
+function DeviceTypeBadge({ isTag }: { isTag: boolean }) {
+  return isTag ? (
     <span className="inline-flex items-center gap-1 text-[10px] font-semibold rounded px-1.5 py-0.5 bg-blue-500/15 text-blue-700 dark:text-blue-400 border border-blue-500/30 shrink-0">
       <Tag className="h-2.5 w-2.5" /> TAG
     </span>
@@ -166,6 +171,7 @@ interface DeviceDetailProps {
   device: DeviceInfo;
   displayName: string;
   displayImei: string;
+  isTag: boolean;
   relayLoading: boolean;
   // GT06 (avulso) não suporta km/bloqueio remoto — protocolo básico não reporta
   // km rodado, e nem todo aparelho clone tem o relé de corte de energia.
@@ -184,7 +190,7 @@ interface DeviceDetailProps {
 }
 
 function DeviceDetail({
-  track, device, displayName, displayImei, relayLoading, showKm, showRelay,
+  track, device, displayName, displayImei, isTag, relayLoading, showKm, showRelay,
   onClose, onRename, onBlock, onUnblock, onUpdateKm,
   motoOptions, onLinkMoto, linkMotoLoading,
 }: DeviceDetailProps) {
@@ -270,7 +276,7 @@ function DeviceDetail({
       <div className="flex items-start justify-between px-3 py-2.5 border-b bg-muted/30">
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1.5 flex-wrap">
-            <DeviceTypeBadge isGt06={device.deviceType === "GT06"} />
+            <DeviceTypeBadge isTag={isTag} />
             <span className="font-bold text-sm text-primary">{displayName}</span>
             {device.deviceType && device.deviceType !== "GT06" && (
               <span className="text-[11px] text-muted-foreground">({device.deviceType})</span>
@@ -422,6 +428,18 @@ export default function RastreamentoPage() {
   const gt06ImeiSet = React.useMemo(
     () => new Set(gt06Devices.map(d => d.imei)),
     [gt06Devices],
+  );
+  // Aparelhos de nuvem cujo nome no provedor tem "TAG" (ex.: "SDA5052 - TAG" na
+  // Velotrack) — são hardware de etiqueta, entram na seção TAG junto dos GT06.
+  // Usa o nome CRU do provedor (não o apelido do Wayvo), pra classificação não
+  // mudar quando alguém renomeia pra tirar o "- TAG" da tela.
+  const cloudTagImeiSet = React.useMemo(
+    () => new Set((auth?.devices ?? []).filter(d => deviceNameIsTag(d.deviceName)).map(d => d.imei)),
+    [auth],
+  );
+  const isTagImei = React.useCallback(
+    (imei: string) => gt06ImeiSet.has(imei) || cloudTagImeiSet.has(imei),
+    [gt06ImeiSet, cloudTagImeiSet],
   );
 
   const [selectedImei, setSelectedImei] = useState<string | null>(null);
@@ -619,12 +637,12 @@ export default function RastreamentoPage() {
   // backup do grupo.
   const pickForTypeFilter = (g: VehicleGroup): { info: DeviceInfo; track: DeviceTrack | null } | null => {
     if (deviceTypeFilter === "all") return effectiveOf(g);
-    const primaryIsGt06 = g.primary ? gt06ImeiSet.has(g.primary.info.imei) : false;
+    const primaryIsTag = g.primary ? isTagImei(g.primary.info.imei) : false;
     if (deviceTypeFilter === "rastreador") {
-      return g.primary && !primaryIsGt06 ? g.primary : null;
+      return g.primary && !primaryIsTag ? g.primary : null;
     }
     // deviceTypeFilter === "tag"
-    if (g.primary && primaryIsGt06) return g.primary;
+    if (g.primary && primaryIsTag) return g.primary;
     return g.backup ?? null;
   };
 
@@ -846,9 +864,9 @@ export default function RastreamentoPage() {
     valid.forEach(t => {
       seen.add(t.imei);
       const name = getDisplayName(t.imei, t.deviceName);
-      const isGt06 = gt06ImeiSet.has(t.imei);
-      const icon = deviceIcon(t, isGt06);
-      const tooltip = tooltipHtml(name, isGt06);
+      const isTag = isTagImei(t.imei);
+      const icon = deviceIcon(t, isTag);
+      const tooltip = tooltipHtml(name, isTag);
       const existing = trackMarkersRef.current.get(t.imei);
       if (existing) {
         existing.setLatLng([t.lat, t.lng]);
@@ -872,7 +890,7 @@ export default function RastreamentoPage() {
       map.fitBounds(bounds, { padding: [48, 48], maxZoom: 16 });
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [vehicleGroups, getDisplayName, mapReady, deviceTypeFilter, selectedImei, allTracks, gt06ImeiSet]);
+  }, [vehicleGroups, getDisplayName, mapReady, deviceTypeFilter, selectedImei, allTracks, gt06ImeiSet, isTagImei]);
 
   // ── Centraliza no dispositivo selecionado ────────────────────────────────
   useEffect(() => {
@@ -1092,7 +1110,7 @@ export default function RastreamentoPage() {
     };
     setCustomNames(updated);
     const marker = trackMarkersRef.current.get(imei);
-    marker?.setTooltipContent(tooltipHtml(name, isGt06Selected));
+    marker?.setTooltipContent(tooltipHtml(name, isTagImei(imei)));
     setRenameOpen(false);
     toast.success("Nome atualizado");
   };
@@ -1261,8 +1279,8 @@ export default function RastreamentoPage() {
 
   const onlineCount  = vehicleGroups.filter(g => !isGroupOffline(g)).length;
   const offlineCount = vehicleGroups.length - onlineCount;
-  const rastreadorCount = vehicleGroups.filter(g => g.primary && !gt06ImeiSet.has(g.primary.info.imei)).length;
-  const tagCount = vehicleGroups.filter(g => (g.primary && gt06ImeiSet.has(g.primary.info.imei)) || g.backup).length;
+  const rastreadorCount = vehicleGroups.filter(g => g.primary && !isTagImei(g.primary.info.imei)).length;
+  const tagCount = vehicleGroups.filter(g => (g.primary && isTagImei(g.primary.info.imei)) || g.backup).length;
 
   const filteredGroups = vehicleGroups.filter(g => {
     const eff = pickForTypeFilter(g);
@@ -1280,6 +1298,7 @@ export default function RastreamentoPage() {
   const selectedTrack  = allTracks.find(t => t.imei === selectedImei) ?? null;
   const selectedDevice = allDevices.find(d => d.imei === selectedImei) ?? null;
   const isSelectedGt06 = selectedImei ? gt06ImeiSet.has(selectedImei) : false;
+  const isSelectedTag = selectedImei ? isTagImei(selectedImei) : false;
 
   // ─── Render ───────────────────────────────────────────────────────────────
   return (
@@ -1508,7 +1527,7 @@ export default function RastreamentoPage() {
                     const isSelected = eff.info.imei === selectedImei;
                     const name = getDisplayName(eff.info.imei, track?.deviceName);
                     const isBackupSelected = g.backup && g.backup.info.imei === selectedImei;
-                    const effIsGt06 = gt06ImeiSet.has(eff.info.imei);
+                    const effIsTag = isTagImei(eff.info.imei);
                     return (
                       <button
                         key={g.key}
@@ -1523,7 +1542,7 @@ export default function RastreamentoPage() {
                       >
                         <div className="flex items-center justify-between gap-2">
                           <div className="flex items-center gap-1.5 min-w-0">
-                            <DeviceTypeBadge isGt06={effIsGt06} />
+                            <DeviceTypeBadge isTag={effIsTag} />
                             <span className="font-medium text-sm truncate">{name}</span>
                           </div>
                           <span
@@ -1564,7 +1583,7 @@ export default function RastreamentoPage() {
                             }`}
                           >
                             <div className="flex items-center gap-1.5 min-w-0">
-                              <DeviceTypeBadge isGt06 />
+                              <DeviceTypeBadge isTag />
                               <span className="text-[11px] text-muted-foreground truncate">backup deste veículo</span>
                             </div>
                             {g.backup.track && (
@@ -1594,6 +1613,7 @@ export default function RastreamentoPage() {
                     device={selectedDevice}
                     displayName={getDisplayName(selectedImei, selectedTrack.deviceName)}
                     displayImei={privacy ? maskImei(selectedImei) : selectedImei}
+                    isTag={isSelectedTag}
                     relayLoading={relayLoading.has(selectedImei)}
                     showKm={!!driver && !isSelectedGt06}
                     showRelay={!!driver && !isSelectedGt06}
