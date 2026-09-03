@@ -208,8 +208,21 @@ export function getOilStatus(
   // estoque não soma (ver confirmEncerrar em LocacoesPage.tsx, que já zera o
   // km da troca automaticamente ao voltar pro estoque).
   const activeRental = rentals.find((r) => r.motoId === m.id && r.status === "ativa");
+  // Dias "sem trocar": desde a ÚLTIMA TROCA (last.data). Só não conta o tempo
+  // que a moto ficou parada em estoque ANTES da locação atual — por isso ancora
+  // na data mais recente entre a última troca e o início da locação vigente.
+  // Antes contava sempre desde o início da locação, o que dava um número que não
+  // batia com a data da última troca mostrada ao lado (ex.: "222d" com a última
+  // troca há 20 dias).
   const diasDesdeUltima = activeRental?.dataInicio
-    ? Math.floor((Date.now() - new Date(activeRental.dataInicio).getTime()) / msDia)
+    ? Math.floor(
+        (Date.now() -
+          Math.max(
+            new Date(last.data).getTime(),
+            new Date(activeRental.dataInicio).getTime(),
+          )) /
+          msDia,
+      )
     : null;
 
   // "Vencida" também é km-only: passou do limite por mais que a própria janela
@@ -223,7 +236,7 @@ export function getOilStatus(
   } else {
     situation = "ok";
   }
-  const diasTxt = diasDesdeUltima != null ? ` · ${diasDesdeUltima}d rodados` : "";
+  const diasTxt = diasDesdeUltima != null ? ` · ${diasDesdeUltima}d sem trocar` : "";
   const label =
     situation === "vencida"
       ? `Vencida (+${kmAtraso.toLocaleString("pt-BR", { maximumFractionDigits: 0 })} km${diasTxt})`
@@ -458,7 +471,7 @@ export function buildAtrasoMessage(opts: {
     `📍 *Limite era:* ${proxOleoKm.toLocaleString("pt-BR", { maximumFractionDigits: 0 })} Km`,
     `🔴 *Km atual:* ${kmAtual.toLocaleString("pt-BR", { maximumFractionDigits: 0 })} Km (+${kmAtraso.toLocaleString("pt-BR", { maximumFractionDigits: 0 })} Km além do limite)`,
     ...(diasSemTroca != null
-      ? [`⏱️ *Sem registro de troca há:* ${diasSemTroca} dias`]
+      ? [`⏱️ *Última troca de óleo há:* ${diasSemTroca} dias`]
       : []),
     "",
     `Para regularizar, por favor *envie agora uma foto do painel atualizado* mostrando o hodômetro. 📸`,
@@ -478,7 +491,7 @@ export function buildReincidenciaMessage(opts: {
 }): string {
   const { clienteNome, placa, proxOleoKm, diasSemTroca } = opts;
   const primeiroNome = clienteNome ? clienteNome.split(" ")[0] : "[NOME]";
-  const diasTxt = diasSemTroca != null ? ` (há ${diasSemTroca} dias sem registro)` : "";
+  const diasTxt = diasSemTroca != null ? ` (última troca há ${diasSemTroca} dias)` : "";
   const linhas = [
     `Oi, ${primeiroNome}!`,
     "",
